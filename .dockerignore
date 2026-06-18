@@ -1,0 +1,60 @@
+# Arquivos que NÃO entram no build Docker (build context mais enxuto = builds mais rápidos).
+# Mantido separado do .gitignore: foco em reduzir o contexto enviado ao daemon.
+
+# --- Git / metadata ---
+.git
+.gitignore
+.gitattributes
+.github
+
+# --- Documentação (não é necessária na imagem de produção) ---
+docs
+*.md
+!README.md
+
+# --- Dependências e build artifacts locais ---
+vendor
+node_modules
+npm-debug.log
+yarn-error.log
+public/build
+public/hot
+
+# --- Ambiente / secrets (NUNCA na imagem) ---
+.env
+.env.*
+!.env.example
+auth.json
+gcloud-credentials.json
+google-service-account.json
+service-account.json
+*-credentials.json
+*.p12
+*.pem
+storage/*.key
+storage/oauth-*.key
+
+# --- Testes / CI (não rodam em produção) ---
+tests
+phpunit.xml
+.phpunit.cache
+.phpunit.result.cache
+.php-cs-fixer.cache
+.pint.cache
+
+# --- IDE / SO ---
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# --- Docker local ---
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# --- Temp / opencode ---
+.opencode
+tmp

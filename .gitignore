@@ -1,0 +1,74 @@
+# ============================================================================
+# Wallet Track — .gitignore
+# ============================================================================
+
+# --- Laravel / PHP ---
+/vendor
+/node_modules
+.env
+.env.backup
+.env.local
+.env.production
+.phpactor.json
+.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+auth.json
+npm-debug.log
+yarn-error.log
+
+# --- Chaves e secrets (NUNCA commitar) ---
+storage/*.key
+storage/oauth-*.key
+gcloud-credentials.json
+*-credentials.json
+google-service-account.json
+service-account.json
+# Service Account JSONs do GCP (baixados como <project-id>-<hash>.json)
+wallet-track-499719-*.json
+wallet-track-*.json
+*.p12
+*.pem
+
+# --- Storage / cache (Laravel) ---
+/storage/app/*
+/storage/framework/cache/data/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/logs/*
+!storage/app/.gitkeep
+!storage/framework/cache/data/.gitkeep
+!storage/framework/sessions/.gitkeep
+!storage/framework/views/.gitkeep
+!storage/logs/.gitkeep
+!storage/app/public/.gitkeep
+
+# --- Bootstrap cache (regenerado em build) ---
+# Mantemos versionado o bootstrap/cache que vem no skeleton, mas ignoramos apenas
+# arquivos gerados em runtime para evitar poluir o diff.
+
+# --- Logs ---
+*.log
+logs/
+
+# --- IDE / Editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Docker local (volumes/overrides não oficiais) ---
+docker-compose.override.yml
+
+# --- Build artifacts ---
+dist/
+build/
+.php-cs-fixer.cache
+.castor.stub
+
+**/caddy
+frankenphp
+frankenphp-worker.php
