@@ -225,23 +225,52 @@ final class FirestoreService
      * `retry_count=0`. Sem isso, uma lógica de limite de retentativas
      * (M7/M8) seria burlada — toda mudança de estado zeraria o contador,
      * permitindo retries infinitos.
+     *
+     * M7 adiciona `source` (text|image — para encaminhar ao SyncSheet no
+     * confirm) e permite resetar explicitamente `retry_count` passando 0
+     * (null = não mexer). `processing` é gerenciado por
+     * {@see tryAcquireSessionProcessingFlag()}.
+     *
+     * **Limpeza explícita de campos (W-3 da revisão)**: o parâmetro
+     * `$clearFields` aceita uma lista de chaves a serem **removidas** do
+     * documento via `FieldValue::delete()`. Necessário porque o merge com
+     * `null` apenas omite — não apaga — campos existentes. Use ao sair de
+     * AWAITING_DATA/EDITION (campo `awaiting_field` deve desaparecer).
+     *
+     * @param  array<string, mixed>|null  $draft  Draft serializado do TransactionData.
+     * @param  string|null  $awaitingField  Campo pedível em aberto (amount/type/date...).
+     * @param  int|null  $messageIdConfirm  message_id da mensagem de confirmação (CT-047).
+     * @param  string|null  $source  Origem da extração ("text"|"image") para o SyncSheet.
+     * @param  int|null  $retryCount  Reset explícito do contador (use 0; null = não mexer).
+     * @param  list<string>  $clearFields  Campos a serem removidos do doc (ex.: ["awaiting_field"]).
      */
     public function setSession(
         string $chatId,
         string $state,
         ?array $draft = null,
         ?string $awaitingField = null,
-        ?string $messageIdConfirm = null,
+        ?int $messageIdConfirm = null,
+        ?string $source = null,
+        ?int $retryCount = null,
+        array $clearFields = [],
     ): void {
         $data = array_filter([
             'state' => $state,
             'draft' => $draft,
             'awaiting_field' => $awaitingField,
             'message_id_confirm' => $messageIdConfirm,
+            'source' => $source,
+            'retry_count' => $retryCount,
             'updated_at' => $this->nowIso(),
         ], fn ($value): bool => $value !== null);
 
         $this->gateway->mergeDocument(self::COLLECTION_SESSIONS, $chatId, $data);
+
+        // Limpeza explícita de campos stale (W-3). Merge com null não
+        // apaga no Firestore — só `FieldValue::delete()` remove o campo.
+        foreach ($clearFields as $field) {
+            $this->gateway->deleteField(self::COLLECTION_SESSIONS, $chatId, $field);
+        }
     }
 
     /**
@@ -279,6 +308,56 @@ final class FirestoreService
     public function clearSession(string $chatId): void
     {
         $this->gateway->deleteDocument(self::COLLECTION_SESSIONS, $chatId);
+    }
+
+    /**
+     * Tenta adquirir atomicamente o flag `processing` da sessão (M7.9 — idempotência).
+     *
+     * Caso de uso: quando o usuário toca "Confirmar", dois callbacks podem
+     * chegar quase simultaneamente (duplo-clique / rede lenta). Sem proteção,
+     * ambos passariam pelo check e executariam `saveTransaction + SyncSheet`
+     * em duplicata — transação duplicada na planilha.
+     *
+     * Este método faz read-modify-write atômico (via `transaction()` do
+     * gateway): lê a sessão, verifica `processing`. Se já true → retorna
+     * false (alguém pegou primeiro). Se false → seta true e retorna true.
+     *
+     * O flag é limpo automaticamente quando a sessão é removida via
+     * {@see clearSession()} (sucesso ou cancelamento). Em caso de crash
+     * entre o acquire e o clear, a sessão fica "presa" em processing=true
+     * — o usuário pode se recuperar via /nova (que trata qualquer sessão
+     * como descartável) ou via timeout (M7.8 limpa a sessão expirada).
+     *
+     * **Janela de crash (W-4)**: se o processo PHP crashar entre o acquire
+     * e o clearSession(), a sessão fica com `processing=true` permanentemente.
+     * A recuperação automática ocorre em até `SESSION_TIMEOUT_MINUTES` (15 min)
+     * quando o Router detecta a sessão como expirada. Mitigação manual:
+     * comando `/cancelar` (clearSession imediato). Em produção, considerar
+     * TTL explícito no flag se isso for inaceitável.
+     *
+     * @return bool true se o flag foi adquirido (esta chamada pode processar),
+     *              false se já estava sendo processado por outra chamada.
+     */
+    public function tryAcquireSessionProcessingFlag(string $chatId): bool
+    {
+        $acquired = false;
+
+        $this->gateway->transaction(function (FirestoreGateway $gw) use ($chatId, &$acquired): void {
+            $session = $gw->getDocument(self::COLLECTION_SESSIONS, $chatId) ?? [];
+
+            if (($session['processing'] ?? false) === true) {
+                return; // já em processamento — não adquire.
+            }
+
+            $gw->mergeDocument(self::COLLECTION_SESSIONS, $chatId, [
+                'processing' => true,
+                'updated_at' => $this->nowIso(),
+            ]);
+
+            $acquired = true;
+        });
+
+        return $acquired;
     }
 
     /*

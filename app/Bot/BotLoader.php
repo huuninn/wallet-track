@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Bot;
 
+use App\Bot\Handlers\CallbackQueryRouterHandler;
+use App\Bot\Handlers\CancelarHandler;
 use App\Bot\Handlers\HelpHandler;
+use App\Bot\Handlers\MessageRouterHandler;
 use App\Bot\Handlers\StartHandler;
 use SergiX44\Nutgram\Nutgram;
 
@@ -15,9 +18,10 @@ use SergiX44\Nutgram\Nutgram;
  * e também pode ser invocado em testes sobre um FakeNutgram, garantindo
  * que os mesmos handlers registrados em produção sejam exercitados.
  *
- * Comandos stateless (resposta única) usam classes invocáveis
- * (StartHandler/HelpHandler). Conversas multi-etapa (/nova, state machine)
- * serão adicionadas em M7/M9.
+ * Ordem de registro importa: comandos (`/start`, `/help`, `/cancelar`) são
+ * registrados ANTES de `onMessage`/`onCallbackQuery` (catch-all) — o Nutgram
+ * prioriza match exato de comando; só cai no onMessage/onCallbackQuery
+ * se nenhum comando casou.
  */
 final class BotLoader
 {
@@ -32,6 +36,17 @@ final class BotLoader
             ->description('Boas-vindas e instruções iniciais');
 
         $bot->onCommand('help', HelpHandler::class)
-            ->description('Lista de comandos e exemplos');
+            ->description('Lista completa de comandos e exemplos');
+
+        $bot->onCommand('cancelar', CancelarHandler::class)
+            ->description('Cancela a operação atual e volta ao início');
+
+        // Catch-all: toda mensagem que NÃO é comando vira ConversationInput
+        // e é roteada pelo ConversationRouter (M7.3, M7.4).
+        $bot->onMessage(MessageRouterHandler::class);
+
+        // Catch-all: todo toque em botão (Confirmar/Editar/Cancelar/...)
+        // vira ConversationInput de callback e é roteado (M7.6, M7.7, M7.10).
+        $bot->onCallbackQuery(CallbackQueryRouterHandler::class);
     }
 }

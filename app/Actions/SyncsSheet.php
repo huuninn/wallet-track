@@ -1,0 +1,35 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Actions;
+
+use App\Dto\TransactionData;
+
+/**
+ * Abstração do sincronismo Firestore → Google Sheets (M7.3).
+ *
+ * Desacopla o {@see \App\Conversation\ConversationRouter} da implementação
+ * concreta ({@see SyncSheet}, que orquestra SheetsService + FirestoreService),
+ * permitindo que os testes do Router substituam por stubs determinísticos.
+ *
+ * O contrato da implementação concreta é preservado:
+ *  - Sucesso (sync_status=synced): devolve `true`.
+ *  - Falha esperada de I/O (sync_status=failed, contabilizada): devolve `false`.
+ *  - Bug de programação (DTO incompleto, etc.): **propaga** — não é mascarado
+ *    como falha de sync.
+ *
+ * @see SyncSheet Implementação concreta usada em produção.
+ */
+interface SyncsSheet
+{
+    /**
+     * Espelha a transação na planilha e atualiza o status de sync no Firestore.
+     *
+     * @param  TransactionData  $dto  DTO completo (amount/type já validados).
+     * @param  string  $firestoreId  ID do documento em `transactions/`.
+     * @param  string  $source  "text" (DeepSeek) ou "image" (Gemini).
+     * @return bool `true` em sucesso, `false` em falha esperada de I/O.
+     */
+    public function handle(TransactionData $dto, string $firestoreId, string $source): bool;
+}

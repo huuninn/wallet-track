@@ -164,6 +164,71 @@ class InMemoryFirestoreGatewayTest extends TestCase
 
     /*
     |--------------------------------------------------------------------------
+    | deleteField (W-3 da revisão)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_delete_field_removes_top_level_field(): void
+    {
+        $this->gw->setDocument('sessions', 'C1', [
+            'state' => 'awaiting_confirmation',
+            'awaiting_field' => 'amount',
+            'draft' => ['x' => 1],
+        ]);
+
+        $this->gw->deleteField('sessions', 'C1', 'awaiting_field');
+
+        $doc = $this->gw->getDocument('sessions', 'C1');
+        $this->assertArrayNotHasKey('awaiting_field', $doc);
+        $this->assertSame('awaiting_confirmation', $doc['state']); // preservado
+        $this->assertSame(['x' => 1], $doc['draft']);
+    }
+
+    public function test_delete_field_supports_dotted_path(): void
+    {
+        $this->gw->setDocument('sessions', 'C1', [
+            'draft' => ['amount' => 50, 'type' => 'expense'],
+        ]);
+
+        $this->gw->deleteField('sessions', 'C1', 'draft.amount');
+
+        $doc = $this->gw->getDocument('sessions', 'C1');
+        $this->assertArrayNotHasKey('amount', $doc['draft']);
+        $this->assertSame('expense', $doc['draft']['type']);
+    }
+
+    public function test_delete_field_is_idempotent_when_absent(): void
+    {
+        // Não lança se o documento não existe.
+        $this->gw->deleteField('sessions', 'never-existed', 'awaiting_field');
+        $this->assertNull($this->gw->getDocument('sessions', 'never-existed'));
+
+        // Não lança se o campo não existe no documento.
+        $this->gw->setDocument('sessions', 'C1', ['state' => 'idle']);
+        $this->gw->deleteField('sessions', 'C1', 'awaiting_field');
+        $this->assertSame(['state' => 'idle'], $this->gw->getDocument('sessions', 'C1'));
+    }
+
+    public function test_delete_field_is_idempotent_when_called_twice(): void
+    {
+        // W-3 teste: chamar deleteField duas vezes no mesmo campo NÃO lança.
+        $this->gw->setDocument('sessions', 'C1', [
+            'state' => 'idle',
+            'awaiting_field' => 'amount',
+            'extra' => 'keep',
+        ]);
+
+        $this->gw->deleteField('sessions', 'C1', 'awaiting_field');
+        $this->gw->deleteField('sessions', 'C1', 'awaiting_field'); // idempotente
+
+        $doc = $this->gw->getDocument('sessions', 'C1');
+        $this->assertArrayNotHasKey('awaiting_field', $doc);
+        $this->assertSame('idle', $doc['state']);
+        $this->assertSame('keep', $doc['extra']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | query
     |--------------------------------------------------------------------------
     */

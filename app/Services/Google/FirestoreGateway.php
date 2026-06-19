@@ -81,6 +81,19 @@ interface FirestoreGateway
     public function incrementField(string $collection, string $id, string $field, int $amount = 1): void;
 
     /**
+     * Remove um campo individual do documento (W-3 da revisão).
+     *
+     * Útil para limpar campos stale entre transições de estado — ex.: ao
+     * sair de AWAITING_DATA/EDITION, o `awaiting_field` deve ser removido
+     * em vez de setado como null (merge com null não apaga no Firestore).
+     *
+     * Em CloudFirestoreGateway, traduz para `FieldValue::delete()` do SDK
+     * (sentinel especial aceito por `update()`). Em InMemoryFirestoreGateway,
+     * faz `unset` na chave do array.
+     */
+    public function deleteField(string $collection, string $id, string $field): void;
+
+    /**
      * Remove um documento. Não lança se o documento não existe.
      */
     public function deleteDocument(string $collection, string $id): void;

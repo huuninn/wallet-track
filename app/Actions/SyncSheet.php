@@ -32,9 +32,12 @@ use Google\Service\Exception as GoogleServiceException;
  * poluiria o contador de retentativas e dispararia notificação ao usuário
  * de um problema que ele não causou.
  *
+ * Implementa {@see SyncsSheet} (introduzida em M7.3) para desacoplar o
+ * {@see \App\Conversation\ConversationRouter} desta implementação concreta.
+ *
  * @see FirestoreService::updateSyncStatus()
  */
-final class SyncSheet
+final class SyncSheet implements SyncsSheet
 {
     public function __construct(
         private readonly SheetsService $sheets,

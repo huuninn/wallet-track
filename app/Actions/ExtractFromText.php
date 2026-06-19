@@ -12,16 +12,19 @@ use App\Services\DeepSeek\DeepSeekService;
  * Action fina que orquestra a extração de texto → TransactionData (M3.4).
  *
  * Resolve o {@see DeepSeekService} do container e expõe um ponto único de
- * entrada para o fluxo conversacional (M5). O método {@see handle()} lança
+ * entrada para o fluxo conversacional (M7). O método {@see handle()} lança
  * {@see ExtractionException} em falhas estruturais (API indisponível, JSON
  * malformado, campos obrigatórios ausentes); o chamador decide o fallback
- * — tipicamente sugerir o wizard `/nova` (spec §10, CT-037), implementado
- * em M5.
+ * — tipicamente sugerir o wizard `/nova` (spec §10, CT-037).
  *
  * Nota de escopo: campos "pedíveis" ausentes (valor/tipo) NÃO chegam aqui
- * como exceção — retornam null no DTO, e M5 pergunta ao usuário.
+ * como exceção — retornam null no DTO, e o {@see \App\Conversation\ConversationRouter}
+ * pergunta ao usuário.
+ *
+ * Implementa {@see ExtractsText} (introduzida em M7.3) para desacoplar o
+ * Router desta implementação concreta — permitindo testes com stubs.
  */
-final class ExtractFromText
+final class ExtractFromText implements ExtractsText
 {
     public function __construct(
         private readonly DeepSeekService $service,

@@ -14,19 +14,17 @@ use App\Services\Telegram\TelegramFileDownloader;
  *
  * Resolve o {@see TelegramFileDownloader} (baixa a imagem do Telegram) e o
  * {@see GeminiService} (OCR multimodal → JSON → DTO), expondo um ponto único
- * de entrada para o fluxo conversacional (M5).
+ * de entrada para o fluxo conversacional (M7).
  *
  * O método {@see handle()} lança {@see ExtractionException} em falhas
  * estruturais (API indisponível, JSON malformado, imagem não-transação);
  * o chamador decide o fallback — tipicamente sugerir texto ou foto nítida
- * (spec §10, CT-008/CT-009), implementado em M5.
+ * (spec §10, CT-008/CT-009).
  *
- * Escopo DEFERIDO para M5:
- *  - M4.5: feedback de progresso em 4 etapas (editando mensagem Telegram) —
- *    precisa do router de mensagens/fluxo conversacional.
- *  - Tratamento do fallback `/nova` e oferta de canal alternativo.
+ * Implementa {@see ExtractsImage} (introduzida em M7.3) para desacoplar o
+ * {@see \App\Conversation\ConversationRouter} desta implementação concreta.
  */
-final class ExtractFromImage
+final class ExtractFromImage implements ExtractsImage
 {
     public function __construct(
         private readonly TelegramFileDownloader $downloader,

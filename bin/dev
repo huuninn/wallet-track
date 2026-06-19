@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Wallet Track — Wrapper de desenvolvimento via Docker
+# ----------------------------------------------------------------------------
+# Motivação: o ambiente de dev (Ubuntu 26.04) não dispõe de PHP 8.4 com as
+# extensões grpc/protobuf nativamente, e o PPA ondrej/php ainda não publicou
+# build para resolute. Rodamos toda a tooling PHP dentro da imagem
+# `wallet-track:dev`, que já contém PHP 8.4.5 + bcmath/gmp/grpc/intl/protobuf/
+# zip/pdo_sqlite (idêntica ao runtime de produção, definida em `Dockerfile`).
+#
+# Uso:
+#   bin/dev php [args...]        # php arbitrário
+#   bin/dev artisan [args...]    # php artisan <command>
+#   bin/dev test [args...]       # vendor/bin/phpunit <args>
+#   bin/dev pint [args...]       # vendor/bin/pint <args>
+#   bin/dev composer [args...]   # composer via imagem composer:2 oficial
+#   bin/dev shell                # bash interativo no container dev
+#
+# O diretório atual é montado em /app (rw) e o usuário do host é preservado
+# (-u uid:gid) para que arquivos gerados em storage/ não fiquem pertencentes
+# ao root. Requer o usuário estar no grupo `docker` (ou sudo docker ...).
+#
+# Pré-requisito: a imagem wallet-track:dev precisa estar buildada:
+#   docker build -t wallet-track:dev --target build -f Dockerfile .
+# ============================================================================
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+DEV_IMAGE="wallet-track:dev"
+COMPOSER_IMAGE="composer:2"
+
+# UID/GID do host repassados ao container; fallback para 1000:1000.
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+
+usage() {
+    sed -n 's/^#   bin\/dev /  bin\/dev /p' "$0" >&2
+    exit 1
+}
+
+[ $# -eq 0 ] && usage
+
+cmd="$1"; shift || true
+
+# Flags comuns a todas as invocações PHP/PHPUnit/Pint.
+common=(
+    --rm
+    -i
+    -v "$PWD:/app"
+    -w /app
+    -u "$HOST_UID:$HOST_GID"
+)
+
+case "$cmd" in
+    php)
+        exec docker run "${common[@]}" --entrypoint php "$DEV_IMAGE" "$@"
+        ;;
+    artisan)
+        exec docker run "${common[@]}" --entrypoint php "$DEV_IMAGE" artisan "$@"
+        ;;
+    test)
+        exec docker run "${common[@]}" --entrypoint php "$DEV_IMAGE" vendor/bin/phpunit "$@"
+        ;;
+    pint)
+        exec docker run "${common[@]}" --entrypoint php "$DEV_IMAGE" vendor/bin/pint "$@"
+        ;;
+    composer)
+        # Composer roda na imagem oficial (mais leve e atualizada); mounting
+        # do $HOME para cache de pacotes ~/.composer acelera installs.
+        exec docker run --rm -i \
+            -v "$PWD:/app" -w /app \
+            -v "$HOME/.composer:/tmp" \
+            -u "$HOST_UID:$HOST_GID" \
+            "$COMPOSER_IMAGE" "$@"
+        ;;
+    shell)
+        exec docker run "${common[@]}" --entrypoint bash -it "$DEV_IMAGE"
+        ;;
+    *)
+        echo "Comando desconhecido: $cmd" >&2
+        usage
+        ;;
+esac

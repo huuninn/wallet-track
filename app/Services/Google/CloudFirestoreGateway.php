@@ -159,6 +159,30 @@ final class CloudFirestoreGateway implements FirestoreGateway
         }
     }
 
+    /**
+     * Remove um campo do documento via FieldValue::deleteField().
+     *
+     * **Diferença vs InMemoryFirestoreGateway**: esta implementação lança
+     * exceção se o documento não existe (comportamento do SDK `$ref->update()`),
+     * enquanto o fake é silencioso. O caller (FirestoreService::setSession) só
+     * chama deleteField após mergeDocument bem-sucedido, então o documento sempre
+     * existe — mas a assimetria é intencional para refletir o SDK real.
+     */
+    public function deleteField(string $collection, string $id, string $field): void
+    {
+        $ref = $this->client->collection($collection)->document($id);
+        $sentinel = FieldValue::deleteField();
+
+        // O `FieldValue::deleteField()` é um sentinel que o Firestore
+        // interpreta como "apagar este campo" no `update()`. Igual a
+        // increment, enfileiramos na Transaction ativa se houver.
+        if ($this->activeTransaction !== null) {
+            $this->activeTransaction->update($ref, [['path' => $field, 'value' => $sentinel]]);
+        } else {
+            $ref->update([['path' => $field, 'value' => $sentinel]]);
+        }
+    }
+
     public function deleteDocument(string $collection, string $id): void
     {
         $ref = $this->client->collection($collection)->document($id);

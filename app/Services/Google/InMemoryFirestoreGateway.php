@@ -97,6 +97,42 @@ final class InMemoryFirestoreGateway implements FirestoreGateway
         $this->store[$collection][$id][$field] = $current + $amount;
     }
 
+    /**
+     * Remove um campo do documento (com suporte a paths pontilhados).
+     *
+     * **Diferença vs CloudFirestoreGateway**: esta implementação NÃO lança
+     * se o documento não existe (early return silencioso), enquanto o gateway
+     * real lança exceção via SDK `$ref->update()`. O caller
+     * (FirestoreService::setSession) nunca chama deleteField sem antes ter
+     * criado o documento via mergeDocument, portanto a diferença é inócua
+     * em runtime — mas a assimetria é intencional para testabilidade.
+     */
+    public function deleteField(string $collection, string $id, string $field): void
+    {
+        if (! isset($this->store[$collection][$id])) {
+            return;
+        }
+
+        // Suporta paths pontilhados análogos a updateFields() — ex.: "a.b.c"
+        // remove apenas a sub-chave mantendo o resto do sub-map intacto.
+        $parts = explode('.', $field);
+        $target = &$this->store[$collection][$id];
+
+        foreach ($parts as $i => $part) {
+            if (! is_array($target) || ! array_key_exists($part, $target)) {
+                return;
+            }
+
+            if ($i === count($parts) - 1) {
+                unset($target[$part]);
+
+                return;
+            }
+
+            $target = &$target[$part];
+        }
+    }
+
     public function deleteDocument(string $collection, string $id): void
     {
         unset($this->store[$collection][$id]);

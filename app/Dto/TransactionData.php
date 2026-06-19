@@ -22,7 +22,7 @@ final readonly class TransactionData
     /**
      * Limite máximo de caracteres da descrição (spec §9: máx 500).
      */
-    private const int DESCRIPTION_MAX_LENGTH = 500;
+    public const int DESCRIPTION_MAX_LENGTH = 500;
 
     /**
      * @param  array<int, string>  $labels  Lista de etiquetas (default vazio).
@@ -106,6 +106,121 @@ final readonly class TransactionData
             && $this->type !== null
             && $this->description !== null
             && $this->date !== null;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Serialização para o draft da sessão (M7)
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Serializa o DTO como array snake_case para persistência no campo
+     * `draft` da sessão Firestore (`sessions/{chat_id}.draft`).
+     *
+     * Round-trip com {@see fromDraftArray()}: o que entra sai idêntico.
+     * Campos null são omitidos para economizar espaço e deixar o draft
+     * legível em inspeção (ex.: draft com só description+date sinaliza
+     * visualmente que amount/type estão faltando).
+     *
+     * @return array<string, mixed>
+     */
+    public function toDraftArray(): array
+    {
+        return array_filter([
+            'description' => $this->description,
+            'amount' => $this->amount,
+            'type' => $this->type,
+            'category' => $this->category,
+            'labels' => $this->labels,
+            'date' => $this->date,
+            'observations' => $this->observations,
+            'confidence' => $this->confidence,
+        ], fn (mixed $v): bool => $v !== null && $v !== []);
+    }
+
+    /**
+     * Desserializa o DTO a partir do array guardado em `draft`.
+     *
+     * Aceita array vazio/null (devolve DTO totalmente null) — usado quando
+     * a sessão foi recém-criada sem draft ainda. Reaproveita {@see fromArray()}
+     * para compartilhar toda a normalização (type, labels, etc.).
+     *
+     * @param  array<string, mixed>|null  $data
+     */
+    public static function fromDraftArray(?array $data): self
+    {
+        return self::fromArray($data ?? []);
+    }
+
+    /**
+     * Devolve uma nova instância com o campo `$field` substituído pelo valor
+     * fornecido ( já validado/normalizado pelo caller).
+     *
+     * Usado pelo fluxo conversacional M7 quando o usuário responde um campo
+     * pedível (AWAITING_DATA) ou edita um campo (AWAITING_EDITION). Aceita
+     * apenas os campos realmente editáveis (amount/type/date/description/
+     * category/observations); qualquer outro nome lança InvalidArgumentException
+     * — bug de programação, nunca input de usuário (input é validado antes).
+     */
+    public function withField(string $field, mixed $value): self
+    {
+        return match ($field) {
+            'amount' => new self(
+                description: $this->description,
+                amount: $value,
+                type: $this->type,
+                category: $this->category,
+                labels: $this->labels,
+                date: $this->date,
+                observations: $this->observations,
+                confidence: $this->confidence,
+            ),
+            'type' => new self(
+                description: $this->description,
+                amount: $this->amount,
+                type: $value,
+                category: $this->category,
+                labels: $this->labels,
+                date: $this->date,
+                observations: $this->observations,
+                confidence: $this->confidence,
+            ),
+            'date' => new self(
+                description: $this->description,
+                amount: $this->amount,
+                type: $this->type,
+                category: $this->category,
+                labels: $this->labels,
+                date: $value,
+                observations: $this->observations,
+                confidence: $this->confidence,
+            ),
+            'description' => $this->withDescription((string) $value),
+            'category' => new self(
+                description: $this->description,
+                amount: $this->amount,
+                type: $this->type,
+                category: $value,
+                labels: $this->labels,
+                date: $this->date,
+                observations: $this->observations,
+                confidence: $this->confidence,
+            ),
+            'observations' => new self(
+                description: $this->description,
+                amount: $this->amount,
+                type: $this->type,
+                category: $this->category,
+                labels: $this->labels,
+                date: $this->date,
+                observations: $value,
+                confidence: $this->confidence,
+            ),
+            default => throw new \InvalidArgumentException(
+                "Campo não editável no DTO: {$field}.",
+            ),
+        };
     }
 
     /**

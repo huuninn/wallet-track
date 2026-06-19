@@ -329,7 +329,7 @@ class FirestoreServiceTest extends TestCase
             state: 'awaiting_data',
             draft: ['amount' => 50.0],
             awaitingField: 'amount',
-            messageIdConfirm: 'msg-1',
+            messageIdConfirm: 1001,
         );
 
         $session = $this->service->getSession('12345');
@@ -337,7 +337,7 @@ class FirestoreServiceTest extends TestCase
         $this->assertSame('awaiting_data', $session['state']);
         $this->assertSame(['amount' => 50.0], $session['draft']);
         $this->assertSame('amount', $session['awaiting_field']);
-        $this->assertSame('msg-1', $session['message_id_confirm']);
+        $this->assertSame(1001, $session['message_id_confirm']);
         $this->assertArrayNotHasKey('retry_count', $session); // FIX-4: setSession não reseta
         $this->assertNotEmpty($session['updated_at']);
     }
@@ -408,6 +408,78 @@ class FirestoreServiceTest extends TestCase
         $session = $this->service->getSession('C1');
         $this->assertSame('awaiting_confirmation', $session['state']);
         $this->assertSame(['amount' => 10], $session['draft']);
+    }
+
+    public function test_set_session_clear_fields_removes_stale_field(): void
+    {
+        // W-3 da revisão: setSession com clearFields deve APAGAR o campo,
+        // não apenas omiti-lo do merge. O `awaiting_field` de um estado
+        // anterior não pode persistir ao mudar de estado.
+        $this->service->setSession(
+            'C1',
+            state: 'awaiting_data',
+            draft: ['amount' => 10],
+            awaitingField: 'amount',
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertSame('amount', $session['awaiting_field']);
+
+        // Transição para AWAITING_CONFIRMATION com clearFields.
+        $this->service->setSession(
+            'C1',
+            state: 'awaiting_confirmation',
+            awaitingField: null,
+            clearFields: ['awaiting_field'],
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertArrayNotHasKey('awaiting_field', $session);
+        $this->assertSame(['amount' => 10], $session['draft']); // outros campos preservados
+    }
+
+    public function test_set_session_without_clear_fields_keeps_stale_field(): void
+    {
+        // Documenta o BUG que o W-3 corrige: sem clearFields, o merge
+        // com null apenas OMITE — não remove — o campo existente.
+        $this->service->setSession(
+            'C1',
+            state: 'awaiting_data',
+            awaitingField: 'amount',
+        );
+
+        // setSession com awaitingField=null SEM clearFields.
+        $this->service->setSession(
+            'C1',
+            state: 'awaiting_confirmation',
+            awaitingField: null,
+        );
+
+        $session = $this->service->getSession('C1');
+        // O campo AINDA existe (merge não apaga).
+        $this->assertSame('amount', $session['awaiting_field']);
+    }
+
+    public function test_set_session_clear_fields_can_remove_multiple(): void
+    {
+        $this->service->setSession(
+            'C1',
+            state: 'awaiting_data',
+            draft: ['x' => 1],
+            awaitingField: 'amount',
+            messageIdConfirm: 100,
+        );
+
+        $this->service->setSession(
+            'C1',
+            state: 'awaiting_confirmation',
+            clearFields: ['awaiting_field', 'message_id_confirm'],
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertArrayNotHasKey('awaiting_field', $session);
+        $this->assertArrayNotHasKey('message_id_confirm', $session);
+        $this->assertSame(['x' => 1], $session['draft']); // preservado
     }
 
     public function test_clear_session_removes_session(): void
