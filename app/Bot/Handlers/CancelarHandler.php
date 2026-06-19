@@ -5,17 +5,23 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
+use App\Enums\ConversationState;
 use App\Services\Google\FirestoreService;
 use SergiX44\Nutgram\Nutgram;
 
 /**
- * Handler do comando /cancelar (CT-026 — M9.4, mas implementado aqui como
- * peça de segurança do M7).
+ * Handler do comando /cancelar (M9.4 / CT-026 — T-003).
  *
- * Força o cancelamento da sessão atual do chat em qualquer estado — inclusive
- * sessão expirada (em que o Router já teria limpado) ou sessão em processamento
- * (transação "presa" — ex.: crash entre tryAcquireSessionProcessingFlag e
- * clearSession).
+ * Força o cancelamento da sessão atual do chat em qualquer estado **ativo**
+ * — inclusive sessão expirada (em que o Router já teria limpado) ou sessão em
+ * processamento (transação "presa" — ex.: crash entre
+ * `tryAcquireSessionProcessingFlag` e `clearSession`).
+ *
+ * **GAP-02 (M9 / Portão 2)**: o handler AGORA distingue IDLE × sessão ativa.
+ * Quando o chat está em IDLE (sem sessão ou com `state='idle'`), responde
+ * com mensagem amigável "Nenhuma operação em andamento para cancelar" e
+ * NÃO chama `notifyCancelled` (que sempre envia "🚫 Transação cancelada..."
+ * — mensagem enganosa em IDLE). Atende CT-026a.
  *
  * Por que NÃO chamar o {@see \App\Conversation\ConversationRouter}?
  *
@@ -45,9 +51,28 @@ class CancelarHandler
         $chatId = (int) $message->chat->id;
         $chatIdStr = (string) $chatId;
 
-        // S-8: resolve o container uma única vez em vez de duas chamadas app().
+        // S-8: resolve o container uma única vez em vez de várias chamadas app().
         $services = app();
-        $services->make(FirestoreService::class)->clearSession($chatIdStr);
-        $services->make(BotMessenger::class)->notifyCancelled($chatIdStr);
+        $firestore = $services->make(FirestoreService::class);
+        $messenger = $services->make(BotMessenger::class);
+
+        // T-003: detecta IDLE. Se não há sessão OU a sessão tem state='idle',
+        // emite mensagem amigável e NÃO chama notifyCancelled (CT-026a).
+        $session = $firestore->getSession($chatIdStr);
+        $isIdle = $session === null || ($session['state'] ?? null) === ConversationState::IDLE->value;
+
+        if ($isIdle) {
+            $messenger->sendText(
+                $chatIdStr,
+                "🤷 <b>Nenhuma operação em andamento</b> para cancelar.\n\n"
+                ."Você está no início — é só me mandar uma mensagem para começar.",
+            );
+
+            return;
+        }
+
+        // Caso normal (CT-026b, CT-026c, CT-026d, CT-026e): clearSession + notifyCancelled.
+        $firestore->clearSession($chatIdStr);
+        $messenger->notifyCancelled($chatIdStr);
     }
 }

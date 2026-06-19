@@ -1,0 +1,200 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Commands;
+
+use App\Bot\Handlers\StartHandler;
+use App\Bot\Messaging\BotMessenger;
+use App\Bot\Messaging\InMemoryBotMessenger;
+use App\Enums\ConversationState;
+use App\Services\Google\FirestoreService;
+use App\Services\Google\InMemoryFirestoreGateway;
+use Mockery;
+use PHPUnit\Framework\Attributes\CoversClass;
+use SergiX44\Nutgram\Nutgram;
+use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
+use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\TestCase;
+
+/**
+ * Testes do {@see StartHandler} (M9.1 / T-001 / GAP-01).
+ *
+ * Garante que `/start` reseta a sessão em qualquer estado (CT-023a, CT-023b,
+ * CT-023c, CT-023f) e mantém a idempotência em IDLE (CT-023e).
+ *
+ * Padrão de teste (consistente com {@see \Tests\Feature\Conversation\ConversationRouterTest}):
+ * `InMemoryFirestoreGateway` bindado no container + `InMemoryBotMessenger`
+ * como `BotMessenger` (captura `sendMessage` indireto) + mock leve do
+ * `Nutgram` que devolve um `Message` pré-configurado.
+ */
+#[CoversClass(StartHandler::class)]
+class StartHandlerTest extends TestCase
+{
+    private const string CHAT_ID = '12345';
+
+    private InMemoryFirestoreGateway $gateway;
+
+    private FirestoreService $firestore;
+
+    private InMemoryBotMessenger $messenger;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->gateway = new InMemoryFirestoreGateway;
+        $this->firestore = new FirestoreService($this->gateway);
+        $this->messenger = new InMemoryBotMessenger;
+
+        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->app->instance(BotMessenger::class, $this->messenger);
+    }
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
+    }
+
+    /**
+     * Mocka o Nutgram com `message()` retornando um Message com chat->id.
+     */
+    private function makeBotMock(): Nutgram
+    {
+        $message = new Message(null);
+        $message->chat = new Chat(null);
+        $message->chat->id = (int) self::CHAT_ID;
+
+        $bot = Mockery::mock(Nutgram::class);
+        $bot->shouldReceive('message')->andReturn($message);
+        $bot->shouldReceive('sendMessage')->once()->andReturnUsing(
+            function (string $text, ?string $parse_mode = null) {
+                $this->messenger->sendText(self::CHAT_ID, $text);
+
+                return null;
+            }
+        );
+
+        return $bot;
+    }
+
+    /**
+     * Pré-popula a sessão do chat em um estado arbitrário.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    private function seedSession(string $state, array $overrides = []): void
+    {
+        $this->gateway->setDocument(
+            FirestoreService::COLLECTION_SESSIONS,
+            self::CHAT_ID,
+            array_merge([
+                'state' => $state,
+                'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
+            ], $overrides),
+        );
+    }
+
+    public function test_start_in_idle_sends_welcome_and_keeps_no_session(): void
+    {
+        // CT-023: /start em IDLE — nenhuma sessão criada, boas-vindas enviadas.
+        $bot = $this->makeBotMock();
+
+        (new StartHandler)($bot);
+
+        $this->assertNull($this->firestore->getSession(self::CHAT_ID));
+        $this->assertCount(1, $this->messenger->sentTexts[self::CHAT_ID] ?? []);
+        $this->assertStringContainsString('Olá! Sou o Wallet Track', $this->messenger->sentTexts[self::CHAT_ID][0]['text']);
+    }
+
+    public function test_start_in_awaiting_data_clears_session_and_sends_welcome(): void
+    {
+        // CT-023a: /start em AWAITING_DATA limpa sessão e envia boas-vindas.
+        $this->seedSession(ConversationState::AWAITING_DATA->value, [
+            'awaiting_field' => 'amount',
+            'draft' => ['description' => 'Almoço'],
+        ]);
+
+        $bot = $this->makeBotMock();
+        (new StartHandler)($bot);
+
+        $this->assertNull(
+            $this->firestore->getSession(self::CHAT_ID),
+            'Sessão em AWAITING_DATA deve ser limpa após /start (CT-023a)',
+        );
+        $this->assertCount(1, $this->messenger->sentTexts[self::CHAT_ID] ?? []);
+    }
+
+    public function test_start_in_awaiting_confirmation_clears_session(): void
+    {
+        // CT-023b: /start em AWAITING_CONFIRMATION descarta draft pendente.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+            'draft' => [
+                'description' => 'Cinema',
+                'amount' => 35.0,
+                'type' => 'expense',
+            ],
+        ]);
+
+        $bot = $this->makeBotMock();
+        (new StartHandler)($bot);
+
+        $this->assertNull(
+            $this->firestore->getSession(self::CHAT_ID),
+            'Sessão em AWAITING_CONFIRMATION deve ser limpa após /start (CT-023b)',
+        );
+    }
+
+    public function test_start_in_awaiting_edition_clears_session(): void
+    {
+        // CT-023c: /start em AWAITING_EDITION descarta edição em andamento.
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, [
+            'awaiting_field' => 'amount',
+            'draft' => ['description' => 'Farmácia', 'amount' => 100.0, 'type' => 'expense'],
+        ]);
+
+        $bot = $this->makeBotMock();
+        (new StartHandler)($bot);
+
+        $this->assertNull(
+            $this->firestore->getSession(self::CHAT_ID),
+            'Sessão em AWAITING_EDITION deve ser limpa após /start (CT-023c)',
+        );
+    }
+
+    public function test_start_idempotent_two_invocations(): void
+    {
+        // CT-023e: /start idempotente — duas invocações = mesmo resultado, sem erro.
+        $bot1 = $this->makeBotMock();
+        (new StartHandler)($bot1);
+
+        $bot2 = $this->makeBotMock();
+        (new StartHandler)($bot2);
+
+        $this->assertNull($this->firestore->getSession(self::CHAT_ID));
+    }
+
+    public function test_start_persisted_session_is_removed(): void
+    {
+        // CT-023f: /start com sessão ativa remove o documento `sessions/{chat_id}`.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, [
+            'draft' => ['description' => 'Mercado', 'amount' => 50.0, 'type' => 'expense'],
+            'message_id_confirm' => 5001,
+        ]);
+
+        // Confirma persistência ANTES do /start.
+        $this->assertNotNull($this->gateway->getDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID));
+
+        $bot = $this->makeBotMock();
+        (new StartHandler)($bot);
+
+        // Após /start, o doc foi removido.
+        $this->assertNull(
+            $this->gateway->getDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID),
+            'Documento da sessão deve ser removido após /start (CT-023f)',
+        );
+    }
+}
