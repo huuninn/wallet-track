@@ -152,4 +152,85 @@ class TransactionDataTest extends TestCase
 
         $this->assertSame(123.45, $dto->amount);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M8 — Helpers withCategory / withLabels
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_with_category_substitutes_category(): void
+    {
+        $original = TransactionData::fromArray([
+            'description' => 'X',
+            'amount' => 10.0,
+            'category' => 'Antiga',
+        ]);
+        $updated = $original->withCategory('Nova');
+
+        // Imutável.
+        $this->assertSame('Antiga', $original->category);
+        $this->assertSame('Nova', $updated->category);
+        $this->assertNotSame($original, $updated);
+    }
+
+    public function test_with_category_null_clears_category(): void
+    {
+        $dto = TransactionData::fromArray([
+            'description' => 'X',
+            'category' => 'Algo',
+        ]);
+        $cleared = $dto->withCategory(null);
+
+        $this->assertNull($cleared->category);
+    }
+
+    public function test_with_category_empty_string_becomes_null(): void
+    {
+        $dto = TransactionData::fromArray(['description' => 'X', 'category' => 'Algo']);
+        $cleared = $dto->withCategory('   ');
+
+        $this->assertNull($cleared->category);
+    }
+
+    public function test_with_labels_substitutes_labels(): void
+    {
+        $dto = TransactionData::fromArray([
+            'description' => 'X',
+            'labels' => ['antigo1', 'antigo2'],
+        ]);
+        $updated = $dto->withLabels(['novo1', 'novo2']);
+
+        // Imutável.
+        $this->assertSame(['antigo1', 'antigo2'], $dto->labels);
+        $this->assertSame(['novo1', 'novo2'], $updated->labels);
+        $this->assertNotSame($dto, $updated);
+    }
+
+    public function test_with_labels_filters_empty_and_trims(): void
+    {
+        $dto = TransactionData::fromArray(['description' => 'X']);
+        $updated = $dto->withLabels(['ok', '', '  ', 'tambem-ok']);
+
+        $this->assertSame(['ok', 'tambem-ok'], $updated->labels);
+    }
+
+    public function test_with_labels_empty_array_clears_labels(): void
+    {
+        $dto = TransactionData::fromArray([
+            'description' => 'X',
+            'labels' => ['old1', 'old2'],
+        ]);
+        $cleared = $dto->withLabels([]);
+
+        $this->assertSame([], $cleared->labels);
+    }
+
+    public function test_with_labels_reindexes_to_list(): void
+    {
+        $dto = TransactionData::fromArray(['description' => 'X']);
+        $updated = $dto->withLabels(['a', 'b', 'c']);
+
+        $this->assertSame([0, 1, 2], array_keys($updated->labels));
+    }
 }

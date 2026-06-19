@@ -8,6 +8,8 @@ use App\Actions\ExtractFromImage;
 use App\Actions\ExtractFromText;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
+use App\Actions\SuggestCategory;
+use App\Actions\SuggestLabels;
 use App\Actions\SyncSheet;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
@@ -21,7 +23,7 @@ use Illuminate\Support\ServiceProvider;
 use SergiX44\Nutgram\Nutgram;
 
 /**
- * Registra a camada conversacional (M7) no container.
+ * Registra a camada conversacional (M7 + M8) no container.
  *
  * Bindings:
  *
@@ -31,6 +33,11 @@ use SergiX44\Nutgram\Nutgram;
  *    estes binds, a injeção no construtor de {@see ConversationRouter}
  *    falharia (Laravel auto-resolveria as interfaces para `new Interface()`
  *    que é erro de classe abstrata).
+ *
+ *  - **M8 — Heurística**: {@see SuggestCategory} e {@see SuggestLabels}
+ *    são singletons que dependem apenas do {@see FirestoreService}. São
+ *    auto-resolvidos, mas o bind explícito torna a intenção clara e
+ *    acelera a inspeção via `php artisan about` ou Telescope.
  *
  *  - **BotMessenger → NutgramBotMessenger**: a implementação concreta
  *    depende do singleton Nutgram, que por sua vez é registrado no
@@ -43,8 +50,8 @@ use SergiX44\Nutgram\Nutgram;
  *
  *  - **StateMachine**: puro, sem dependências. Auto-resolvido.
  *
- *  - **ConversationRouter**: singleton com 9 dependências injetadas
- *    automaticamente — a peça central do M7.
+ *  - **ConversationRouter**: singleton com 11 dependências injetadas
+ *    automaticamente — a peça central do M7/M8.
  *
  * Em testes, o ConversationRouter é instanciado diretamente com stubs
  * (ver {@see \Tests\Feature\Conversation\ConversationRouterTest}) — este
@@ -62,6 +69,13 @@ class ConversationServiceProvider extends ServiceProvider
         $this->app->bind(ExtractsImage::class, ExtractFromImage::class);
         $this->app->bind(SyncsSheet::class, SyncSheet::class);
 
+        // M8 — Heurística de labels e categoria. Ambas dependem só do
+        // FirestoreService (singleton) — o container auto-resolveria, mas o
+        // bind explícito documenta a relação e simplifica substituições
+        // em testes de integração.
+        $this->app->singleton(SuggestCategory::class);
+        $this->app->singleton(SuggestLabels::class);
+
         // BotMessenger: depende do Nutgram (resolvido lazy via closure).
         $this->app->singleton(BotMessenger::class, function (Container $app): BotMessenger {
             return new NutgramBotMessenger(
@@ -76,8 +90,9 @@ class ConversationServiceProvider extends ServiceProvider
         // StateMachine: puro, auto-resolvido (sem necessidade de bind explícito).
         $this->app->singleton(StateMachine::class);
 
-        // ConversationRouter: peça central do M7. Encapsula as 9 dependências
-        // (5 services/ações + formatter + state machine + 2 ints da config).
+        // ConversationRouter: peça central do M7/M8. Encapsula as 11 dependências
+        // (6 services/ações + formatter + state machine + 2 heurísticas M8
+        // + 2 ints da config).
         $this->app->singleton(ConversationRouter::class, function (Container $app): ConversationRouter {
             return new ConversationRouter(
                 stateMachine: $app->make(StateMachine::class),
@@ -87,6 +102,8 @@ class ConversationServiceProvider extends ServiceProvider
                 extractText: $app->make(ExtractsText::class),
                 extractImage: $app->make(ExtractsImage::class),
                 syncSheet: $app->make(SyncsSheet::class),
+                suggestCategory: $app->make(SuggestCategory::class),
+                suggestLabels: $app->make(SuggestLabels::class),
                 sessionTimeoutMinutes: (int) $app->make('config')->get('conversation.timeout_minutes', 15),
                 maxDataRetries: (int) $app->make('config')->get('conversation.max_data_retries', 3),
             );

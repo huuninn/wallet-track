@@ -89,6 +89,57 @@ final readonly class TransactionData
     }
 
     /**
+     * Retorna uma nova instância com a categoria substituída (M8).
+     *
+     * O valor é normalizado via {@see stringOrNull()} — string vazia vira
+     * `null` (equivalente a "sem categoria"). Imutável.
+     */
+    public function withCategory(?string $category): self
+    {
+        return new self(
+            description: $this->description,
+            amount: $this->amount,
+            type: $this->type,
+            category: self::stringOrNull($category),
+            labels: $this->labels,
+            date: $this->date,
+            observations: $this->observations,
+            confidence: $this->confidence,
+        );
+    }
+
+    /**
+     * Retorna uma nova instância com a lista de labels substituída (M8).
+     *
+     * Normalização aplicada:
+     *  - cada elemento é `trim()`-ado e convertido para string;
+     *  - entradas vazias (após trim) são removidas;
+     *  - reindexa com `array_values()` para manter a invariante `list<string>`.
+     *
+     * Passar `[]` (array vazio) zera os labels.
+     *
+     * @param  array<int, string>  $labels
+     */
+    public function withLabels(array $labels): self
+    {
+        $clean = array_values(array_filter(
+            array_map(static fn (mixed $v): string => trim((string) $v), $labels),
+            static fn (string $v): bool => $v !== '',
+        ));
+
+        return new self(
+            description: $this->description,
+            amount: $this->amount,
+            type: $this->type,
+            category: $this->category,
+            labels: $clean,
+            date: $this->date,
+            observations: $this->observations,
+            confidence: $this->confidence,
+        );
+    }
+
+    /**
      * Indica se o DTO está completo o suficiente para persistência em
      * Firestore (schema `transactions/` exige os quatro campos).
      *

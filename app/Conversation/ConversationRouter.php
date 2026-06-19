@@ -6,6 +6,8 @@ namespace App\Conversation;
 
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
+use App\Actions\SuggestCategory;
+use App\Actions\SuggestLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
@@ -18,7 +20,7 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Roteador central da máquina de estados conversacional (M7.3 — M7.10).
+ * Roteador central da máquina de estados conversacional (M7.3 — M7.10 + M8).
  *
  * Recebe um {@see ConversationInput} (texto/foto/callback normalizado) e
  * decide o que fazer com base no estado atual da sessão Firestore do chat.
@@ -52,11 +54,15 @@ use Throwable;
  *    por um validador dedicado antes de atualizar o draft. Acima do limite
  *    `maxDataRetries`, o bot desiste (limpa sessão + notifica) em vez de
  *    loopar.
+ *  - **M8 — Heurística de labels/categoria**: antes de exibir a confirmação
+ *    o Router enriquece o DTO com sugestões (labels via histórico+keywords;
+ *    categoria via fuzzy match), e após a confirmação incrementa os
+ *    contadores de uso (CT-022) e cria categoria nova se for o caso
+ *    (CT-012). Falhas de tracking são isoladas em try/catch — não podem
+ *    bloquear o confirm do usuário.
  *
  * Não faz parte do escopo desta classe:
  *
- *  - Lógica de sugestão de categoria/labels (M8 — {@see \App\Actions\SuggestCategory}
- *    e {@see \App\Actions\SuggestLabels}).
  *  - Comandos auxiliares /nova, /ultimos, /categorias, /sync (M9).
  *  - Re-tentativa automática de sync (M9 — SyncPendingTransactions command).
  */
@@ -106,6 +112,8 @@ final class ConversationRouter
         private readonly ExtractsText $extractText,
         private readonly ExtractsImage $extractImage,
         private readonly SyncsSheet $syncSheet,
+        private readonly SuggestCategory $suggestCategory,
+        private readonly SuggestLabels $suggestLabels,
         int $sessionTimeoutMinutes,
         int $maxDataRetries,
     ) {
@@ -471,10 +479,20 @@ final class ConversationRouter
      * O `message_id_confirm` retornado pelo messenger é a âncora do CT-047:
      * callbacks de keyboards de mensagens antigas (com message_id diferente)
      * serão rejeitados.
+     *
+     * **M8 — Enriquecimento com sugestões** (CT-011, CT-019, CT-020, CT-021):
+     * antes de enviar o keyboard, o DTO é passado por
+     * {@see enrichDtoWithSuggestions()}, que adiciona:
+     *  - categoria sugerida (fuzzy match ou default "Outros");
+     *  - labels sugeridas (até 5, histórico → keywords).
+     * O resultado enriquecido é o que o usuário vê e edita, e o que será
+     * persistido se ele confirmar.
      */
     private function presentConfirmation(string $chatId, TransactionData $dto, string $source): void
     {
-        $messageId = $this->messenger->sendConfirmationRequest($chatId, $dto);
+        $enriched = $this->enrichDtoWithSuggestions($dto);
+
+        $messageId = $this->messenger->sendConfirmationRequest($chatId, $enriched);
 
         $this->assertStateTransition(
             $this->firestore->getSession($chatId),
@@ -483,13 +501,80 @@ final class ConversationRouter
         $this->firestore->setSession(
             chatId: $chatId,
             state: ConversationState::AWAITING_CONFIRMATION->value,
-            draft: $dto->toDraftArray(),
+            draft: $enriched->toDraftArray(),
             awaitingField: null,
             messageIdConfirm: $messageId,
             source: $source,
             retryCount: 0,
             clearFields: ['awaiting_field'], // W-3: limpa campo stale
         );
+    }
+
+    /**
+     * Enriquece o DTO com sugestões de categoria e labels (M8).
+     *
+     * Pipeline (CT-011, CT-019, CT-020, CT-021):
+     *
+     *  1. {@see SuggestCategory::suggest()} resolve a categoria final
+     *     (fuzzy match → existente; abaixo do threshold → nova; sem
+     *     entrada → default). O `display` retornado é aplicado ao DTO.
+     *  2. {@see SuggestLabels::suggest()} recebe a categoria final
+     *     (apenas o `name` canônico quando NÃO for nova) e a descrição,
+     *     e devolve até 5 labels. O resultado é mergeado com
+     *     `$dto->labels` (deduplicado, ordem preservada) — o usuário pode
+     *     sempre editar antes de confirmar (CT-021), então apenas somar
+     *     sugestões ao que já existe é o comportamento conservador certo.
+     *  3. Imutável: devolve um novo {@see TransactionData} (helpers
+     *     `withCategory`/`withLabels`).
+     *
+     * Falhas de qualquer uma das heurísticas (ex.: Firestore indisponível
+     * para buscar histórico) são capturadas localmente — uma exceção aqui
+     * não pode impedir o usuário de confirmar uma transação. O log
+     * warning fica disponível para diagnóstico.
+     */
+    private function enrichDtoWithSuggestions(TransactionData $dto): TransactionData
+    {
+        try {
+            $category = $this->suggestCategory->suggest($dto->category, $dto->description);
+        } catch (Throwable $e) {
+            Log::warning('ConversationRouter: SuggestCategory falhou — seguindo sem categoria sugerida', [
+                // W-2: hash do description em vez do texto cru — evita vazar
+                // PII financeira nos logs em caso de falha.
+                'dto_hash' => hash('xxh3', $dto->description ?? ''),
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+            // Fallback: categoria default já existente ou nula.
+            $category = ['name' => 'outros', 'display' => SuggestCategory::DEFAULT_CATEGORY, 'isNew' => false];
+        }
+
+        $dtoWithCategory = $dto->withCategory($category['display']);
+
+        try {
+            // Passa a categoria apenas se for EXISTENTE (isNew=false): labels
+            // devem ser sugeridas com base em histórico já populado, não em
+            // uma categoria que acabou de nascer. Quando é nova, passamos
+            // null para que o histórico global entre em jogo.
+            $suggestedLabels = $this->suggestLabels->suggest(
+                $dto->description,
+                $category['isNew'] ? null : $category['name'],
+                $dto->labels,
+            );
+        } catch (Throwable $e) {
+            Log::warning('ConversationRouter: SuggestLabels falhou — seguindo sem labels sugeridas', [
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+            $suggestedLabels = [];
+        }
+
+        if ($suggestedLabels === []) {
+            return $dtoWithCategory;
+        }
+
+        $merged = array_values(array_unique(array_merge($dto->labels, $suggestedLabels)));
+
+        return $dtoWithCategory->withLabels($merged);
     }
 
     /**
@@ -702,6 +787,20 @@ final class ConversationRouter
      * e o cron M9 (`/cron/sync-pending`) recupera. Logamos warning para
      * diagnóstico.
      *
+     * **M8 — Tracking pós-confirm** (CT-012, CT-022): após `saveTransaction`
+     * (mas antes do `clearSession`), incrementamos o `use_count` de cada
+     * label e criamos a categoria se ainda não existir. Essas operações
+     * são **best-effort** (try/catch) — se a rede/Firestore falhar, o
+     * usuário já recebeu o toast "Salvo!" e a transação está persistida.
+     * A próxima sugestão vai simplesmente "começar do zero" nesse label
+     * (até o próximo confirm).
+     *
+     * **Race condition** (dois confirms simultâneos na MESMA categoria):
+     * o `createCategory` é idempotente via `setDocument` (overwrite não
+     * destrutivo — recria o doc com o mesmo `use_count` se já existia;
+     * o `incrementLabelUse` é atômico via transaction. Nenhuma proteção
+     * adicional é necessária.
+     *
      * @param  array<string, mixed>  $session
      */
     private function handleConfirm(string $chatId, array $session, string $callbackId): void
@@ -758,7 +857,13 @@ final class ConversationRouter
             return;
         }
 
-        // 2. Tenta espelhar na planilha (best-effort).
+        // 2. M8 — Tracking de uso de labels (CT-022) e persistência de
+        // categoria nova (CT-012). Best-effort: falhas NÃO bloqueiam o
+        // confirm — o toast "Salvo!" já foi computado e a transação está
+        // persistida. Logging de warning para diagnóstico.
+        $this->trackUsageAfterConfirm($dto);
+
+        // 3. Tenta espelhar na planilha (best-effort).
         try {
             $synced = $this->syncSheet->handle($dto, $firestoreId, $source);
         } catch (Throwable $e) {
@@ -780,11 +885,65 @@ final class ConversationRouter
             ]);
         }
 
-        // 3. Notifica o usuário (sucesso) e limpa a sessão.
+        // 4. Notifica o usuário (sucesso) e limpa a sessão.
         $this->messenger->notifySuccess($chatId, $dto);
         $this->messenger->answerCallback($callbackId, '✅ Salvo!');
         $this->assertStateTransition($session, ConversationState::IDLE->value);
         $this->firestore->clearSession($chatId);
+    }
+
+    /**
+     * Tracking de uso de labels e persistência de categoria nova (M8).
+     *
+     * - Para cada label do DTO: `firestore.incrementLabelUse($label)`
+     *   (cria com use_count=1 se não existia; idempotente).
+     * - Se a categoria não existe: `firestore.createCategory(...)` com
+     *   `defaultType` derivado do `type` da transação.
+     *
+     * Ambos isolados em try/catch — uma falha não bloqueia a outra, e
+     * nenhuma das duas impede o confirm do usuário.
+     */
+    private function trackUsageAfterConfirm(TransactionData $dto): void
+    {
+        // Labels — incrementa o contador de cada uma.
+        foreach ($dto->labels as $label) {
+            $trimmed = trim($label);
+            if ($trimmed === '') {
+                continue;
+            }
+
+            try {
+                $this->firestore->incrementLabelUse($trimmed);
+            } catch (Throwable $e) {
+                Log::warning('ConversationRouter: incrementLabelUse falhou (não bloqueia confirm)', [
+                    'label' => $trimmed,
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Categoria — cria se ainda não existe. Usa o `defaultType` alinhado
+        // com o `type` da transação atual (income → income; outros → expense).
+        $category = $dto->category;
+        if ($category === null || trim($category) === '') {
+            return;
+        }
+
+        $categoryTrim = trim($category);
+
+        try {
+            if (! $this->firestore->categoryExists($categoryTrim)) {
+                $defaultType = $dto->type === 'income' ? 'income' : 'expense';
+                $this->firestore->createCategory($categoryTrim, $defaultType);
+            }
+        } catch (Throwable $e) {
+            Log::warning('ConversationRouter: createCategory falhou (não bloqueia confirm)', [
+                'category' => $categoryTrim,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     /*
