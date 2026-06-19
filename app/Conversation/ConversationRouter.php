@@ -236,7 +236,7 @@ final class ConversationRouter
             }
 
             // Re-pergunta o próximo campo pedível.
-            $next = $this->pickNextAwaitingField($merged);
+            $next = $this->pickNextAwaitingField($merged, $session);
             $this->assertStateTransition($session, ConversationState::AWAITING_DATA->value);
             $this->firestore->setSession(
                 chatId: $chatId,
@@ -269,7 +269,7 @@ final class ConversationRouter
         }
 
         // Ainda falta — pede o próximo campo pedível.
-        $next = $this->pickNextAwaitingField($newDraft);
+        $next = $this->pickNextAwaitingField($newDraft, $session);
         $this->assertStateTransition($session, ConversationState::AWAITING_DATA->value);
         $this->firestore->setSession(
             chatId: $chatId,
@@ -623,9 +623,35 @@ final class ConversationRouter
      *
      * `description` raramente é null após extração (LLM sempre preenche), mas
      * mantemos a verificação como defesa em profundidade.
+     *
+     * **M9.3 — Suporte a wizard `/nova` (T-015)**: quando o array `$session`
+     * carrega o flag `_wizard_active=true` no `draft`, o método desvia para
+     * a sequência FIXA do wizard (type → amount → description → category →
+     * labels) em vez da ordem amount-first do modo linguagem natural. O
+     * parâmetro é OPCIONAL com default `[]` para preservar todas as
+     * chamadas existentes (M7/M8) — callers que não passam `$session`
+     * continuam no caminho original, sem nenhuma mudança de comportamento.
+     *
+     * @param  array<string, mixed>  $session  Sessão Firestore (opcional — default vazio).
      */
-    private function pickNextAwaitingField(TransactionData $dto): ?string
+    private function pickNextAwaitingField(TransactionData $dto, array $session = []): ?string
     {
+        // M9.3 (T-015): branch wizard. Verifica flag `_wizard_active` no draft
+        // (preservado entre etapas) — quando presente, segue a ordem fixa do
+        // wizard. O step 5 (labels) é o último; o 6 (confirmation) é sinalizado
+        // por `isComplete()` no caller, não aqui.
+        $wizardStep = (int) ($session['draft']['_wizard_step'] ?? 0);
+        if ($wizardStep > 0 && ! empty($session['draft']['_wizard_active'])) {
+            return match ($wizardStep) {
+                1 => 'type',
+                2 => 'amount',
+                3 => 'description',
+                4 => 'category',
+                5 => 'labels',
+                default => null,
+            };
+        }
+
         if ($dto->amount === null) {
             return 'amount';
         }
