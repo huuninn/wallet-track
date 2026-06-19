@@ -104,6 +104,13 @@ final class ConversationRouter
      */
     private readonly int $maxDataRetries;
 
+    /**
+     * Handler do wizard `/nova` (M9.3). Lazy — só instanciado quando
+     * `route()` detecta o flag `_wizard_active` na sessão, evitando custo
+     * desnecessário para o fluxo de linguagem natural (M7/M8).
+     */
+    private ?WizardHandler $wizardHandler = null;
+
     public function __construct(
         private readonly StateMachine $stateMachine,
         private readonly BotMessenger $messenger,
@@ -122,6 +129,25 @@ final class ConversationRouter
     }
 
     /**
+     * Factory lazy do {@see WizardHandler} (M9.3 / T-016).
+     *
+     * Cria o handler sob demanda na primeira invocação de `route()` que
+     * detecta wizard ativo. Lazy porque o wizard é uma feature opcional
+     * (só `/nova` aciona) — não queremos pagar o custo de construção
+     * (passa `ConversationRouter` como "friend" para reusar
+     * `validateField` e `presentConfirmation`) em todo request.
+     */
+    private function wizardHandler(): WizardHandler
+    {
+        return $this->wizardHandler ??= new WizardHandler(
+            router: $this,
+            firestore: $this->firestore,
+            messenger: $this->messenger,
+            formatter: $this->formatter,
+        );
+    }
+
+    /**
      * Roteia o input recebido para o handler de estado apropriado.
      *
      * Esta é a única entrada pública — todo o roteamento (texto/foto/callback
@@ -129,6 +155,11 @@ final class ConversationRouter
      * através deste método. Exceções de programação propagam (o controller
      * HTTP captura); falhas estruturais de extração são tratadas com fallback
      * amigável.
+     *
+     * **M9.3 (T-016)**: se a sessão tem o flag `_wizard_active` no draft,
+     * delega ao {@see WizardHandler} ANTES do dispatch principal de estado.
+     * O wizard é uma sub-máquina auto-contida que herda validação e
+     * enriquecimento M8 do Router.
      */
     public function route(ConversationInput $input): void
     {
@@ -142,6 +173,19 @@ final class ConversationRouter
             // Após expirar, recarrega e re-roteia como IDLE (a sessão agora é null).
             $session = null;
             $state = ConversationState::IDLE;
+        }
+
+        // M9.3 (T-016): detecção de wizard `/nova` ativo. Se a sessão tem o
+        // flag `_wizard_active=true` no draft, delegamos para o WizardHandler
+        // (sub-máquina) em vez do AWAITING_DATA genérico. O wizard é
+        // transparente para o resto do Router — apenas injetamos o delegate
+        // antes do match principal.
+        if ($state === ConversationState::AWAITING_DATA
+            && ! empty($session['draft']['_wizard_active'])
+        ) {
+            $this->wizardHandler()->handleStep($input, $chatId, $session);
+
+            return;
         }
 
         match ($state) {
@@ -487,8 +531,14 @@ final class ConversationRouter
      *  - labels sugeridas (até 5, histórico → keywords).
      * O resultado enriquecido é o que o usuário vê e edita, e o que será
      * persistido se ele confirmar.
+     *
+     * **M9.3 (T-016)**: tornado público para reuso pelo
+     * {@see \App\Conversation\WizardHandler}, que o invoca quando a 5ª etapa
+     * (labels) é validada com sucesso e o draft está completo. Centralizar
+     * a finalização no Router garante que o wizard herda o enriquecimento
+     * M8 (sugestões de categoria e labels) sem duplicar lógica.
      */
-    private function presentConfirmation(string $chatId, TransactionData $dto, string $source): void
+    public function presentConfirmation(string $chatId, TransactionData $dto, string $source): void
     {
         $enriched = $this->enrichDtoWithSuggestions($dto);
 
@@ -506,7 +556,11 @@ final class ConversationRouter
             messageIdConfirm: $messageId,
             source: $source,
             retryCount: 0,
-            clearFields: ['awaiting_field'], // W-3: limpa campo stale
+            // M9.3 (T-016): limpa campos stale do wizard. Garante que
+            // `_wizard_step` e `_wizard_active` não persistam em
+            // AWAITING_CONFIRMATION — no-op se não existirem (caso do
+            // fluxo de linguagem natural).
+            clearFields: ['awaiting_field', '_wizard_step', '_wizard_active'], // W-3: limpa campo stale
         );
     }
 
@@ -1070,10 +1124,16 @@ final class ConversationRouter
 
     /**
      * Despacha para o validador específico do campo. Devolve o valor normalizado
-     * (float para amount, string para type/date/description/category) ou null
-     * se inválido.
+     * (float para amount, string para type/date/description/category, array para
+     * labels) ou null se inválido.
+     *
+     * **M9.3 (T-016)**: tornado público para reuso pelo
+     * {@see \App\Conversation\WizardHandler}, que precisa aplicar a mesma
+     * validação a cada etapa do wizard `/nova` (campos type/amount/description/
+     * category/labels). Centralizar a validação no Router garante que a
+     * wizard não invente regras próprias divergentes.
      */
-    private function validateField(string $field, string $raw): float|string|null
+    public function validateField(string $field, string $raw): float|string|array|null
     {
         return match ($field) {
             'amount' => $this->validateAmount($raw),
@@ -1082,6 +1142,7 @@ final class ConversationRouter
             'description' => $this->validateDescription($raw),
             'category' => $this->validateCategory($raw),
             'observations' => $this->validateObservations($raw),
+            'labels' => $this->validateLabels($raw),
             default => null,
         };
     }
@@ -1238,6 +1299,60 @@ final class ConversationRouter
     private function validateObservations(string $raw): string
     {
         return trim($raw);
+    }
+
+    /**
+     * Valida labels do wizard `/nova` (M9.3 / T-016).
+     *
+     * Aceita string com labels separadas por vírgula (ex.: `almoço, trabalho,
+     * #fds`). Regras:
+     *  - trim geral da string inteira;
+     *  - "pular" / "skip" / "-" / string vazia → array vazio (rótulo sem labels);
+     *  - cada token: trim, remove prefixo `#`, filtra < 2 caracteres (mínimo
+     *    útil para uma label);
+     *  - deduplica (case-insensitive) preservando a primeira ocorrência;
+     *  - reindexa com `array_values` para manter a invariante `list<string>`.
+     *
+     * Retorna SEMPRE um array (nunca null) porque labels são opcionais — o
+     * "pular" é uma resposta válida. O caller (WizardHandler) distingue
+     * `[]` (sem labels) de `null` apenas para inputs realmente malformados
+     * (que aqui nunca acontecem — qualquer string produz um array filtrado).
+     *
+     * @return list<string>
+     */
+    private function validateLabels(string $raw): array
+    {
+        $cleaned = trim($raw);
+        $keyword = mb_strtolower($cleaned);
+
+        // Atalhos PT-BR para "não quero labels" — sempre array vazio.
+        if ($keyword === '' || in_array($keyword, ['pular', 'skip', 'nenhuma', 'nenhum', '-'], true)) {
+            return [];
+        }
+
+        $tokens = explode(',', $cleaned);
+        $labels = [];
+        $seen = [];
+
+        foreach ($tokens as $token) {
+            $token = trim((string) $token);
+            $token = ltrim($token, '#');
+            $token = trim($token);
+
+            if (mb_strlen($token) < 2) {
+                continue;
+            }
+
+            $key = mb_strtolower($token);
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $labels[] = $token;
+        }
+
+        return array_values($labels);
     }
 
     /*

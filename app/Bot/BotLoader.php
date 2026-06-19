@@ -9,6 +9,7 @@ use App\Bot\Handlers\CancelarHandler;
 use App\Bot\Handlers\CategoriasHandler;
 use App\Bot\Handlers\HelpHandler;
 use App\Bot\Handlers\MessageRouterHandler;
+use App\Bot\Handlers\NovaHandler;
 use App\Bot\Handlers\StartHandler;
 use App\Bot\Handlers\SyncHandler;
 use App\Bot\Handlers\UltimosHandler;
@@ -21,10 +22,10 @@ use SergiX44\Nutgram\Nutgram;
  * e também pode ser invocado em testes sobre um FakeNutgram, garantindo
  * que os mesmos handlers registrados em produção sejam exercitados.
  *
- * Ordem de registro importa: comandos (`/start`, `/help`, `/cancelar`,
- * `/ultimos`, `/categorias`, `/sync`) são registrados ANTES de
- * `onMessage`/`onCallbackQuery` (catch-all) — o Nutgram prioriza match
- * exato de comando; só cai no onMessage/onCallbackQuery se nenhum
+ * Ordem de registro importa: comandos (`/start`, `/help`, `/nova`,
+ * `/cancelar`, `/ultimos`, `/categorias`, `/sync`) são registrados
+ * ANTES de `onMessage`/`onCallbackQuery` (catch-all) — o Nutgram prioriza
+ * match exato de comando; só cai no onMessage/onCallbackQuery se nenhum
  * comando casou.
  */
 final class BotLoader
@@ -44,6 +45,10 @@ final class BotLoader
 
         $bot->onCommand('cancelar', CancelarHandler::class)
             ->description('Cancela a operação atual e volta ao início');
+
+        // M9.3 — /nova: wizard passo-a-passo para criar transação (T-018).
+        $bot->onCommand('nova', NovaHandler::class)
+            ->description('Cadastro passo a passo (Tipo → Valor → Descrição → Categoria → Labels)');
 
         // M9.5 — /ultimos [n]: lista últimas N transações (T-006/T-008).
         $bot->onCommand('ultimos', UltimosHandler::class)

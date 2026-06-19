@@ -268,6 +268,7 @@ final readonly class TransactionData
                 observations: $value,
                 confidence: $this->confidence,
             ),
+            'labels' => $this->withLabels(is_array($value) ? $value : []),
             default => throw new \InvalidArgumentException(
                 "Campo não editável no DTO: {$field}.",
             ),
