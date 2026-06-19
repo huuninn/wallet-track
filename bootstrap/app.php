@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\ValidateTelegramWebhook;
+use App\Http\Middleware\VerifyCronToken;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -15,16 +16,22 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Alias do middleware do webhook (placeholder em M1; validação em M2).
+        // Alias dos middlewares HTTP. Mantém o ponto único de configuração
+        // (Laravel 13+) em vez de poluir o array `$routeMiddleware` legado.
         $middleware->alias([
             'telegram.webhook' => ValidateTelegramWebhook::class,
+            'cron' => VerifyCronToken::class,
         ]);
 
         // O webhook do Telegram recebe POSTs sem token CSRF (chamada de
         // servidor-para-servidor), então deve ficar de fora da verificação
         // VerifyCsrfToken. Sem isto, o Telegram receberia 419 em produção.
+        //
+        // A rota /cron/sync-pending também é GET server-to-server e
+        // precisa ser excluída — o Cloud Scheduler não envia token CSRF.
         $middleware->validateCsrfTokens(except: [
             'webhook/telegram',
+            'cron/sync-pending',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

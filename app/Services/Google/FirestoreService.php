@@ -102,6 +102,9 @@ final class FirestoreService
             'sync_attempts' => 0,
             'sync_last_attempt_at' => null,
             'sync_error_message' => null,
+            'spreadsheet_row_id' => null,
+            'processing' => false,
+            'notified_at' => null,
 
             'created_at' => $now,
             'updated_at' => $now,
@@ -153,6 +156,9 @@ final class FirestoreService
      *  - Em sucesso (synced), o M6 pode passar errorMessage=null para limpar
      *    o motivo de erro anterior mas o `sync_attempts` só é incrementado
      *    quando há errorMessage (toda tentativa com erro conta).
+     *  - **Sempre limpa o flag `processing`**: transições de status implicam
+     *    que a tentativa de sync terminou (M9.8). Sem isto, o lock otimista
+     *    ficaria preso entre tentativas.
      *
      * **Atomicidade (FIX-5)**: o `updateFields` + `incrementField` rodam
      * dentro de `transaction()` para garantir que um falhe/role back ambos.
@@ -169,6 +175,7 @@ final class FirestoreService
     {
         $fields = [
             'sync_status' => $status,
+            'processing' => false,
             'updated_at' => $this->nowIso(),
         ];
 
@@ -193,6 +200,264 @@ final class FirestoreService
                     'sync_attempts',
                 );
             }
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sincronização em lote (M9.7 + M9.8)
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Reseta o contador `sync_attempts` para 0 em todas as transações
+     * pendentes do chat (ou globalmente, se `$chatId` for null).
+     *
+     * Usado pelo handler `/sync` quando o usuário solicita uma nova tentativa
+     * manual após falhas consecutivas. A intenção é "dar mais 3 chances" —
+     * sem o reset, uma transação que já teve 2 falhas seria pulada na próxima
+     * execução (filtro `sync_attempts < 3`).
+     *
+     * Mantém `sync_status='pending'` (idempotente) e zera `sync_error_message`
+     * para que a próxima execução não carregue mensagem de erro stale.
+     *
+     * **Lock atômico (Decisão Portão 2 #8)**: a operação NÃO adquire o flag
+     * `processing` — é seguro rodar concorrentemente com o cron porque cada
+     * doc é atualizado individualmente. Se houver race, o pior caso é o cron
+     * ler `sync_attempts=N` (já incrementado) e pular o doc, ou ler `N=0`
+     * e processá-lo normalmente. Ambos são corretos.
+     *
+     * @param  string|null  $chatId  Se fornecido, reseta apenas deste chat.
+     *                               Se null, reseta globalmente (uso do cron).
+     * @return int Número de documentos efetivamente resetados.
+     */
+    public function resetPendingSyncAttempts(?string $chatId = null): int
+    {
+        $wheres = [
+            ['field' => 'sync_status', 'op' => '==', 'value' => self::SYNC_PENDING],
+        ];
+
+        if ($chatId !== null) {
+            $wheres[] = ['field' => 'chat_id', 'op' => '==', 'value' => $chatId];
+        }
+
+        // Limite alto (pragmatismo): para 1 usuário com poucos meses de uso,
+        // o número de pendentes é tipicamente < 100. Aumentar o limite evita
+        // paginação em casos extremos sem causar lentidão.
+        $results = $this->gateway->query(
+            collection: self::COLLECTION_TRANSACTIONS,
+            wheres: $wheres,
+            orderBys: [],
+            limit: 1000,
+        );
+
+        $now = $this->nowIso();
+        $count = 0;
+
+        foreach ($results as $doc) {
+            $this->gateway->updateFields(self::COLLECTION_TRANSACTIONS, $doc['id'], [
+                'sync_attempts' => 0,
+                'sync_status' => self::SYNC_PENDING,
+                'sync_error_message' => null,
+                'updated_at' => $now,
+            ]);
+            $count++;
+        }
+
+        return $count;
+    }
+
+    /**
+     * Lista transações com `sync_status='pending'` e `sync_attempts < 3`,
+     * ordenadas por `created_at ASC` (mais antigas primeiro — FIFO).
+     *
+     * Alimenta o comando `transactions:sync-pending` (cron) e o handler
+     * `/sync` (manual). O filtro `sync_attempts < 3` é aplicado em memória
+     * para evitar índice composto extra — com limite de 100 docs, o custo
+     * é desprezível.
+     *
+     * @param  string|null  $chatId  Se fornecido, filtra por chat específico
+     *                               (uso do `/sync`); se null, lista de todos
+     *                               os chats (uso do cron).
+     * @param  int  $limit  Tamanho máximo do batch.
+     * @return list<array{id: string, data: array<string, mixed>}>
+     */
+    public function listPendingSync(?string $chatId = null, int $limit = 100): array
+    {
+        $wheres = [
+            ['field' => 'sync_status', 'op' => '==', 'value' => self::SYNC_PENDING],
+        ];
+
+        if ($chatId !== null) {
+            $wheres[] = ['field' => 'chat_id', 'op' => '==', 'value' => $chatId];
+        }
+
+        $results = $this->gateway->query(
+            collection: self::COLLECTION_TRANSACTIONS,
+            wheres: $wheres,
+            orderBys: [['field' => 'created_at', 'direction' => 'ASC']],
+            limit: $limit,
+        );
+
+        // Filtra sync_attempts < 3 em memória (evita índice composto extra).
+        return array_values(array_filter(
+            $results,
+            static fn (array $doc): bool => (int) ($doc['data']['sync_attempts'] ?? 0) < 3,
+        ));
+    }
+
+    /**
+     * Tenta adquirir atomicamente o lock `processing=true` na transação
+     * (Decisão Portão 2 #8 — coordenação `/sync` × cron).
+     *
+     * Caso de uso: o cron e o `/sync` manual podem ser disparados quase
+     * simultaneamente. Sem lock, ambos processariam a mesma transação,
+     * potencialmente duplicando linhas na planilha (Sheets API não é
+     * idempotente — cada `append` gera nova linha).
+     *
+     * Read-modify-write atômico via `transaction()`: lê o doc, verifica
+     * `processing`. Se já `true` → retorna `false` (alguém pegou primeiro).
+     * Se `false`/ausente → seta `true` e retorna `true`.
+     *
+     * O caller é responsável por liberar o lock (chamando
+     * {@see markSyncSuccess()} ou {@see markSyncFailed()}, ou
+     * {@see updateSyncStatus()} que limpa o flag automaticamente).
+     *
+     * **Idempotência**: a segunda chamada para o mesmo id (enquanto a
+     * primeira ainda está em andamento) retorna `false` — exatamente o
+     * comportamento que evita duplicação.
+     *
+     * @return bool `true` se o lock foi adquirido (esta chamada pode
+     *              processar), `false` se já estava sendo processado.
+     */
+    public function markSyncStarted(string $id): bool
+    {
+        $acquired = false;
+
+        $this->gateway->transaction(function (FirestoreGateway $gw) use ($id, &$acquired): void {
+            $doc = $gw->getDocument(self::COLLECTION_TRANSACTIONS, $id) ?? [];
+
+            if (($doc['processing'] ?? false) === true) {
+                return; // Outra execução já tem o lock.
+            }
+
+            $gw->updateFields(self::COLLECTION_TRANSACTIONS, $id, [
+                'processing' => true,
+                'updated_at' => $this->nowIso(),
+            ]);
+
+            $acquired = true;
+        });
+
+        return $acquired;
+    }
+
+    /**
+     * Marca a transação como sincronizada com sucesso e libera o lock
+     * `processing`.
+     *
+     * Idempotente em relação a `sync_status`: se já estiver como `synced`,
+     * o `updateFields` apenas sobrescreve com os mesmos valores. Diferente
+     * de {@see updateSyncStatus()} (que NÃO altera `spreadsheet_row_id`),
+     * este método registra o id da linha na planilha para auditoria futura.
+     *
+     * @param  string  $id  ID do documento em `transactions/`.
+     * @param  string  $spreadsheetRowId  Identificador da linha na planilha
+     *                                    (por ora: o próprio Firestore id;
+     *                                    evolução futura pode usar o número
+     *                                    da linha real retornado pelo Sheets).
+     */
+    public function markSyncSuccess(string $id, string $spreadsheetRowId): void
+    {
+        $this->gateway->updateFields(self::COLLECTION_TRANSACTIONS, $id, [
+            'sync_status' => self::SYNC_SYNCED,
+            'spreadsheet_row_id' => $spreadsheetRowId,
+            'processing' => false,
+            'updated_at' => $this->nowIso(),
+        ]);
+    }
+
+    /**
+     * Re-enfileira a transação como `pending` para a próxima execução do
+     * cron/sync, sem alterar `sync_attempts` (Decisão Portão 2 #7).
+     *
+     * Caso de uso: `SyncSheet::handle()` retornou `false` (falha recuperável)
+     * e já incrementou o contador via `updateSyncStatus(FAILED, $error)`.
+     * O command decide re-tentar: precisa mover o status de `failed` de
+     * volta para `pending` SEM incrementar de novo.
+     *
+     * Por que não usar {@see updateSyncStatus($id, 'pending', $error)}?
+     * Porque esse método incrementa `sync_attempts` quando recebe
+     * `errorMessage` (regra do M6 preservada para não quebrar testes
+     * legados). Aqui o incremento já foi feito por `SyncSheet` — queremos
+     * apenas "desfazer" o status.
+     *
+     * O `sync_error_message` e `sync_last_attempt_at` são preservados
+     * (úteis para debug) — não há reset.
+     *
+     * @param  string  $id  ID do documento em `transactions/`.
+     */
+    public function requeuePendingSync(string $id): void
+    {
+        $this->gateway->updateFields(self::COLLECTION_TRANSACTIONS, $id, [
+            'sync_status' => self::SYNC_PENDING,
+            'processing' => false,
+            'updated_at' => $this->nowIso(),
+        ]);
+    }
+
+    /**
+     * Marca a transação como falha definitiva e libera o lock `processing`.
+     *
+     * Comportamento atômico via `transaction()`: em uma única operação,
+     * persiste o status final, registra o motivo do erro e, **apenas na
+     * 1ª transição para `failed`**, carimba o campo `notified_at` para que
+     * o command saiba que já enviou a notificação ao usuário (Decisão
+     * Portão 2 #5 — sem spam).
+     *
+     * **NÃO incrementa `sync_attempts`**: presume-se que o caller já
+     * incrementou via `SyncSheet::handle()` (que chama
+     * `updateSyncStatus(FAILED, $error)` no caminho de erro, contabilizando
+     * a tentativa). Incrementar de novo aqui causaria contagem dobrada
+     * (ex.: 3ª tentativa mostraria 4). Se este método for chamado sem
+     * `SyncSheet` ter rodado antes, o caller é responsável por incrementar.
+     *
+     * O caller (command) deve checar `$doc['notified_at']` ANTES de
+     * chamar este método para decidir se envia `BotMessenger::notifyError()`
+     * — esta função apenas carimba o flag como efeito colateral.
+     *
+     * **Idempotência de `notified_at`**: se já tem valor (transação já
+     * tinha sido marcada como failed em execução anterior e o command
+     * re-chamou por algum motivo), o campo NÃO é sobrescrito — preserva
+     * o carimbo original (rastreabilidade).
+     *
+     * @param  string  $id  ID do documento em `transactions/`.
+     * @param  string  $error  Mensagem de erro (curta, exibida ao usuário
+     *                         na notificação e armazenada para debug).
+     */
+    public function markSyncFailed(string $id, string $error): void
+    {
+        $now = $this->nowIso();
+
+        $this->gateway->transaction(function (FirestoreGateway $gw) use ($id, $error, $now): void {
+            $doc = $gw->getDocument(self::COLLECTION_TRANSACTIONS, $id) ?? [];
+
+            $fields = [
+                'sync_status' => self::SYNC_FAILED,
+                'sync_error_message' => $error,
+                'sync_last_attempt_at' => $now,
+                'processing' => false,
+                'updated_at' => $now,
+            ];
+
+            // Carimba notified_at apenas na 1ª transição para failed.
+            // Empty check (null|string vazia) cobre docs antigos que não
+            // tinham o campo antes do M9.
+            if (empty($doc['notified_at'])) {
+                $fields['notified_at'] = $now;
+            }
+
+            $gw->updateFields(self::COLLECTION_TRANSACTIONS, $id, $fields);
         });
     }
 

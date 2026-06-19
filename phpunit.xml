@@ -54,5 +54,8 @@
         <env name="GOOGLE_SHEETS_SPREADSHEET_ID" value="test-sheet-id"/>
         <env name="GOOGLE_SHEETS_SHEET_NAME" value="Transações"/>
         <env name="GOOGLE_SHEETS_CATEGORIES_SHEET_NAME" value="Categorias"/>
+        <!-- M9.9: token do cron (apenas para testes — NUNCA usar este valor em produção).
+             Valor compartilhado entre os testes do middleware e da rota /cron/sync-pending. -->
+        <env name="CRON_SECRET_TOKEN" value="test-cron-token-12345"/>
     </php>
 </phpunit>

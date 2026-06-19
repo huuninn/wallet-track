@@ -618,4 +618,289 @@ class FirestoreServiceTest extends TestCase
     {
         $this->assertSame([], $this->service->getTopLabels());
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sincronização em lote (M9.8) — resetPendingSyncAttempts, listPendingSync,
+    | markSyncStarted, markSyncSuccess, markSyncFailed.
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Cria uma transação persistida (não via saveTransaction para permitir
+     * customizar sync_status/sync_attempts antes do "caminho normal").
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    private function seedPendingTransaction(string $id, string $chatId, array $overrides = []): string
+    {
+        $base = array_merge([
+            'chat_id' => $chatId,
+            'description' => 'Tx '.uniqid(),
+            'amount' => 10.0,
+            'type' => 'expense',
+            'category' => 'Outros',
+            'date' => '2026-06-15',
+            'labels' => [],
+            'source' => 'text',
+            'sync_status' => FirestoreService::SYNC_PENDING,
+            'sync_attempts' => 0,
+            'sync_last_attempt_at' => null,
+            'sync_error_message' => null,
+            'spreadsheet_row_id' => null,
+            'processing' => false,
+            'notified_at' => null,
+            'created_at' => '2026-06-15T00:00:00.000000Z',
+            'updated_at' => '2026-06-15T00:00:00.000000Z',
+        ], $overrides);
+
+        $this->gateway->setDocument(FirestoreService::COLLECTION_TRANSACTIONS, $id, $base);
+
+        return $id;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | listPendingSync
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_list_pending_sync_filters_by_attempts_less_than_three(): void
+    {
+        // 2 com attempts<3, 1 com attempts=3 (deve ser pulado), 1 com status=synced.
+        $this->seedPendingTransaction('tx1', 'C1', ['sync_attempts' => 0]);
+        $this->seedPendingTransaction('tx2', 'C1', ['sync_attempts' => 2]);
+        $this->seedPendingTransaction('tx3', 'C1', ['sync_attempts' => 3, 'sync_status' => 'pending']);
+        $this->seedPendingTransaction('tx4', 'C1', ['sync_status' => 'synced']);
+
+        $list = $this->service->listPendingSync('C1');
+
+        $ids = array_column($list, 'id');
+        $this->assertCount(2, $list);
+        $this->assertContains('tx1', $ids);
+        $this->assertContains('tx2', $ids);
+        $this->assertNotContains('tx3', $ids); // attempts >= 3 → pulado
+        $this->assertNotContains('tx4', $ids); // status != pending → pulado
+    }
+
+    public function test_list_pending_sync_orders_by_created_at_asc(): void
+    {
+        // FIFO: mais antiga primeiro.
+        $this->seedPendingTransaction('tx-old', 'C1', ['created_at' => '2026-06-01T00:00:00.000000Z']);
+        $this->seedPendingTransaction('tx-new', 'C1', ['created_at' => '2026-06-15T00:00:00.000000Z']);
+        $this->seedPendingTransaction('tx-mid', 'C1', ['created_at' => '2026-06-10T00:00:00.000000Z']);
+
+        $list = $this->service->listPendingSync('C1');
+
+        $this->assertSame(['tx-old', 'tx-mid', 'tx-new'], array_column($list, 'id'));
+    }
+
+    public function test_list_pending_sync_respects_limit(): void
+    {
+        for ($i = 0; $i < 5; $i++) {
+            $this->seedPendingTransaction("tx-{$i}", 'C1', [
+                'created_at' => sprintf('2026-06-01T00:00:%02d.000000Z', $i),
+            ]);
+        }
+
+        $list = $this->service->listPendingSync('C1', limit: 3);
+
+        $this->assertCount(3, $list);
+    }
+
+    public function test_list_pending_sync_with_null_chat_id_returns_all_chats(): void
+    {
+        $this->seedPendingTransaction('tx-c1', 'C1');
+        $this->seedPendingTransaction('tx-c2', 'C2');
+
+        $list = $this->service->listPendingSync(chatId: null);
+
+        $ids = array_column($list, 'id');
+        $this->assertCount(2, $list);
+        $this->assertContains('tx-c1', $ids);
+        $this->assertContains('tx-c2', $ids);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | resetPendingSyncAttempts
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_reset_pending_sync_attempts_zeros_all_for_chat(): void
+    {
+        $this->seedPendingTransaction('tx1', 'C1', ['sync_attempts' => 2, 'sync_error_message' => 'old error']);
+        $this->seedPendingTransaction('tx2', 'C1', ['sync_attempts' => 1]);
+        $this->seedPendingTransaction('tx3', 'C2', ['sync_attempts' => 2]); // outro chat — não deve mexer
+
+        $count = $this->service->resetPendingSyncAttempts('C1');
+
+        $this->assertSame(2, $count);
+        $this->assertSame(0, $this->service->getTransaction('tx1')['sync_attempts']);
+        $this->assertSame(FirestoreService::SYNC_PENDING, $this->service->getTransaction('tx1')['sync_status']);
+        $this->assertNull($this->service->getTransaction('tx1')['sync_error_message']);
+        $this->assertSame(0, $this->service->getTransaction('tx2')['sync_attempts']);
+        $this->assertSame(2, $this->service->getTransaction('tx3')['sync_attempts']); // preservado
+    }
+
+    public function test_reset_pending_sync_attempts_returns_zero_when_no_pendents(): void
+    {
+        // Nenhuma transação pendente.
+        $count = $this->service->resetPendingSyncAttempts('C1');
+
+        $this->assertSame(0, $count);
+    }
+
+    public function test_reset_pending_sync_attempts_with_null_chat_id_resets_globally(): void
+    {
+        $this->seedPendingTransaction('tx1', 'C1', ['sync_attempts' => 2]);
+        $this->seedPendingTransaction('tx2', 'C2', ['sync_attempts' => 1]);
+
+        $count = $this->service->resetPendingSyncAttempts(chatId: null);
+
+        $this->assertSame(2, $count);
+        $this->assertSame(0, $this->service->getTransaction('tx1')['sync_attempts']);
+        $this->assertSame(0, $this->service->getTransaction('tx2')['sync_attempts']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | markSyncStarted (lock atômico)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_mark_sync_started_acquires_lock_and_returns_true(): void
+    {
+        $id = $this->seedPendingTransaction('tx1', 'C1');
+
+        $acquired = $this->service->markSyncStarted($id);
+
+        $this->assertTrue($acquired);
+        $this->assertTrue($this->service->getTransaction($id)['processing']);
+    }
+
+    public function test_mark_sync_started_is_idempotent_second_call_returns_false(): void
+    {
+        $id = $this->seedPendingTransaction('tx1', 'C1');
+
+        $first = $this->service->markSyncStarted($id);
+        $second = $this->service->markSyncStarted($id);
+
+        $this->assertTrue($first, 'Primeira chamada deve adquirir o lock');
+        $this->assertFalse($second, 'Segunda chamada concorrente deve ser bloqueada');
+    }
+
+    public function test_mark_sync_started_releases_lock_after_success_or_failed(): void
+    {
+        $id = $this->seedPendingTransaction('tx1', 'C1');
+
+        $this->service->markSyncStarted($id);
+        $this->assertTrue($this->service->getTransaction($id)['processing']);
+
+        $this->service->markSyncSuccess($id, 'row-42');
+        $this->assertFalse($this->service->getTransaction($id)['processing']);
+
+        // Outra chamada agora deve passar.
+        $this->assertTrue($this->service->markSyncStarted($id));
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | markSyncSuccess
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_mark_sync_success_sets_status_and_row_id_and_releases_lock(): void
+    {
+        $id = $this->seedPendingTransaction('tx1', 'C1', ['processing' => true]);
+
+        $this->service->markSyncSuccess($id, 'row-42');
+
+        $doc = $this->service->getTransaction($id);
+        $this->assertSame(FirestoreService::SYNC_SYNCED, $doc['sync_status']);
+        $this->assertSame('row-42', $doc['spreadsheet_row_id']);
+        $this->assertFalse($doc['processing']);
+    }
+
+    public function test_mark_sync_success_is_idempotent(): void
+    {
+        $id = $this->seedPendingTransaction('tx1', 'C1');
+
+        $this->service->markSyncSuccess($id, 'row-1');
+        $this->service->markSyncSuccess($id, 'row-2'); // sobrescreve
+
+        $this->assertSame('row-2', $this->service->getTransaction($id)['spreadsheet_row_id']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | markSyncFailed
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_mark_sync_failed_sets_status_error_and_releases_lock(): void
+    {
+        $id = $this->seedPendingTransaction('tx1', 'C1', ['processing' => true, 'sync_attempts' => 3]);
+
+        $this->service->markSyncFailed($id, 'HTTP 500');
+
+        $doc = $this->service->getTransaction($id);
+        $this->assertSame(FirestoreService::SYNC_FAILED, $doc['sync_status']);
+        $this->assertSame('HTTP 500', $doc['sync_error_message']);
+        // markSyncFailed NÃO incrementa attempts (SyncSheet já o fez no caminho
+        // de erro); documenta a contagem que veio do caller.
+        $this->assertSame(3, $doc['sync_attempts']);
+        $this->assertNotNull($doc['sync_last_attempt_at']);
+        $this->assertFalse($doc['processing']);
+    }
+
+    public function test_mark_sync_failed_sets_notified_at_on_first_failure(): void
+    {
+        // Doc novo: notified_at = null. Após 1ª falha, deve ser carimbado.
+        $id = $this->seedPendingTransaction('tx1', 'C1', ['notified_at' => null]);
+
+        $this->service->markSyncFailed($id, 'boom');
+
+        $this->assertNotNull($this->service->getTransaction($id)['notified_at']);
+    }
+
+    public function test_mark_sync_failed_does_not_overwrite_existing_notified_at(): void
+    {
+        // Doc já notificado (idempotência): 2ª/3ª falha NÃO sobrescreve o carimbo.
+        $originalStamp = '2026-06-15T10:00:00.000000Z';
+        $id = $this->seedPendingTransaction('tx1', 'C1', [
+            'notified_at' => $originalStamp,
+            'sync_attempts' => 3,
+        ]);
+
+        $this->service->markSyncFailed($id, 'boom again');
+
+        $this->assertSame($originalStamp, $this->service->getTransaction($id)['notified_at']);
+    }
+
+    public function test_update_sync_status_clears_processing_flag(): void
+    {
+        // Regressão M9: o updateSyncStatus legado (M6/M7/M8) deve limpar
+        // o flag processing quando transiciona o sync_status — caso
+        // contrário, o lock ficaria preso entre tentativas.
+        $id = $this->seedPendingTransaction('tx1', 'C1', ['processing' => true]);
+
+        $this->service->updateSyncStatus($id, FirestoreService::SYNC_PENDING, 'transient error');
+
+        $this->assertFalse($this->service->getTransaction($id)['processing']);
+    }
+
+    public function test_save_transaction_initializes_sync_metadata_fields(): void
+    {
+        // Regressão M9.8: notified_at, processing e spreadsheet_row_id
+        // devem ser inicializados em saveTransaction para que o command
+        // (que depende de notified_at=null na 1ª falha) funcione sem
+        // precisar de merge explícito.
+        $id = $this->service->saveTransaction('C1', $this->dto(), 'text');
+
+        $doc = $this->service->getTransaction($id);
+        $this->assertNull($doc['notified_at']);
+        $this->assertFalse($doc['processing']);
+        $this->assertNull($doc['spreadsheet_row_id']);
+    }
 }
