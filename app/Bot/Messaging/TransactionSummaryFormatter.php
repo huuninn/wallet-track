@@ -30,6 +30,35 @@ final class TransactionSummaryFormatter
     ];
 
     /**
+     * Emoji por tipo de transação (usado na linha 2 de {@see listRow()}).
+     */
+    private const array TYPE_EMOJIS = [
+        'expense' => '💸',
+        'income' => '💰',
+    ];
+
+    /**
+     * Mapa categoria → emoji (linha 1 de {@see listRow()} e fallback `🏷`).
+     *
+     * Tabela alinhada com a spec §6.3 (9 categorias padrão + fallback genérico).
+     * Categorias personalizadas usam o fallback se não houver match exato
+     * (case-sensitive para preservar o nome original).
+     */
+    private const array CATEGORY_EMOJIS = [
+        'Alimentação' => '🍕',
+        'Transporte' => '🚗',
+        'Moradia' => '🏠',
+        'Saúde' => '❤️',
+        'Educação' => '📚',
+        'Lazer' => '🎮',
+        'Salário' => '💰',
+        'Freelance' => '💻',
+        'Outros' => '📦',
+    ];
+
+    private const string CATEGORY_EMOJI_FALLBACK = '🏷';
+
+    /**
      * Mapa de campos pedíveis → rótulos humanizados para prompts.
      *
      * Usado por {@see fieldLabel()} e indiretamente pelo Router para compor
@@ -67,6 +96,49 @@ final class TransactionSummaryFormatter
         $lines[] = '📅 <b>Data:</b> '.$this->formatDate($dto->date);
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Formata uma lista de transações para exibição em formato compacto (M9.5 / T-005).
+     *
+     * Layout de saída (HTML, parse_mode=HTML no Telegram):
+     * ```
+     * 📋 <b>Últimas {shown} transações</b>
+     *
+     * 1. 🍕 <b>Almoço restaurante</b>
+     *    💸 Despesa · R$ 47,50 · Alimentação
+     *    📅 15/06/2026 · #almoço #restaurante
+     *
+     * 2. 💰 <b>Salário Junho</b>
+     *    📈 Receita · R$ 5.000,00 · Salário
+     *    📅 01/06/2026
+     *
+     * <i>Mostrando {shown}.</i>
+     * ```
+     *
+     * Cobertura de testes: CT-027, CT-027a, CT-027b, CT-027c, CT-028g.
+     *
+     * @param  list<array{id: string, data: array<string, mixed>}>  $transactions
+     */
+    public function listSummary(array $transactions, int $shown): string
+    {
+        $noun = $shown === 1 ? 'transação' : 'transações';
+        $header = "📋 <b>Últimas {$shown} {$noun}</b>";
+
+        if ($transactions === []) {
+            return $header;
+        }
+
+        $rows = [];
+        foreach ($transactions as $i => $doc) {
+            $rows[] = $this->listRow($doc['data'] ?? [], $i + 1);
+        }
+
+        $footer = $shown === 1
+            ? "<i>Mostrando 1 transação.</i>"
+            : "<i>Mostrando {$shown} transações.</i>";
+
+        return $header."\n\n".implode("\n\n", $rows)."\n\n".$footer;
     }
 
     /**
@@ -117,6 +189,71 @@ final class TransactionSummaryFormatter
     | Helpers de formato
     |--------------------------------------------------------------------------
     */
+
+    /**
+     * Formata uma única linha da listagem (formato compacto do spec §2.8 / T-005).
+     *
+     * @param  array<string, mixed>  $data  Documento da transação (campos do schema `transactions/`).
+     * @param  int  $index  Posição 1-indexada na listagem.
+     */
+    private function listRow(array $data, int $index): string
+    {
+        $description = $this->escape((string) ($data['description'] ?? '—'));
+        $category = (string) ($data['category'] ?? '');
+        $catEmoji = $category !== '' ? $this->categoryEmoji($category) : self::CATEGORY_EMOJI_FALLBACK;
+
+        $type = (string) ($data['type'] ?? '');
+        $typeEmoji = self::TYPE_EMOJIS[$type] ?? self::CATEGORY_EMOJI_FALLBACK;
+        $typeLabel = self::TYPE_LABELS[$type] ?? $type;
+
+        $amount = isset($data['amount']) && is_numeric($data['amount'])
+            ? (float) $data['amount']
+            : null;
+        $amountStr = $this->formatAmount($amount);
+
+        $dateStr = $this->formatDate(isset($data['date']) ? (string) $data['date'] : null);
+
+        $firstLine = "{$index}. {$catEmoji} <b>{$description}</b>";
+        $secondLine = "   {$typeEmoji} {$typeLabel} · {$amountStr}".($category !== '' ? " · {$this->escape($category)}" : '');
+
+        $labels = $this->formatLabels($data['labels'] ?? []);
+        $thirdLine = $labels !== ''
+            ? "   📅 {$dateStr} · {$labels}"
+            : "   📅 {$dateStr}";
+
+        return $firstLine."\n".$secondLine."\n".$thirdLine;
+    }
+
+    /**
+     * Devolve o emoji de uma categoria, com fallback `🏷` para desconhecidas.
+     */
+    private function categoryEmoji(string $category): string
+    {
+        return self::CATEGORY_EMOJIS[$category] ?? self::CATEGORY_EMOJI_FALLBACK;
+    }
+
+    /**
+     * Formata a lista de labels como `#label1 #label2`. Vazio → string vazia.
+     *
+     * @param  mixed  $labels  Aceita `list<string>` ou `null` (defensivo).
+     */
+    private function formatLabels(mixed $labels): string
+    {
+        if (! is_array($labels)) {
+            return '';
+        }
+
+        $clean = [];
+        foreach ($labels as $label) {
+            $label = (string) $label;
+            if ($label === '') {
+                continue;
+            }
+            $clean[] = '#'.ltrim($label, '#');
+        }
+
+        return implode(' ', $clean);
+    }
 
     private function formatAmount(?float $amount): string
     {
