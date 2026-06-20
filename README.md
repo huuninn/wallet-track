@@ -23,10 +23,11 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 - ✅ Validação de campos (valor > 0, data passada/hoje, categoria válida)
 - ✅ Sugestão automática de labels (histórico + keywords, sem LLM)
 - ✅ Confirmação inline (Confirmar / Editar / Cancelar)
-- ✅ Wizard manual `/nova` (fallback determinístico)
-- ✅ Comandos: `/start`, `/help`, `/ultimos`, `/categorias`, `/sync`
-- ✅ Sincronização pendente via Cloud Scheduler (cron 5min)
-- ✅ Timeout de sessão (15min)
+- ✅ Wizard manual `/nova` (fallback determinístico, 6 etapas)
+- ✅ Comandos: `/start`, `/help`, `/nova`, `/cancelar`, `/ultimos [n]`, `/categorias`, `/sync`
+- ✅ Sincronização pendente via Cloud Scheduler (cron a cada 5 min)
+- ✅ Notificação de falha definitiva única (campo `notified_at` no Firestore)
+- ✅ Timeout de sessão (15 min)
 - ✅ Idempotência de confirmação
 - ✅ Whitelist de chat_id (uso pessoal, 1 usuário)
 
@@ -63,6 +64,15 @@ Toda a documentação do projeto está em [`docs/`](./docs/):
 | 05 | [Revisão v2](./docs/05-revisao-v2.md) | Laravel 13 + Gemini OCR (substituindo Vision) |
 | 06 | [Plano de Implementação](./docs/06-plano-implementacao.md) | 11 milestones (M0–M10) com dependências e critérios |
 
+Documentação adicional do M9 (Comandos Auxiliares):
+
+| Documento | Descrição |
+|-----------|-----------|
+| [docs/M9-COMPLETO.md](./docs/M9-COMPLETO.md) | Sumário executivo do M9 entregue |
+| [docs/planos/m9-plano-tecnico.md](./docs/planos/m9-plano-tecnico.md) | Plano técnico M9 (24 tarefas, 6 fases) |
+| [docs/specs/m9-spec-fase-2.md](./docs/specs/m9-spec-fase-2.md) | Especificação técnica M9 (1.318 linhas, 11 decisões) |
+| [docs/testes/m9-plano-testes.md](./docs/testes/m9-plano-testes.md) | Plano de testes M9 (74 CTs) |
+
 **Ordem de leitura recomendada:** 01 → 02 → 06 → (03 durante implementação).
 
 ---
@@ -73,10 +83,13 @@ Toda a documentação do projeto está em [`docs/`](./docs/):
 |------|--------|
 | Análise de Negócio | ✅ Aprovada |
 | Especificação Técnica | ✅ Aprovada (v2) |
-| Plano de Testes Manuais | ✅ Completo (47 CTs) |
+| Plano de Testes Manuais | ✅ Completo (47 CTs + 27 CTs M9) |
 | Plano de Implementação | ✅ Aprovado |
-| **Implementação** | ⏸️ **Pendente (inicia em M0)** |
-| Deploy em produção | ⏸️ Pendente (M10) |
+| M0–M6 (skeleton, IA, persistência) | ✅ Implementado |
+| M7 (state machine + router) | ✅ Implementado |
+| M8 (sugestão heurística) | ✅ Implementado |
+| M9 (comandos auxiliares) | ✅ **Implementado** (ver [`docs/M9-COMPLETO.md`](./docs/M9-COMPLETO.md)) |
+| M10 (deploy produção) | ⏸️ Pendente |
 
 ---
 
@@ -169,19 +182,50 @@ Detalhes completos na [Especificação Técnica](./docs/02-especificacao-tecnica
 
 ---
 
-## Comandos do Bot
+## Comandos disponíveis
 
 | Comando | Descrição |
 |---------|-----------|
-| `/start` | Boas-vindas + instruções |
-| `/help` | Lista todos os comandos |
-| `/nova` | Wizard passo-a-passo (Tipo→Valor→Descrição→Categoria→Labels) |
-| `/cancelar` | Cancela operação em qualquer estado |
-| `/ultimos [n]` | Últimas N transações (default 5, máx 50) |
+| `/start` | Boas-vindas e instruções iniciais |
+| `/help` | Lista completa de comandos |
+| `/nova` | Cadastro passo a passo (6 etapas) |
+| `/cancelar` | Cancela a operação atual |
+| `/ultimos [n]` | Últimas N transações (padrão 5, máx 50) |
 | `/categorias` | Lista categorias com contador de uso |
-| `/sync` | Força sincronização de pendentes |
+| `/sync` | Dispara sincronização com Google Sheets |
 
-**Uso comum:** basta enviar uma mensagem em linguagem natural ou uma foto de nota fiscal — o bot cuida do resto.
+**Uso comum:** além dos comandos, basta enviar uma mensagem em linguagem natural
+(*"Paguei R$ 47,50 no almoço de hoje"*) ou uma foto de nota fiscal — o bot cuida
+do resto.
+
+### Sincronização automática
+
+O endpoint `GET /cron/sync-pending` permite que o **Cloud Scheduler** execute a
+sincronização periodicamente (a cada 5 min) sem intervenção do usuário. A
+autenticação é feita via header `X-Cron-Token`, validado por
+[`hash_equals()`](https://www.php.net/manual/en/function.hash-equals.php) em
+[`App\Http\Middleware\VerifyCronToken`](./app/Http/Middleware/VerifyCronToken.php).
+
+```bash
+# Exemplo de uso (servidor de produção)
+curl -H "X-Cron-Token: $CRON_SECRET_TOKEN" \
+     https://wallet-track-<hash>-uc.a.run.app/cron/sync-pending
+# → {"status":"ok","processed":N,"synced":N,"failed":N,"errors":[],"duration_ms":N,"timestamp":"..."}
+```
+
+**Variáveis de ambiente obrigatórias** (configuradas via Secret Manager):
+
+| Variável | Descrição |
+|----------|-----------|
+| `CRON_SECRET_TOKEN` | Token de 32 bytes hex (`openssl rand -hex 32`) |
+
+**Resposta**: JSON estruturado com `processed`, `synced`, `failed`, `errors[]`,
+`duration_ms` e `timestamp` ISO 8601 UTC. Falhas parciais retornam HTTP 200
+(recuperáveis) — apenas erros de infraestrutura retornam 5xx. O
+[Agendador Cloud](https://cloud.google.com/scheduler/docs) deve ser configurado
+com a expressão cron `*/5 * * * *` apontando para esse endpoint.
+
+Documentação completa: [`docs/M9-COMPLETO.md`](./docs/M9-COMPLETO.md).
 
 ---
 
