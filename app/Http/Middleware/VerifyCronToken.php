@@ -35,11 +35,14 @@ use Symfony\Component\HttpFoundation\Response;
  */
 final class VerifyCronToken
 {
+    /** Nome do header HTTP que carrega o token de autenticação server-to-server. */
+    private const string CRON_TOKEN_HEADER = 'X-Cron-Token';
+
     public function handle(Request $request, Closure $next): Response
     {
         $expected = (string) config('services.cron.secret_token', '');
 
-        $provided = (string) ($request->header('X-Cron-Token') ?? '');
+        $provided = (string) ($request->header(self::CRON_TOKEN_HEADER) ?? '');
 
         // hash_equals exige que os dois operandos tenham o mesmo tamanho
         // (ou um seja string vazia) — cast garante que estamos passando
