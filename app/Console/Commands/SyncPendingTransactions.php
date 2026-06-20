@@ -216,19 +216,30 @@ final class SyncPendingTransactions extends Command
     }
 
     /**
-     * Processa UMA transação. Retorna um array com chaves:
-     *  - `synced`: bool
-     *  - `attempts`: int (contador final, pós-incremento se falhou)
-     *  - `error`: string|null
+     * Processa UMA transação: sincroniza com Google Sheets.
      *
-     * Erros inesperados (Throwable) NÃO matam o loop — são capturados e
-     * registrados como falha da transação individual. Erro de INFRAESTRUTURA
-     * (Firestore completamente indisponível) seria propagado por baixo
-     * (updateSyncStatus lançaria), e o caller decide — aqui mantemos a
-     * granularidade por transação para isolar falhas.
+     * @param  array<string, mixed>  $data  Documento da transação (campos do schema `transactions/`).
+     * @return array{synced: bool, attempts: int, error: ?string} Resultado do processamento:
+     *                                                            - `synced`: bool — true se gravou no Sheets com sucesso
+     *                                                            - `attempts`: int — contador final de tentativas (pós-incremento se falhou)
+     *                                                            - `error`: string|null — descrição da falha (`null` em sucesso)
      *
-     * @param  array<string, mixed>  $data
-     * @return array{synced: bool, attempts: int, error: ?string}
+     * **Comportamento de erros**:
+     *
+     *  - **Erros de negócio** (DTO inválido, falha de I/O do Sheets): são
+     *    capturados DENTRO deste método, registrados em Firestore via
+     *    `markSyncFailed`, e retornados como `synced=false` — o loop em
+     *    `handle()` continua com a próxima transação.
+     *  - **Erros de infraestrutura** (Firestore completamente indisponível,
+     *    timeout, etc.) NÃO são capturados — propagam para `handle()` e
+     *    MATAM o loop. O orquestrador (Cloud Scheduler) vê exit≠0 e
+     *    re-tenta a execução completa na próxima rodada.
+     *
+     * Esta granularidade é intencional: o loop em `handle()` chama
+     * `processOne()` SEM try/catch externo, porque a única falha que
+     * ESCAPA é justamente a de infraestrutura — o caller decide se vale
+     * a pena continuar (decidimos que NÃO vale: melhor abortar e re-tentar
+     * do que iterar em cima de Firestore quebrado).
      */
     private function processOne(
         FirestoreService $firestore,
