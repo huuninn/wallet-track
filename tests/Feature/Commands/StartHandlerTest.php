@@ -12,9 +12,11 @@ use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\Feature\Conversation\ConversationRouterTest;
 use Tests\TestCase;
 
 /**
@@ -23,7 +25,7 @@ use Tests\TestCase;
  * Garante que `/start` reseta a sessão em qualquer estado (CT-023a, CT-023b,
  * CT-023c, CT-023f) e mantém a idempotência em IDLE (CT-023e).
  *
- * Padrão de teste (consistente com {@see \Tests\Feature\Conversation\ConversationRouterTest}):
+ * Padrão de teste (consistente com {@see ConversationRouterTest}):
  * `InMemoryFirestoreGateway` bindado no container + `InMemoryBotMessenger`
  * como `BotMessenger` (captura `sendMessage` indireto) + mock leve do
  * `Nutgram` que devolve um `Message` pré-configurado.
@@ -96,6 +98,7 @@ class StartHandlerTest extends TestCase
         );
     }
 
+    #[Group('smoke')]
     public function test_start_in_idle_sends_welcome_and_keeps_no_session(): void
     {
         // CT-023: /start em IDLE — nenhuma sessão criada, boas-vindas enviadas.

@@ -10,6 +10,7 @@ use App\Services\Google\FirestoreGateway;
 use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\Feature\Console\StubSyncsSheet;
 use Tests\TestCase;
 
@@ -88,6 +89,7 @@ class SyncPendingRouteTest extends TestCase
     |--------------------------------------------------------------------------
     */
 
+    #[Group('smoke')]
     public function test_cron_valid_token_returns_200_with_zero_pendents(): void
     {
         $response = $this->getJson('/cron/sync-pending', [

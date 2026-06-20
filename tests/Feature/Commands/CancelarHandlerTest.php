@@ -12,9 +12,11 @@ use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\Feature\Conversation\ConversationRouterTest;
 use Tests\TestCase;
 
 /**
@@ -23,7 +25,7 @@ use Tests\TestCase;
  * Cobre CT-026a (IDLE) até CT-026e (durante wizard).
  * Regressão preservada: o handler continua chamando `clearSession` + `notifyCancelled`
  * quando há sessão ativa (comportamento já testado em
- * {@see \Tests\Feature\Conversation\ConversationRouterTest::test_cancelar_handler_clears_session_and_notifies}).
+ * {@see ConversationRouterTest::test_cancelar_handler_clears_session_and_notifies}).
  */
 #[CoversClass(CancelarHandler::class)]
 class CancelarHandlerTest extends TestCase
@@ -113,6 +115,7 @@ class CancelarHandlerTest extends TestCase
         $this->assertSame(0, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
     }
 
+    #[Group('smoke')]
     public function test_cancelar_in_awaiting_data_clears_session(): void
     {
         // CT-026b: AWAITING_DATA → clearSession + notifyCancelled (comportamento legado).

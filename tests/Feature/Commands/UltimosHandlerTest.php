@@ -11,6 +11,7 @@ use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
@@ -108,6 +109,7 @@ class UltimosHandlerTest extends TestCase
         }
     }
 
+    #[Group('smoke')]
     public function test_ultimos_default_5_lists_five_transactions(): void
     {
         // CT-027: /ultimos sem parâmetro → 5 transações (12 disponíveis).

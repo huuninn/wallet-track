@@ -12,6 +12,7 @@ use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
@@ -94,6 +95,7 @@ class NovaHandlerTest extends TestCase
         );
     }
 
+    #[Group('smoke')]
     public function test_nova_in_idle_configures_wizard_session(): void
     {
         // CT-025 (parte da inicialização): /nova em IDLE → sessão wizard

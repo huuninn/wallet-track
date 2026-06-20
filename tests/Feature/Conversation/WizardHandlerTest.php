@@ -22,6 +22,7 @@ use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 
 /**
@@ -325,6 +326,7 @@ class WizardHandlerTest extends TestCase
         $this->assertNotContains('a', $session['draft']['labels']);
     }
 
+    #[Group('smoke')]
     public function test_wizard_complete_flow_reaches_confirmation(): void
     {
         // CT-025 (happy path completo): tipo → valor → descrição → categoria → labels.

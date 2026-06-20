@@ -12,6 +12,7 @@ use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
@@ -90,6 +91,7 @@ class CategoriasHandlerTest extends TestCase
         }
     }
 
+    #[Group('smoke')]
     public function test_categorias_lists_all_with_use_count(): void
     {
         // CT-029 / CT-029c: lista com contador de uso.

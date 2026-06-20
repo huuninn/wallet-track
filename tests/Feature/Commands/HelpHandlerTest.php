@@ -7,6 +7,7 @@ namespace Tests\Feature\Commands;
 use App\Bot\Handlers\HelpHandler;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
@@ -30,6 +31,7 @@ class HelpHandlerTest extends TestCase
         parent::tearDown();
     }
 
+    #[Group('smoke')]
     public function test_help_message_lists_seven_commands(): void
     {
         $this->assertCount(7, HelpHandler::commands(), 'HelpHandler::commands() deve listar 7 comandos');
