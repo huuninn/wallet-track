@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Bot\Messaging;
 
+use App\Bot\Handlers\StartHandler;
 use App\Dto\TransactionData;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Properties\ButtonStyle;
@@ -22,7 +23,7 @@ use SergiX44\Nutgram\Telegram\Types\Message\Message;
  * Convenções:
  *
  *  - Mensagens de usuário são enviadas em HTML parse_mode (permite <b>, <code>
- *    e emojis) — alinhado com {@see \App\Bot\Handlers\StartHandler}.
+ *    e emojis) — alinhado com {@see StartHandler}.
  *  - callback_data dos botões: `confirm`, `cancel`, `edit`, `edit:amount`,
  *    `edit:type`, `edit:date` — curtos (<= 64 bytes, limite da API).
  *  - Em caso de falha de rede/API, propagamos o que o Nutgram lança

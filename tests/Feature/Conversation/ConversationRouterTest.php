@@ -12,6 +12,7 @@ use App\Actions\SyncsSheet;
 use App\Bot\Handlers\CancelarHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
+use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Conversation\ConversationInput;
 use App\Conversation\ConversationRouter;
 use App\Conversation\InputKind;
@@ -167,7 +168,7 @@ class ConversationRouterTest extends TestCase
         return new ConversationRouter(
             stateMachine: $stateMachine ?? new StateMachine,
             messenger: $this->messenger,
-            formatter: new \App\Bot\Messaging\TransactionSummaryFormatter,
+            formatter: new TransactionSummaryFormatter,
             firestore: $this->firestore,
             extractText: $this->extractText,
             extractImage: $this->extractImage,

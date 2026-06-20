@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Bot\Messaging;
 
 use App\Dto\TransactionData;
+use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Google\InMemorySheetsGateway;
 
 /**
  * Implementação fake de {@see BotMessenger} para uso em testes (M7).
@@ -14,8 +16,8 @@ use App\Dto\TransactionData;
  * para que o Router possa simular o "save/lookup" de `message_id_confirm`.
  *
  * Replica o padrão dos fakes já usados no projeto
- * ({@see \App\Services\Google\InMemoryFirestoreGateway},
- * {@see \App\Services\Google\InMemorySheetsGateway}): regra de negócio testada
+ * ({@see InMemoryFirestoreGateway},
+ * {@see InMemorySheetsGateway}): regra de negócio testada
  * sem rede, em milissegundos, com asserções ricas sobre o que foi enviado.
  *
  * Estrutura dos registros:

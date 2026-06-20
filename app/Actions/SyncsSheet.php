@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 
 /**
  * Abstração do sincronismo Firestore → Google Sheets (M7.3).
  *
- * Desacopla o {@see \App\Conversation\ConversationRouter} da implementação
+ * Desacopla o {@see ConversationRouter} da implementação
  * concreta ({@see SyncSheet}, que orquestra SheetsService + FirestoreService),
  * permitindo que os testes do Router substituam por stubs determinísticos.
  *

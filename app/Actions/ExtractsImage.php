@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 use App\Exceptions\ExtractionException;
 
 /**
  * Abstração da extração de imagem → TransactionData (M7.3).
  *
- * Desacopla o {@see \App\Conversation\ConversationRouter} da implementação
+ * Desacopla o {@see ConversationRouter} da implementação
  * concreta ({@see ExtractFromImage}, que orquestra TelegramFileDownloader +
  * GeminiService), permitindo que os testes substituam por stubs simples.
  *

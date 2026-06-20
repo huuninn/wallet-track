@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Messaging;
 
 use App\Dto\TransactionData;
+use App\Services\Google\SheetsService;
 
 /**
  * Formatação humanizada do resumo de um {@see TransactionData} para exibição
@@ -22,7 +23,7 @@ use App\Dto\TransactionData;
 final class TransactionSummaryFormatter
 {
     /**
-     * Map type interno → rótulo em PT-BR (espelha {@see \App\Services\Google\SheetsService}).
+     * Map type interno → rótulo em PT-BR (espelha {@see SheetsService}).
      */
     private const array TYPE_LABELS = [
         'expense' => 'Despesa',
@@ -135,7 +136,7 @@ final class TransactionSummaryFormatter
         }
 
         $footer = $shown === 1
-            ? "<i>Mostrando 1 transação.</i>"
+            ? '<i>Mostrando 1 transação.</i>'
             : "<i>Mostrando {$shown} transações.</i>";
 
         return $header."\n\n".implode("\n\n", $rows)."\n\n".$footer;
@@ -151,9 +152,9 @@ final class TransactionSummaryFormatter
         $label = self::FIELD_LABELS[$field] ?? $field;
 
         return match ($field) {
-            'amount' => "Não consegui identificar o 💵 <b>valor</b>. Qual o valor da transação? (ex.: <code>47,50</code>)",
-            'type' => "Não consegui identificar o 🔖 <b>tipo</b>. É <b>despesa</b> ou <b>receita</b>?",
-            'date' => "Não consegui identificar a 📅 <b>data</b>. Qual a data? (ex.: <code>15/06/2026</code> ou <code>ontem</code>)",
+            'amount' => 'Não consegui identificar o 💵 <b>valor</b>. Qual o valor da transação? (ex.: <code>47,50</code>)',
+            'type' => 'Não consegui identificar o 🔖 <b>tipo</b>. É <b>despesa</b> ou <b>receita</b>?',
+            'date' => 'Não consegui identificar a 📅 <b>data</b>. Qual a data? (ex.: <code>15/06/2026</code> ou <code>ontem</code>)',
             default => "Por favor, informe o campo <b>{$label}</b>:",
         };
     }
@@ -166,12 +167,12 @@ final class TransactionSummaryFormatter
         $label = self::FIELD_LABELS[$field] ?? $field;
 
         return match ($field) {
-            'amount' => "✏️ Digite o novo 💵 <b>valor</b> (ex.: <code>50,00</code>):",
-            'type' => "✏️ Digite o novo 🔖 <b>tipo</b> (<b>despesa</b> ou <b>receita</b>):",
-            'date' => "✏️ Digite a nova 📅 <b>data</b> (ex.: <code>15/06/2026</code> ou <code>ontem</code>):",
-            'description' => "✏️ Digite a nova 💸 <b>descrição</b>:",
-            'category' => "✏️ Digite a nova 🏷 <b>categoria</b>:",
-            'observations' => "✏️ Digite as novas observações:",
+            'amount' => '✏️ Digite o novo 💵 <b>valor</b> (ex.: <code>50,00</code>):',
+            'type' => '✏️ Digite o novo 🔖 <b>tipo</b> (<b>despesa</b> ou <b>receita</b>):',
+            'date' => '✏️ Digite a nova 📅 <b>data</b> (ex.: <code>15/06/2026</code> ou <code>ontem</code>):',
+            'description' => '✏️ Digite a nova 💸 <b>descrição</b>:',
+            'category' => '✏️ Digite a nova 🏷 <b>categoria</b>:',
+            'observations' => '✏️ Digite as novas observações:',
             default => "✏️ Digite o novo valor para <b>{$label}</b>:",
         };
     }

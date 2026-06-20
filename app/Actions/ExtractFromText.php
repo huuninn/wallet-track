@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 use App\Exceptions\ExtractionException;
 use App\Services\DeepSeek\DeepSeekService;
@@ -18,7 +19,7 @@ use App\Services\DeepSeek\DeepSeekService;
  * — tipicamente sugerir o wizard `/nova` (spec §10, CT-037).
  *
  * Nota de escopo: campos "pedíveis" ausentes (valor/tipo) NÃO chegam aqui
- * como exceção — retornam null no DTO, e o {@see \App\Conversation\ConversationRouter}
+ * como exceção — retornam null no DTO, e o {@see ConversationRouter}
  * pergunta ao usuário.
  *
  * Implementa {@see ExtractsText} (introduzida em M7.3) para desacoplar o

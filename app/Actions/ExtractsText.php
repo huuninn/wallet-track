@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 use App\Exceptions\ExtractionException;
 
 /**
  * Abstração da extração de texto livre → TransactionData (M7.3).
  *
- * Desacopla o {@see \App\Conversation\ConversationRouter} da implementação
+ * Desacopla o {@see ConversationRouter} da implementação
  * concreta ({@see ExtractFromText}, que orquestra DeepSeekService), permitindo
  * que os testes do Router substituam por stubs simples (anonymous classes)
  * sem montar a cadeia completa de dependências HTTP.

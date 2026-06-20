@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
+use App\Conversation\StateMachine;
+
 /**
  * Estados da máquina de estados conversacional do Wallet Track (M7.1).
  *
  * Cada chat tem uma sessão Firestore (`sessions/{chat_id}`) cujo campo
- * `state` armazena o valor (string) deste enum. O {@see \App\Conversation\StateMachine}
+ * `state` armazena o valor (string) deste enum. O {@see StateMachine}
  * valida que as transições entre estados seguem o fluxo legal descrito em
  * docs/06-plano-implementacao.md §7 (M7.2).
  *

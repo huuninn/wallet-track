@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Conversation;
 
+use App\Bot\BotLoader;
+
 /**
  * DTO de input do Telegram normalizado (M7.3).
  *
  * Abstrai os diferentes formatos de update do Telegram (mensagem de texto,
  * mensagem com foto, callback query) em uma única estrutura consumida pelo
  * {@see ConversationRouter}. Isto desacopla o Router da SDK do Nutgram —
- * o {@see \App\Bot\BotLoader} converte os updates brutos em instâncias
+ * o {@see BotLoader} converte os updates brutos em instâncias
  * deste DTO, e o Router nunca toca `Nutgram`, `Message` ou `CallbackQuery`
  * diretamente.
  *

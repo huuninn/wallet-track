@@ -21,6 +21,7 @@ use App\Services\Google\FirestoreService;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\ServiceProvider;
 use SergiX44\Nutgram\Nutgram;
+use Tests\Feature\Conversation\ConversationRouterTest;
 
 /**
  * Registra a camada conversacional (M7 + M8) no container.
@@ -54,7 +55,7 @@ use SergiX44\Nutgram\Nutgram;
  *    automaticamente — a peça central do M7/M8.
  *
  * Em testes, o ConversationRouter é instanciado diretamente com stubs
- * (ver {@see \Tests\Feature\Conversation\ConversationRouterTest}) — este
+ * (ver {@see ConversationRouterTest}) — este
  * provider não é exercitado em unit tests.
  */
 class ConversationServiceProvider extends ServiceProvider

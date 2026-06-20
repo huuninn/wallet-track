@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Bot\Handlers;
 
+use App\Actions\ExtractFromImage;
 use App\Conversation\ConversationInput;
 use App\Conversation\ConversationRouter;
+use App\Providers\TelegramServiceProvider;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
 
@@ -26,7 +28,7 @@ use SergiX44\Nutgram\Telegram\Types\Message\Message;
  *     a figurinha e nada mais.
  *
  * Por que a maior resolução? O Telegram envia múltiplos PhotoSize (thumbnail,
- * medium, large, xlarge, ...). O {@see \App\Actions\ExtractFromImage} precisa
+ * medium, large, xlarge, ...). O {@see ExtractFromImage} precisa
  * do maior para a extração do Gemini ter melhor OCR.
  *
  * Referência: docs/02-especificacao-tecnica.md §7 (fluxo), docs/06 §10 (M7.4).
@@ -39,7 +41,7 @@ class MessageRouterHandler
      * O Nutgram cria o handler via seu container interno, que não tem visibility
      * sobre o container Laravel (não há delegate configurado). Optamos por
      * resolver via helper `app()` (idiomático em handlers finos de bot) — evita
-     * tocar no {@see \App\Providers\TelegramServiceProvider} só para configurar
+     * tocar no {@see TelegramServiceProvider} só para configurar
      * delegate de container. O custo de `app()` é uma chamada de hash de classe,
      * negligível.
      */

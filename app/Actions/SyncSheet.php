@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 use App\Services\Google\FirestoreService;
 use App\Services\Google\SheetsService;
@@ -33,7 +34,7 @@ use Google\Service\Exception as GoogleServiceException;
  * de um problema que ele não causou.
  *
  * Implementa {@see SyncsSheet} (introduzida em M7.3) para desacoplar o
- * {@see \App\Conversation\ConversationRouter} desta implementação concreta.
+ * {@see ConversationRouter} desta implementação concreta.
  *
  * @see FirestoreService::updateSyncStatus()
  */

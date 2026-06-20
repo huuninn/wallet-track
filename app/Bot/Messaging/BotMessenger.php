@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\Bot\Messaging;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 
 /**
- * Abstração do I/O do Telegram usado pelo {@see \App\Conversation\ConversationRouter}.
+ * Abstração do I/O do Telegram usado pelo {@see ConversationRouter}.
  *
  * **Princípio de design (M7)**: o Router é lógica pura testável que decide o
  * que fazer a partir de (input + sessão) e produz efeitos via esta interface.
@@ -79,7 +80,7 @@ interface BotMessenger
      * callback_data `edit:<field>`. Disparado quando o usuário toca "Editar"
      * no keyboard de confirmação — o usuário então escolhe qual campo quer
      * editar, e um novo callback `edit:<field>` chega ao
-     * {@see \App\Conversation\ConversationRouter} (state permanece
+     * {@see ConversationRouter} (state permanece
      * AWAITING_CONFIRMATION até a escolha).
      *
      * @return int message_id da mensagem com o keyboard.

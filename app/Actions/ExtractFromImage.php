@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 use App\Exceptions\ExtractionException;
 use App\Services\Gemini\GeminiService;
@@ -22,7 +23,7 @@ use App\Services\Telegram\TelegramFileDownloader;
  * (spec §10, CT-008/CT-009).
  *
  * Implementa {@see ExtractsImage} (introduzida em M7.3) para desacoplar o
- * {@see \App\Conversation\ConversationRouter} desta implementação concreta.
+ * {@see ConversationRouter} desta implementação concreta.
  */
 final class ExtractFromImage implements ExtractsImage
 {
