@@ -65,6 +65,14 @@ final class NovaHandler
         ."\n\nQual o tipo da transação?\n\n"
         .'💸 <b>Despesa</b> &nbsp; 💰 <b>Receita</b>';
 
+    /**
+     * Invoca o handler: inicia o wizard passo-a-passo para criar uma
+     * transação (CT-025). Limpa sessão anterior (Decisão Portão 2 #2,
+     * CT-025l), configura wizard com `_wizard_step=1` e envia a primeira
+     * pergunta (etapa 1/6: tipo).
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         $message = $bot->message();

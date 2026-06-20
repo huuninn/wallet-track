@@ -44,6 +44,18 @@ final class UltimosHandler
      */
     public const int MAX_LIMIT = 50;
 
+    /**
+     * Invoca o handler: lista as últimas N transações do chat (padrão 5,
+     * cap 50). Stateless — não mexe na sessão (CT-028f).
+     *
+     * Comportamento por parâmetro:
+     *  - sem `n`           → 5 transações (CT-027).
+     *  - `n` em 1..50      → exatamente `n` (CT-028).
+     *  - `n` > 50 numérico → cap em 50 (CT-028d).
+     *  - `n` inválido      → fallback em 5 (CT-028a/b/c).
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         $message = $bot->message();
@@ -68,9 +80,9 @@ final class UltimosHandler
                 $messenger->sendText(
                     $chatId,
                     "📭 <b>Nenhuma transação registrada</b> ainda.\n\n"
-                    ."Envie uma mensagem descrevendo um gasto ou receita "
+                    .'Envie uma mensagem descrevendo um gasto ou receita '
                     ."para começar! Exemplo:\n\n"
-                    ."<i>Paguei R$ 47,50 no almoço hoje</i>",
+                    .'<i>Paguei R$ 47,50 no almoço hoje</i>',
                 );
 
                 return;

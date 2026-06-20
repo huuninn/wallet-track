@@ -45,6 +45,15 @@ use SergiX44\Nutgram\Nutgram;
  */
 final class SyncHandler
 {
+    /**
+     * Invoca o handler: dispara sincronização imediata das pendentes
+     * deste chat (CT-049, CT-050, CT-051). Reseta `sync_attempts` (Portão
+     * 2 #7), executa o command in-process e responde com o resumo.
+     *
+     * Stateless — pode ser invocado em qualquer estado de sessão (CT-053).
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         $message = $bot->message();

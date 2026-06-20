@@ -58,6 +58,13 @@ Use <b>/help</b> para ver todos os comandos (inclusive os que estão por vir).
 HTML;
     }
 
+    /**
+     * Invoca o handler: limpa a sessão do chat (GAP-01) e envia a
+     * mensagem de boas-vindas. Best-effort — não propaga exceções do
+     * Firestore para o Telegram.
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         // T-001: limpa a sessão antes da mensagem (GAP-01, CT-023a-f).

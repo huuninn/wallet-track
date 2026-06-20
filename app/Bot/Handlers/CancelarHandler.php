@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
+use App\Conversation\ConversationRouter;
 use App\Enums\ConversationState;
 use App\Services\Google\FirestoreService;
 use SergiX44\Nutgram\Nutgram;
@@ -23,7 +24,7 @@ use SergiX44\Nutgram\Nutgram;
  * NÃO chama `notifyCancelled` (que sempre envia "🚫 Transação cancelada..."
  * — mensagem enganosa em IDLE). Atende CT-026a.
  *
- * Por que NÃO chamar o {@see \App\Conversation\ConversationRouter}?
+ * Por que NÃO chamar o {@see ConversationRouter}?
  *
  *  - Independência de estado: este handler deve funcionar mesmo quando não
  *    há sessão ou quando a sessão está em estado inconsistente (processing=true
@@ -37,6 +38,13 @@ use SergiX44\Nutgram\Nutgram;
  */
 class CancelarHandler
 {
+    /**
+     * Invoca o handler: detecta se há sessão ativa. Em IDLE responde
+     * mensagem amigável (CT-026a); em qualquer outro estado limpa a
+     * sessão + notifica o cancelamento (CT-026b a CT-026e).
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         $message = $bot->message();
@@ -65,7 +73,7 @@ class CancelarHandler
             $messenger->sendText(
                 $chatIdStr,
                 "🤷 <b>Nenhuma operação em andamento</b> para cancelar.\n\n"
-                ."Você está no início — é só me mandar uma mensagem para começar.",
+                .'Você está no início — é só me mandar uma mensagem para começar.',
             );
 
             return;

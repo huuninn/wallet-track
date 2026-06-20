@@ -74,6 +74,12 @@ de uma nota fiscal.
 HTML;
     }
 
+    /**
+     * Invoca o handler: envia a mensagem de ajuda com a lista canônica
+     * de comandos (CT-024). Stateless — não lê nem escreve sessão.
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         $bot->sendMessage(

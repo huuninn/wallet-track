@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
+use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Services\Google\FirestoreService;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
@@ -34,7 +35,7 @@ final class CategoriasHandler
 {
     /**
      * Emoji por categoria (linha do item na listagem). Alinhado com a spec
-     * §6.3 — mesma tabela do {@see \App\Bot\Messaging\TransactionSummaryFormatter}.
+     * §6.3 — mesma tabela do {@see TransactionSummaryFormatter}.
      *
      * @var array<string, string>
      */
@@ -52,6 +53,13 @@ final class CategoriasHandler
 
     private const string CATEGORY_EMOJI_FALLBACK = '🏷';
 
+    /**
+     * Invoca o handler: lista todas as categorias (padrão + personalizadas)
+     * ordenadas por `use_count DESC` (CT-029). Stateless — não mexe na
+     * sessão (CT-029f).
+     *
+     * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
+     */
     public function __invoke(Nutgram $bot): void
     {
         $message = $bot->message();
