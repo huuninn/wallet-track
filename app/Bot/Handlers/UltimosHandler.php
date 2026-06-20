@@ -68,10 +68,14 @@ final class UltimosHandler
 
         $n = $this->resolveLimit($text);
 
+        // S-8: resolve o container uma única vez — consistente com
+        // CancelarHandler, NovaHandler e SyncHandler.
+        $services = app();
+
         try {
-            $firestore = app(FirestoreService::class);
-            $messenger = app(BotMessenger::class);
-            $formatter = app(TransactionSummaryFormatter::class);
+            $firestore = $services->make(FirestoreService::class);
+            $messenger = $services->make(BotMessenger::class);
+            $formatter = $services->make(TransactionSummaryFormatter::class);
 
             $transactions = $firestore->listRecent($chatId, $n);
             $shown = count($transactions);
@@ -95,7 +99,7 @@ final class UltimosHandler
                 'chat_id' => $chatId,
                 'error' => $e->getMessage(),
             ]);
-            app(BotMessenger::class)->notifyError(
+            $services->make(BotMessenger::class)->notifyError(
                 $chatId,
                 'Não consegui listar suas transações agora. Tente novamente em alguns instantes.',
             );
