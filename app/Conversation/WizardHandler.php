@@ -333,6 +333,28 @@ final class WizardHandler
     }
 
     /**
+     * Mapa de palavras-chave → sugestão de categoria (M9.1).
+     *
+     * Cada entrada mapeia o nome canônico da categoria (lowercase) para
+     * uma lista de palavras-chave associadas (também lowercase, sem
+     * acentos). A busca é O(categorias × keywords) mas o mapa é pequeno
+     * (~80 itens) — mantido como constante estática para evitar
+     * realocação a cada chamada de {@see suggestCategoryFromDescription()}.
+     *
+     * @var array<string, list<string>>
+     */
+    private const array CATEGORY_KEYWORDS = [
+        'alimentação' => ['almoço', 'almoco', 'jantar', 'café', 'cafe', 'lanche', 'restaurante', 'ifood', 'comida', 'pizza', 'hambúrguer', 'hamburguer', 'marmita'],
+        'transporte' => ['uber', '99', 'taxi', 'táxi', 'ônibus', 'onibus', 'metrô', 'metro', 'gasolina', 'combustível', 'combustivel', 'estacionamento', 'pedágio', 'pedagio'],
+        'moradia' => ['aluguel', 'condomínio', 'condominio', 'iptu', 'luz', 'água', 'agua', 'internet', 'gás', 'gas'],
+        'saúde' => ['farmácia', 'farmacia', 'remédio', 'remedio', 'consulta', 'exame', 'plano de saúde', 'academia'],
+        'lazer' => ['cinema', 'show', 'bar', 'balada', 'streaming', 'netflix', 'spotify', 'jogo'],
+        'educação' => ['curso', 'livro', 'material escolar', 'faculdade', 'escola', 'mensalidade'],
+        'salário' => ['salário', 'salario', 'pagamento'],
+        'freelance' => ['freelance', 'projeto', 'bico', 'consultoria'],
+    ];
+
+    /**
      * Sugestão de categoria baseada em palavras-chave da descrição.
      *
      * Implementação M9.1 (simples, sem chamada externa): match por
@@ -344,18 +366,7 @@ final class WizardHandler
     {
         $desc = mb_strtolower($description);
 
-        $map = [
-            'alimentação' => ['almoço', 'almoço', 'almoco', 'jantar', 'café', 'cafe', 'lanche', 'restaurante', 'ifood', 'comida', 'pizza', 'hambúrguer', 'hamburguer', 'marmita'],
-            'transporte' => ['uber', '99', 'taxi', 'táxi', 'ônibus', 'onibus', 'metrô', 'metro', 'gasolina', 'combustível', 'combustivel', 'estacionamento', 'pedágio', 'pedagio'],
-            'moradia' => ['aluguel', 'condomínio', 'condominio', 'iptu', 'luz', 'água', 'agua', 'internet', 'gás', 'gas'],
-            'saúde' => ['farmácia', 'farmacia', 'remédio', 'remedio', 'consulta', 'exame', 'plano de saúde', 'academia'],
-            'lazer' => ['cinema', 'show', 'bar', 'balada', 'streaming', 'netflix', 'spotify', 'jogo'],
-            'educação' => ['curso', 'livro', 'material escolar', 'faculdade', 'escola', 'mensalidade'],
-            'salário' => ['salário', 'salario', 'pagamento'],
-            'freelance' => ['freelance', 'projeto', 'bico', 'consultoria'],
-        ];
-
-        foreach ($map as $category => $keywords) {
+        foreach (self::CATEGORY_KEYWORDS as $category => $keywords) {
             foreach ($keywords as $kw) {
                 if (str_contains($desc, $kw)) {
                     return ucfirst($category);
