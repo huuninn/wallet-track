@@ -6,6 +6,7 @@ namespace App\Bot\Messaging;
 
 use App\Dto\TransactionData;
 use App\Services\Google\SheetsService;
+use App\Support\CategoryEmojiMap;
 
 /**
  * Formatação humanizada do resumo de um {@see TransactionData} para exibição
@@ -39,24 +40,10 @@ final class TransactionSummaryFormatter
     ];
 
     /**
-     * Mapa categoria → emoji (linha 1 de {@see listRow()} e fallback `🏷`).
-     *
-     * Tabela alinhada com a spec §6.3 (9 categorias padrão + fallback genérico).
-     * Categorias personalizadas usam o fallback se não houver match exato
-     * (case-sensitive para preservar o nome original).
+     * Fallback visual para categorias fora do mapa canônico (ver
+     * {@see CategoryEmojiMap}). Usado na listagem compacta do `/ultimos`
+     * para sinalizar "categoria personalizada".
      */
-    private const array CATEGORY_EMOJIS = [
-        'Alimentação' => '🍕',
-        'Transporte' => '🚗',
-        'Moradia' => '🏠',
-        'Saúde' => '❤️',
-        'Educação' => '📚',
-        'Lazer' => '🎮',
-        'Salário' => '💰',
-        'Freelance' => '💻',
-        'Outros' => '📦',
-    ];
-
     private const string CATEGORY_EMOJI_FALLBACK = '🏷';
 
     /**
@@ -230,7 +217,7 @@ final class TransactionSummaryFormatter
      */
     private function categoryEmoji(string $category): string
     {
-        return self::CATEGORY_EMOJIS[$category] ?? self::CATEGORY_EMOJI_FALLBACK;
+        return CategoryEmojiMap::EMOJIS[$category] ?? self::CATEGORY_EMOJI_FALLBACK;
     }
 
     /**

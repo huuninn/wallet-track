@@ -7,6 +7,7 @@ namespace App\Bot\Handlers;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Services\Google\FirestoreService;
+use App\Support\CategoryEmojiMap;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
 
@@ -26,31 +27,21 @@ use SergiX44\Nutgram\Nutgram;
  * invocado em qualquer estado da máquina conversacional sem afetar a
  * transação em andamento (CT-029f, Portão 2 #3).
  *
- * Mapeamento de emojis por categoria é fixo (spec §6.3) e vive no formatador
- * implícito abaixo. Categorias personalizadas usam o fallback `🏷`.
+ * O mapeamento de emojis por categoria é fixo (spec §6.3) e vive em
+ * {@see CategoryEmojiMap} (single source of truth compartilhada com o
+ * {@see TransactionSummaryFormatter}). Categorias
+ * personalizadas (fora do mapa canônico) usam o fallback local `🏷` —
+ * sinaliza visualmente que aquela categoria não está nas 9 padrão.
  *
  * Ref.: docs/specs/m9-spec-fase-2.md §2.3, docs/planos/m9-plano-tecnico.md (T-007).
  */
 final class CategoriasHandler
 {
     /**
-     * Emoji por categoria (linha do item na listagem). Alinhado com a spec
-     * §6.3 — mesma tabela do {@see TransactionSummaryFormatter}.
-     *
-     * @var array<string, string>
+     * Fallback visual para categorias fora do mapa canônico. Diferente do
+     * `📦` retornado por {@see CategoryEmojiMap::get()} — aqui usamos
+     * `🏷` para sinalizar "categoria personalizada" (não-padrão).
      */
-    private const array CATEGORY_EMOJIS = [
-        'Alimentação' => '🍕',
-        'Transporte' => '🚗',
-        'Moradia' => '🏠',
-        'Saúde' => '❤️',
-        'Educação' => '📚',
-        'Lazer' => '🎮',
-        'Salário' => '💰',
-        'Freelance' => '💻',
-        'Outros' => '📦',
-    ];
-
     private const string CATEGORY_EMOJI_FALLBACK = '🏷';
 
     /**
@@ -112,7 +103,7 @@ final class CategoriasHandler
                 $data = $row['data'];
                 $name = (string) ($data['display_name'] ?? '?');
                 $count = (int) ($data['use_count'] ?? 0);
-                $emoji = self::CATEGORY_EMOJIS[$name] ?? self::CATEGORY_EMOJI_FALLBACK;
+                $emoji = CategoryEmojiMap::EMOJIS[$name] ?? self::CATEGORY_EMOJI_FALLBACK;
                 $noun = $count === 1 ? 'transação' : 'transações';
                 $lines[] = "{$emoji} {$name} — {$count} {$noun}";
             }
