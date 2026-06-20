@@ -91,6 +91,25 @@ final class ConversationRouter
         'ganho' => 'income',
     ];
 
+    /**
+     * Campos aceitos para edição via callback `edit:<field>` (M7.6, M9.3).
+     *
+     * Usado nos handlers AWAITING_CONFIRMATION e AWAITING_EDITION para
+     * validar o payload do botão "Editar campo". A lista é fixa — campos
+     * do DTO que são editáveis pelo usuário. Centralizada como constante
+     * para evitar recriação do array a cada callback.
+     *
+     * @var list<string>
+     */
+    private const array EDITABLE_FIELDS = [
+        'amount',
+        'type',
+        'date',
+        'description',
+        'category',
+        'observations',
+    ];
+
     // S-7: DESCRIPTION_MAX_LENGTH agora é referenciado de TransactionData
     // (public const) — evita duplicação de constante.
 
@@ -387,7 +406,7 @@ final class ConversationRouter
 
             if (str_starts_with($data, 'edit:')) {
                 $field = substr($data, 5);
-                if (in_array($field, ['amount', 'type', 'date', 'description', 'category', 'observations'], true)) {
+                if (in_array($field, self::EDITABLE_FIELDS, true)) {
                     $this->messenger->answerCallback((string) $input->callbackId, '');
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);
                     $this->firestore->setSession(
@@ -453,7 +472,7 @@ final class ConversationRouter
 
             if (str_starts_with($data, 'edit:')) {
                 $field = substr($data, 5);
-                if (in_array($field, ['amount', 'type', 'date', 'description', 'category', 'observations'], true)) {
+                if (in_array($field, self::EDITABLE_FIELDS, true)) {
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);
                     $this->firestore->setSession(
                         chatId: $chatId,
