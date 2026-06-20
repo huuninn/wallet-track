@@ -60,10 +60,15 @@ final class CategoriasHandler
 
         $chatId = (string) (int) $message->chat->id;
 
-        try {
-            $firestore = app(FirestoreService::class);
-            $messenger = app(BotMessenger::class);
+        // S-3: service location padronizado para `$services = app(); $services->make(...)` —
+        // consistente com SyncHandler, UltimosHandler, CancelarHandler e NovaHandler.
+        // S-2: $messenger resolvido UMA ÚNICA VEZ, antes do try — assim o catch block
+        // reusa a mesma instância em vez de re-resolver via `app(BotMessenger::class)`.
+        $services = app();
+        $firestore = $services->make(FirestoreService::class);
+        $messenger = $services->make(BotMessenger::class);
 
+        try {
             $categories = $firestore->getCategories();
 
             $messenger->sendText($chatId, $this->renderList($categories));
@@ -72,7 +77,7 @@ final class CategoriasHandler
                 'chat_id' => $chatId,
                 'error' => $e->getMessage(),
             ]);
-            app(BotMessenger::class)->notifyError(
+            $messenger->notifyError(
                 $chatId,
                 'Não consegui listar suas categorias agora. Tente novamente em alguns instantes.',
             );
