@@ -533,7 +533,7 @@ final class ConversationRouter
      * persistido se ele confirmar.
      *
      * **M9.3 (T-016)**: tornado público para reuso pelo
-     * {@see \App\Conversation\WizardHandler}, que o invoca quando a 5ª etapa
+     * {@see WizardHandler}, que o invoca quando a 5ª etapa
      * (labels) é validada com sucesso e o draft está completo. Centralizar
      * a finalização no Router garante que o wizard herda o enriquecimento
      * M8 (sugestões de categoria e labels) sem duplicar lógica.
@@ -1103,12 +1103,12 @@ final class ConversationRouter
     private function invalidFieldMessage(string $field, int $attempt, int $max): string
     {
         $hint = match ($field) {
-            'amount' => "Use o formato <code>50,00</code> (valor precisa ser maior que zero).",
-            'type' => "Responda com <b>despesa</b> ou <b>receita</b>.",
-            'date' => "Use o formato <code>15/06/2026</code> ou <code>ontem</code>.",
-            'description' => "Descreva brevemente a transação (mín. 2 caracteres).",
-            'category' => "Informe o nome da categoria (ex.: <b>Alimentação</b>).",
-            default => "Verifique o valor informado e tente de novo.",
+            'amount' => 'Use o formato <code>50,00</code> (valor precisa ser maior que zero).',
+            'type' => 'Responda com <b>despesa</b> ou <b>receita</b>.',
+            'date' => 'Use o formato <code>15/06/2026</code> ou <code>ontem</code>.',
+            'description' => 'Descreva brevemente a transação (mín. 2 caracteres).',
+            'category' => 'Informe o nome da categoria (ex.: <b>Alimentação</b>).',
+            default => 'Verifique o valor informado e tente de novo.',
         };
 
         $remaining = max(0, $max - $attempt + 1);
@@ -1128,7 +1128,7 @@ final class ConversationRouter
      * labels) ou null se inválido.
      *
      * **M9.3 (T-016)**: tornado público para reuso pelo
-     * {@see \App\Conversation\WizardHandler}, que precisa aplicar a mesma
+     * {@see WizardHandler}, que precisa aplicar a mesma
      * validação a cada etapa do wizard `/nova` (campos type/amount/description/
      * category/labels). Centralizar a validação no Router garante que a
      * wizard não invente regras próprias divergentes.
