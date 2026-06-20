@@ -7,6 +7,7 @@ namespace Tests\Feature\Commands;
 use App\Bot\Handlers\NovaHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
+use App\Conversation\WizardHandler;
 use App\Enums\ConversationState;
 use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
@@ -221,7 +222,9 @@ class NovaHandlerTest extends TestCase
     public function test_nova_step1_prompt_constant_has_required_elements(): void
     {
         // Constante exposta para validação isolada em outros testes / smoke.
-        $prompt = NovaHandler::STEP_1_PROMPT;
+        // Review M9 W-2: agora vive em WizardHandler (single source of truth),
+        // compartilhada entre NovaHandler e o próprio WizardHandler.
+        $prompt = WizardHandler::STEP_1_TYPE_PROMPT;
         $this->assertStringContainsString('Etapa 1/6', $prompt);
         $this->assertStringContainsString('Tipo', $prompt);
         $this->assertStringContainsString('Despesa', $prompt);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Conversation;
 
+use App\Bot\Handlers\NovaHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Dto\TransactionData;
@@ -55,6 +56,18 @@ use Illuminate\Support\Facades\Log;
 final class WizardHandler
 {
     /**
+     * Mensagem da etapa 1 (Tipo) — exposta como constante PÚBLICA porque o
+     * {@see NovaHandler} precisa dela para enviar a
+     * primeira pergunta ANTES de qualquer estado do wizard existir (a
+     * sessão wizard ainda não tem `wizard_step` válido no momento em que
+     * o /nova responde). Single source of truth entre NovaHandler e este
+     * WizardHandler (review M9 W-2).
+     */
+    public const string STEP_1_TYPE_PROMPT = '📝 <b>Nova transação — Etapa 1/6: Tipo</b>'
+        ."\n\nQual o tipo da transação?\n\n"
+        .'💸 <b>Despesa</b> &nbsp; 💰 <b>Receita</b>';
+
+    /**
      * Mensagens de pergunta para cada etapa do wizard.
      *
      * Cada entrada é um template que recebe o DTO parcial (campos já
@@ -62,12 +75,13 @@ final class WizardHandler
      * mensagens aqui — não no Formatter — porque elas são específicas
      * do wizard e podem evoluir independentemente do formato de listagem.
      *
+     * O índice 1 (Tipo) reusa {@see self::STEP_1_TYPE_PROMPT} para
+     * garantir uma única fonte da verdade (review M9 W-2).
+     *
      * @return array<int, string> índice = WizardStep->value
      */
     private const array STEP_PROMPTS = [
-        1 => '📝 <b>Nova transação — Etapa 1/6: Tipo</b>'
-            ."\n\nQual o tipo da transação?\n\n"
-            .'💸 <b>Despesa</b> &nbsp; 💰 <b>Receita</b>',
+        1 => self::STEP_1_TYPE_PROMPT,
         2 => '💵 <b>Nova transação — Etapa 2/6: Valor</b>'
             ."\n\nTipo: %type%\n\n"
             .'Qual o valor? (ex: <code>47.50</code> ou <code>R$ 47,50</code>)',

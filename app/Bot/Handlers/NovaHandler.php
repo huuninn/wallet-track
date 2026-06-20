@@ -58,18 +58,14 @@ use SergiX44\Nutgram\Nutgram;
 final class NovaHandler
 {
     /**
-     * Mensagem da etapa 1 (Tipo) — exposta como constante para permitir
-     * validação isolada em testes de messaging.
-     */
-    public const string STEP_1_PROMPT = '📝 <b>Nova transação — Etapa 1/6: Tipo</b>'
-        ."\n\nQual o tipo da transação?\n\n"
-        .'💸 <b>Despesa</b> &nbsp; 💰 <b>Receita</b>';
-
-    /**
      * Invoca o handler: inicia o wizard passo-a-passo para criar uma
      * transação (CT-025). Limpa sessão anterior (Decisão Portão 2 #2,
      * CT-025l), configura wizard com `_wizard_step=1` e envia a primeira
      * pergunta (etapa 1/6: tipo).
+     *
+     * A mensagem da etapa 1 vem de {@see WizardHandler::STEP_1_TYPE_PROMPT}
+     * — single source of truth compartilhada com o WizardHandler (review
+     * M9 W-2).
      *
      * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
      */
@@ -134,7 +130,7 @@ final class NovaHandler
         }
 
         // Envia a primeira pergunta.
-        $messenger->askForField($chatId, WizardStep::TYPE->fieldName(), self::STEP_1_PROMPT);
+        $messenger->askForField($chatId, WizardStep::TYPE->fieldName(), WizardHandler::STEP_1_TYPE_PROMPT);
     }
 
     /**
