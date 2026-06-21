@@ -330,9 +330,16 @@ curl -X POST <webhook-url> -H "X-Telegram-Bot-Api-Secret-Token: errado" -d '{...
 **Cobertura estendida (fix do picker — CT-047):**
 - **Callback de X (resumo original) continua aceito** — `message_id_confirm` permanece como âncora válida.
 - **Callback de Y (picker de edição) é aceito** — `message_id_edit_picker` é persistido como segunda âncora; o bug do picker de edição (clicar "Editar" e depois qualquer campo) está corrigido.
-- **Picker é deletado após escolha de campo** — em `edit:<field>`, o `deleteMessage(Y)` é chamado e `message_id_edit_picker` é limpo da sessão via `clearFields`.
-- **Picker é deletado após confirm e cancel** — em ambos, o `deleteMessage(Y)` é chamado (best-effort) antes de limpar a sessão.
+- **Picker NÃO é deletado após escolha de campo (P7-A)** — em `edit:<field>`, o picker Y permanece visível no chat como histórico. O `message_id_edit_picker` permanece na sessão.
+- **Re-clicks no picker Y são annullados (P7-A)** — cliques subsequentes em qualquer botão do picker (mesmo campo ou campo diferente, em qualquer estado) recebem apenas `answerCallback` (remove o "carregando") e são ignorados. O usuário que errar deve responder via texto ou usar `/cancelar` para recomeçar.
+- **Picker é deletado após confirm e cancel (P3=B)** — em ambos, o `deleteMessage(Y)` é chamado (best-effort) antes de limpar a sessão.
 - **Sessão legacy sem IDs válidos aceita callback** (P4=B) — não trava o usuário se a sessão estiver corrompida.
+
+**Trade-off P7-A:** ao anullar re-clicks no picker, perde-se a capacidade de re-pick (clicar em outro campo durante a edição). O usuário que errar o campo deve:
+1. Responder à edição com o valor pedido (mesmo que seja "cancelar" via texto), e DEPOIS abrir um picker novo (via "Editar" no X) — mas atenção: o picker Y original ainda está visível no chat, então S1 (idempotência) vai bloquear o "Editar" no X.
+2. Ou digitar `/cancelar` e recomeçar a transação do zero.
+
+Esta decisão foi tomada priorizando **economia de 1 API call por `edit:<field>`** e **chat mais limpo no confirm/cancel** (apenas o picker órfão fica, mas é deletado em confirm/cancel). O usuário validou P7-A ciente do trade-off.
 
 ---
 

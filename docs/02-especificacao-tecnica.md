@@ -191,7 +191,7 @@ firestore
         ├── draft:              map | null
         ├── awaiting_field:     string | null
         ├── message_id_confirm: string | null
-        ├── message_id_edit_picker: int | null   ← NOVO (fix CT-047)
+        ├── message_id_edit_picker: int | null   ← NOVO (fix CT-047 — P7-A: permanece após edit:<field>)
         ├── updated_at:         timestamp
         └── retry_count:        integer
 ```
