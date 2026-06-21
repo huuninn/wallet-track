@@ -29,9 +29,15 @@ return Application::configure(basePath: dirname(__DIR__))
         //
         // A rota /cron/sync-pending também é GET server-to-server e
         // precisa ser excluída — o Cloud Scheduler não envia token CSRF.
+        //
+        // As rotas do Telescope (POST /telescope/telescope-api/*) também
+        // são chamadas pela própria UI Vue do Telescope via fetch sem CSRF
+        // token — sem essa exclusão, a aba Events fica "scanning" infinita
+        // com erro 419 silencioso no console do browser.
         $middleware->validateCsrfTokens(except: [
             'webhook/telegram',
             'cron/sync-pending',
+            'telescope/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
