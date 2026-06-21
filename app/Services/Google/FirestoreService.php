@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Google;
 
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 
 /**
@@ -480,19 +481,20 @@ final class FirestoreService
     /**
      * Atualiza (merge) a sessão do chat. Cria se não existe.
      *
-     * Campos null não sobrescrevem valores existentes (são omitidos do merge).
-     * O campo `updated_at` sempre é setado para "agora".
+     * Campos null em {@see SessionData} não sobrescrevem valores existentes
+     * (são omitidos do merge). O carimbo `updated_at` sempre é setado para
+     * "agora".
      *
      * **Não reseta `retry_count`** (FIX-4): o contador de retentativas
      * deve persistir entre mudanças de estado. Se for necessário resetá-lo
      * (ex.: transição para estado de sucesso), use
-     * {@see incrementSessionRetry()} ou faça merge explícito de
-     * `retry_count=0`. Sem isso, uma lógica de limite de retentativas
+     * {@see incrementSessionRetry()} ou passe explicitamente
+     * `retryCount: 0` no DTO. Sem isso, uma lógica de limite de retentativas
      * (M7/M8) seria burlada — toda mudança de estado zeraria o contador,
      * permitindo retries infinitos.
      *
-     * M7 adiciona `source` (text|image — para encaminhar ao SyncSheet no
-     * confirm) e permite resetar explicitamente `retry_count` passando 0
+     * M7 adiciona `source` (text|image|wizard — para encaminhar ao SyncSheet
+     * no confirm) e permite resetar explicitamente `retry_count` passando 0
      * (null = não mexer). `processing` é gerenciado por
      * {@see tryAcquireSessionProcessingFlag()}.
      *
@@ -502,79 +504,29 @@ final class FirestoreService
      * `null` apenas omite — não apaga — campos existentes. Use ao sair de
      * AWAITING_DATA/EDITION (campo `awaiting_field` deve desaparecer).
      *
-     * @param  array<string, mixed>|null  $draft  Draft serializado do TransactionData.
-     * @param  string|null  $awaitingField  Campo pedível em aberto (amount/type/date...).
-     * @param  int|null  $messageIdConfirm  message_id da mensagem de confirmação (CT-047).
-     * @param  int|null  $messageIdEditPicker  message_id da mensagem do picker de campos (CT-047 âncora adicional).
-     * @param  string|null  $source  Origem da extração ("text"|"image") para o SyncSheet.
-     * @param  int|null  $retryCount  Reset explícito do contador (use 0; null = não mexer).
-     * @param  bool|null  $pickerConsumed  True quando o picker Y já foi usado (1º edit:<field> processado).
-     *                                     Usado pelo Router (P7-A) para distinguir 1º click de re-click em Y.
-     *                                     Null = não mexer (default). False = explicitamente "ainda não consumido".
+     * **P7-A-4 — refator de assinatura**: até P7-A-3 este método recebia
+     * 10 parâmetros nomeados. O DTO {@see SessionData} encapsula os 8
+     * campos "mutáveis" da sessão; `$clearFields` continua como segundo
+     * argumento por ser dependente de contexto externo ao DTO.
+     *
      * @param  list<string>  $clearFields  Campos a serem removidos do doc (ex.: ["awaiting_field"]).
      */
-    public function setSession(
-        string $chatId,
-        string $state,
-        ?array $draft = null,
-        ?string $awaitingField = null,
-        ?int $messageIdConfirm = null,
-        ?int $messageIdEditPicker = null,
-        ?string $source = null,
-        ?int $retryCount = null,
-        ?bool $pickerConsumed = null,
-        array $clearFields = [],
-    ): void {
-        // S3: filtra null E 0 para campos `message_id_*`. Messenger helpers
-        // (e.g., NutgramBotMessenger::messageId) devolvem 0 quando a mensagem
-        // é null, o que polui o doc com `message_id_confirm: 0` e quebra a
-        // semântica dos checks `> 0` no Router. Demais campos mantêm o
-        // comportamento original (null omitido, 0 preservado).
-        $data = array_filter([
-            'state' => $state,
-            'draft' => $draft,
-            'awaiting_field' => $awaitingField,
-            'message_id_confirm' => $messageIdConfirm,
-            'message_id_edit_picker' => $messageIdEditPicker,
-            'source' => $source,
-            'retry_count' => $retryCount,
-            'picker_consumed' => $pickerConsumed,
-            'updated_at' => $this->nowIso(),
-        ], self::filterSessionField(...), ARRAY_FILTER_USE_BOTH);
-
-        $this->gateway->mergeDocument(self::COLLECTION_SESSIONS, $chatId, $data);
+    public function setSession(string $chatId, SessionData $data, array $clearFields = []): void
+    {
+        $this->gateway->mergeDocument(
+            self::COLLECTION_SESSIONS,
+            $chatId,
+            // S3: o filtro de campos (`null` omitido, `message_id_* === 0`
+            // omitido) vive em SessionData::toMergeArray() — comportamento
+            // idêntico ao P7-A-2.
+            $data->toMergeArray($this->nowIso()),
+        );
 
         // Limpeza explícita de campos stale (W-3). Merge com null não
         // apaga no Firestore — só `FieldValue::delete()` remove o campo.
         foreach ($clearFields as $field) {
             $this->gateway->deleteField(self::COLLECTION_SESSIONS, $chatId, $field);
         }
-    }
-
-    /**
-     * Filtro de campo de sessão para `array_filter` em {@see setSession()}.
-     *
-     * P7-A-2 (LOW2): extraído de closure inline para método estático —
-     * facilita teste unitário e evita recriação da closure a cada
-     * chamada de `setSession`. Regras:
-     *  - `null` → omitir do merge (não mexe no campo existente)
-     *  - `message_id_* === 0` → omitir (sentinela "mensagem não enviada")
-     *  - demais valores (incluindo `false`, `0` em outros campos) → preservar
-     *
-     * @param  array-key  $key
-     */
-    private static function filterSessionField(mixed $value, string $key): bool
-    {
-        if ($value === null) {
-            return false;
-        }
-        // S3: message_id_* com valor 0 = "mensagem não enviada" — não
-        // persiste (mantém doc limpo).
-        if (str_starts_with($key, 'message_id_') && $value === 0) {
-            return false;
-        }
-
-        return true;
     }
 
     /**

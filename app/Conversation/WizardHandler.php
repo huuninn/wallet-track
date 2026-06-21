@@ -7,6 +7,7 @@ namespace App\Conversation;
 use App\Bot\Handlers\NovaHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Enums\WizardStep;
@@ -218,12 +219,14 @@ final class WizardHandler
         $draftArray['_wizard_active'] = true;
 
         $this->firestore->setSession(
-            chatId: $chatId,
-            state: ConversationState::AWAITING_DATA->value,
-            draft: $draftArray,
-            awaitingField: $nextStep->fieldName(),
-            source: $session['source'] ?? 'wizard',
-            retryCount: 0,
+            $chatId,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: $draftArray,
+                awaitingField: $nextStep->fieldName(),
+                source: $session['source'] ?? 'wizard',
+                retryCount: 0,
+            ),
         );
 
         $this->messenger->askForField(

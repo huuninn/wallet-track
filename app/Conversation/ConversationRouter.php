@@ -11,6 +11,7 @@ use App\Actions\SuggestLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Exceptions\ExtractionException;
@@ -320,12 +321,14 @@ final class ConversationRouter
             $next = $this->pickNextAwaitingField($merged, $session);
             $this->assertStateTransition($session, ConversationState::AWAITING_DATA->value);
             $this->firestore->setSession(
-                chatId: $chatId,
-                state: ConversationState::AWAITING_DATA->value,
-                draft: $merged->toDraftArray(),
-                awaitingField: $next,
-                source: $session['source'] ?? 'image',
-                retryCount: 0,
+                $chatId,
+                new SessionData(
+                    state: ConversationState::AWAITING_DATA->value,
+                    draft: $merged->toDraftArray(),
+                    awaitingField: $next,
+                    source: $session['source'] ?? 'image',
+                    retryCount: 0,
+                ),
             );
             $this->messenger->askForField($chatId, $next, $this->formatter->askPrompt($next));
 
@@ -353,12 +356,14 @@ final class ConversationRouter
         $next = $this->pickNextAwaitingField($newDraft, $session);
         $this->assertStateTransition($session, ConversationState::AWAITING_DATA->value);
         $this->firestore->setSession(
-            chatId: $chatId,
-            state: ConversationState::AWAITING_DATA->value,
-            draft: $newDraft->toDraftArray(),
-            awaitingField: $next,
-            source: $session['source'] ?? 'text',
-            retryCount: 0, // resposta válida zera o contador
+            $chatId,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: $newDraft->toDraftArray(),
+                awaitingField: $next,
+                source: $session['source'] ?? 'text',
+                retryCount: 0, // resposta válida zera o contador
+            ),
         );
         $this->messenger->askForField($chatId, $next, $this->formatter->askPrompt($next));
     }
@@ -439,18 +444,20 @@ final class ConversationRouter
                 $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
                 $pickerMessageId = $this->messenger->sendEditFieldPicker($chatId);
                 $this->firestore->setSession(
-                    chatId: $chatId,
-                    state: ConversationState::AWAITING_CONFIRMATION->value,
-                    draft: $session['draft'] ?? null,
-                    messageIdConfirm: (int) ($session['message_id_confirm'] ?? 0),
-                    messageIdEditPicker: $pickerMessageId,
-                    // P7-A fix: marca picker como "não consumido" — o 1º
-                    // click em edit:<field> DEVE ser processado (transição
-                    // para AWAITING_EDITION). Sem este flag, o annulPicker
-                    // ReclickIfNeeded anullaria o 1º click também (bug).
-                    pickerConsumed: false,
-                    source: $session['source'] ?? 'text',
-                    retryCount: 0,
+                    $chatId,
+                    new SessionData(
+                        state: ConversationState::AWAITING_CONFIRMATION->value,
+                        draft: $session['draft'] ?? null,
+                        messageIdConfirm: (int) ($session['message_id_confirm'] ?? 0),
+                        messageIdEditPicker: $pickerMessageId,
+                        // P7-A fix: marca picker como "não consumido" — o 1º
+                        // click em edit:<field> DEVE ser processado (transição
+                        // para AWAITING_EDITION). Sem este flag, o annulPicker
+                        // ReclickIfNeeded anullaria o 1º click também (bug).
+                        pickerConsumed: false,
+                        source: $session['source'] ?? 'text',
+                        retryCount: 0,
+                    ),
                     clearFields: ['awaiting_field'],
                 );
 
@@ -482,18 +489,20 @@ final class ConversationRouter
 
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);
                     $this->firestore->setSession(
-                        chatId: $chatId,
-                        state: ConversationState::AWAITING_EDITION->value,
-                        draft: $session['draft'] ?? null,
-                        awaitingField: $field,
-                        messageIdConfirm: $expectedMessageId,
-                        messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // Y preservado
-                        // P7-A fix: marca picker como CONSUMIDO. A partir de
-                        // agora, qualquer re-click em Y (em AWAITING_CONFIRMATION
-                        // após edição) será annullado.
-                        pickerConsumed: true,
-                        source: $session['source'] ?? 'text',
-                        retryCount: 0,
+                        $chatId,
+                        new SessionData(
+                            state: ConversationState::AWAITING_EDITION->value,
+                            draft: $session['draft'] ?? null,
+                            awaitingField: $field,
+                            messageIdConfirm: $expectedMessageId,
+                            messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // Y preservado
+                            // P7-A fix: marca picker como CONSUMIDO. A partir de
+                            // agora, qualquer re-click em Y (em AWAITING_CONFIRMATION
+                            // após edição) será annullado.
+                            pickerConsumed: true,
+                            source: $session['source'] ?? 'text',
+                            retryCount: 0,
+                        ),
                     );
                     $this->messenger->askForEdition($chatId, $field);
 
@@ -605,14 +614,16 @@ final class ConversationRouter
         // retry_count (edição bem-sucedida zera o contador).
         $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
         $this->firestore->setSession(
-            chatId: $chatId,
-            state: ConversationState::AWAITING_CONFIRMATION->value,
-            draft: $newDraft->toDraftArray(),
-            awaitingField: null,
-            messageIdConfirm: $messageIdConfirm,
-            messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // P7-A: Y preservado
-            source: $session['source'] ?? 'text',
-            retryCount: 0,
+            $chatId,
+            new SessionData(
+                state: ConversationState::AWAITING_CONFIRMATION->value,
+                draft: $newDraft->toDraftArray(),
+                awaitingField: null,
+                messageIdConfirm: $messageIdConfirm,
+                messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // P7-A: Y preservado
+                source: $session['source'] ?? 'text',
+                retryCount: 0,
+            ),
             clearFields: ['awaiting_field'], // W-3: limpa campo stale (NÃO message_id_edit_picker — P7-A)
         );
 
@@ -660,13 +671,15 @@ final class ConversationRouter
             ConversationState::AWAITING_CONFIRMATION->value,
         );
         $this->firestore->setSession(
-            chatId: $chatId,
-            state: ConversationState::AWAITING_CONFIRMATION->value,
-            draft: $enriched->toDraftArray(),
-            awaitingField: null,
-            messageIdConfirm: $messageId,
-            source: $source,
-            retryCount: 0,
+            $chatId,
+            new SessionData(
+                state: ConversationState::AWAITING_CONFIRMATION->value,
+                draft: $enriched->toDraftArray(),
+                awaitingField: null,
+                messageIdConfirm: $messageId,
+                source: $source,
+                retryCount: 0,
+            ),
             // M9.3 (T-016): limpa campos stale do wizard. Garante que
             // `_wizard_step` e `_wizard_active` não persistam em
             // AWAITING_CONFIRMATION — no-op se não existirem (caso do
@@ -773,12 +786,14 @@ final class ConversationRouter
             ConversationState::AWAITING_DATA->value,
         );
         $this->firestore->setSession(
-            chatId: $chatId,
-            state: ConversationState::AWAITING_DATA->value,
-            draft: $dto->toDraftArray(),
-            awaitingField: $next,
-            source: $source,
-            retryCount: 0,
+            $chatId,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: $dto->toDraftArray(),
+                awaitingField: $next,
+                source: $source,
+                retryCount: 0,
+            ),
         );
         $this->messenger->askForField($chatId, $next, $this->formatter->askPrompt($next));
     }

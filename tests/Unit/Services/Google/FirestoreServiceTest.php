@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Services\Google;
 
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
@@ -325,11 +326,13 @@ class FirestoreServiceTest extends TestCase
     public function test_set_session_creates_and_merge_updates(): void
     {
         $this->service->setSession(
-            chatId: '12345',
-            state: 'awaiting_data',
-            draft: ['amount' => 50.0],
-            awaitingField: 'amount',
-            messageIdConfirm: 1001,
+            '12345',
+            new SessionData(
+                state: 'awaiting_data',
+                draft: ['amount' => 50.0],
+                awaitingField: 'amount',
+                messageIdConfirm: 1001,
+            ),
         );
 
         $session = $this->service->getSession('12345');
@@ -352,7 +355,7 @@ class FirestoreServiceTest extends TestCase
         ]);
 
         // Mudança de estado NÃO deve zerar o contador (FIX-4).
-        $this->service->setSession('C1', state: 'awaiting_confirmation');
+        $this->service->setSession('C1', new SessionData(state: 'awaiting_confirmation'));
 
         $session = $this->service->getSession('C1');
         $this->assertSame('awaiting_confirmation', $session['state']);
@@ -401,9 +404,9 @@ class FirestoreServiceTest extends TestCase
     public function test_set_session_merges_without_overwriting_other_fields(): void
     {
         // Sessão inicial com state e draft.
-        $this->service->setSession('C1', state: 'awaiting_data', draft: ['amount' => 10]);
+        $this->service->setSession('C1', new SessionData(state: 'awaiting_data', draft: ['amount' => 10]));
         // Segunda chamada muda só o state — draft deve persistir.
-        $this->service->setSession('C1', state: 'awaiting_confirmation');
+        $this->service->setSession('C1', new SessionData(state: 'awaiting_confirmation'));
 
         $session = $this->service->getSession('C1');
         $this->assertSame('awaiting_confirmation', $session['state']);
@@ -417,9 +420,11 @@ class FirestoreServiceTest extends TestCase
         // anterior não pode persistir ao mudar de estado.
         $this->service->setSession(
             'C1',
-            state: 'awaiting_data',
-            draft: ['amount' => 10],
-            awaitingField: 'amount',
+            new SessionData(
+                state: 'awaiting_data',
+                draft: ['amount' => 10],
+                awaitingField: 'amount',
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -428,8 +433,10 @@ class FirestoreServiceTest extends TestCase
         // Transição para AWAITING_CONFIRMATION com clearFields.
         $this->service->setSession(
             'C1',
-            state: 'awaiting_confirmation',
-            awaitingField: null,
+            new SessionData(
+                state: 'awaiting_confirmation',
+                awaitingField: null,
+            ),
             clearFields: ['awaiting_field'],
         );
 
@@ -444,15 +451,19 @@ class FirestoreServiceTest extends TestCase
         // com null apenas OMITE — não remove — o campo existente.
         $this->service->setSession(
             'C1',
-            state: 'awaiting_data',
-            awaitingField: 'amount',
+            new SessionData(
+                state: 'awaiting_data',
+                awaitingField: 'amount',
+            ),
         );
 
         // setSession com awaitingField=null SEM clearFields.
         $this->service->setSession(
             'C1',
-            state: 'awaiting_confirmation',
-            awaitingField: null,
+            new SessionData(
+                state: 'awaiting_confirmation',
+                awaitingField: null,
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -464,15 +475,17 @@ class FirestoreServiceTest extends TestCase
     {
         $this->service->setSession(
             'C1',
-            state: 'awaiting_data',
-            draft: ['x' => 1],
-            awaitingField: 'amount',
-            messageIdConfirm: 100,
+            new SessionData(
+                state: 'awaiting_data',
+                draft: ['x' => 1],
+                awaitingField: 'amount',
+                messageIdConfirm: 100,
+            ),
         );
 
         $this->service->setSession(
             'C1',
-            state: 'awaiting_confirmation',
+            new SessionData(state: 'awaiting_confirmation'),
             clearFields: ['awaiting_field', 'message_id_confirm'],
         );
 
@@ -495,9 +508,11 @@ class FirestoreServiceTest extends TestCase
     {
         // N11: setSession com messageIdEditPicker não-nulo grava o campo.
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_confirmation',
-            messageIdEditPicker: 6001,
+            'C1',
+            new SessionData(
+                state: 'awaiting_confirmation',
+                messageIdEditPicker: 6001,
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -510,8 +525,10 @@ class FirestoreServiceTest extends TestCase
         // o campo — array_filter remove o null do merge (consistente com
         // os outros campos opcionais).
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_confirmation',
+            'C1',
+            new SessionData(
+                state: 'awaiting_confirmation',
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -526,17 +543,19 @@ class FirestoreServiceTest extends TestCase
         // (o picker Y permanece no chat). Ver
         // ConversationRouterTest::test_p7a_edit_then_valid_response_keeps_message_id_edit_picker.
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_edition',
-            messageIdEditPicker: 6001,
+            'C1',
+            new SessionData(
+                state: 'awaiting_edition',
+                messageIdEditPicker: 6001,
+            ),
         );
 
         $session = $this->service->getSession('C1');
         $this->assertSame(6001, $session['message_id_edit_picker']);
 
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_confirmation',
+            'C1',
+            new SessionData(state: 'awaiting_confirmation'),
             clearFields: ['message_id_edit_picker'],
         );
 
@@ -558,9 +577,11 @@ class FirestoreServiceTest extends TestCase
     {
         // P7-A: picker_consumed=true é gravado no doc.
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_edition',
-            pickerConsumed: true,
+            'C1',
+            new SessionData(
+                state: 'awaiting_edition',
+                pickerConsumed: true,
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -572,9 +593,11 @@ class FirestoreServiceTest extends TestCase
         // P7-A: picker_consumed=false é gravado no doc (1º click ainda
         // não aconteceu — 1º click processa normalmente).
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_confirmation',
-            pickerConsumed: false,
+            'C1',
+            new SessionData(
+                state: 'awaiting_confirmation',
+                pickerConsumed: false,
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -588,15 +611,19 @@ class FirestoreServiceTest extends TestCase
         // o text path AWAITING_EDITION → AWAITING_CONFIRMATION preservar
         // picker_consumed=true.
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_edition',
-            pickerConsumed: true,
+            'C1',
+            new SessionData(
+                state: 'awaiting_edition',
+                pickerConsumed: true,
+            ),
         );
 
         // Re-set sem pickerConsumed (null = não mexer).
         $this->service->setSession(
-            chatId: 'C1',
-            state: 'awaiting_confirmation',
+            'C1',
+            new SessionData(
+                state: 'awaiting_confirmation',
+            ),
         );
 
         $session = $this->service->getSession('C1');
@@ -608,7 +635,7 @@ class FirestoreServiceTest extends TestCase
 
     public function test_clear_session_removes_session(): void
     {
-        $this->service->setSession('C1', state: 'idle');
+        $this->service->setSession('C1', new SessionData(state: 'idle'));
 
         $this->assertNotNull($this->service->getSession('C1'));
 

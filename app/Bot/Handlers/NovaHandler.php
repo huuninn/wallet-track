@@ -6,6 +6,7 @@ namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
 use App\Conversation\WizardHandler;
+use App\Dto\SessionData;
 use App\Enums\ConversationState;
 use App\Enums\WizardStep;
 use App\Services\Google\FirestoreService;
@@ -106,15 +107,17 @@ final class NovaHandler
         // `source='wizard'` é usado no confirm para o SyncSheet.
         try {
             $firestore->setSession(
-                chatId: $chatId,
-                state: ConversationState::AWAITING_DATA->value,
-                draft: [
-                    '_wizard_step' => WizardStep::TYPE->value,
-                    '_wizard_active' => true,
-                ],
-                awaitingField: WizardStep::TYPE->fieldName(),
-                source: 'wizard',
-                retryCount: 0,
+                $chatId,
+                new SessionData(
+                    state: ConversationState::AWAITING_DATA->value,
+                    draft: [
+                        '_wizard_step' => WizardStep::TYPE->value,
+                        '_wizard_active' => true,
+                    ],
+                    awaitingField: WizardStep::TYPE->fieldName(),
+                    source: 'wizard',
+                    retryCount: 0,
+                ),
             );
         } catch (\Throwable $e) {
             Log::error('NovaHandler: setSession falhou', [

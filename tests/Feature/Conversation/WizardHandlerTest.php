@@ -15,6 +15,7 @@ use App\Conversation\ConversationInput;
 use App\Conversation\ConversationRouter;
 use App\Conversation\StateMachine;
 use App\Conversation\WizardHandler;
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Enums\WizardStep;
@@ -144,15 +145,17 @@ class WizardHandlerTest extends TestCase
     private function startWizard(): void
     {
         $this->firestore->setSession(
-            chatId: self::CHAT_ID,
-            state: ConversationState::AWAITING_DATA->value,
-            draft: [
-                '_wizard_step' => WizardStep::TYPE->value,
-                '_wizard_active' => true,
-            ],
-            awaitingField: WizardStep::TYPE->fieldName(),
-            source: 'wizard',
-            retryCount: 0,
+            self::CHAT_ID,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: [
+                    '_wizard_step' => WizardStep::TYPE->value,
+                    '_wizard_active' => true,
+                ],
+                awaitingField: WizardStep::TYPE->fieldName(),
+                source: 'wizard',
+                retryCount: 0,
+            ),
         );
     }
 
@@ -364,15 +367,17 @@ class WizardHandlerTest extends TestCase
         // Aqui validamos a parte do ConversationRouter: se wizard_active
         // está true, mesmo que o estado seja outro, o wizard assume.
         $this->firestore->setSession(
-            chatId: self::CHAT_ID,
-            state: ConversationState::AWAITING_DATA->value,
-            draft: [
-                '_wizard_step' => WizardStep::TYPE->value,
-                '_wizard_active' => true,
-            ],
-            awaitingField: WizardStep::TYPE->fieldName(),
-            source: 'wizard',
-            retryCount: 0,
+            self::CHAT_ID,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: [
+                    '_wizard_step' => WizardStep::TYPE->value,
+                    '_wizard_active' => true,
+                ],
+                awaitingField: WizardStep::TYPE->fieldName(),
+                source: 'wizard',
+                retryCount: 0,
+            ),
         );
 
         $this->routeText('receita');
