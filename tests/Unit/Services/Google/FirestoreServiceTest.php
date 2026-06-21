@@ -482,6 +482,66 @@ class FirestoreServiceTest extends TestCase
         $this->assertSame(['x' => 1], $session['draft']); // preservado
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Sessão — message_id_edit_picker (CT-047 fix)
+    |--------------------------------------------------------------------------
+    |
+    | Cobertura do novo parâmetro messageIdEditPicker em setSession
+    | (P1 — segunda âncora do CT-047 para callbacks vindos do picker Y).
+    */
+
+    public function test_set_session_persists_message_id_edit_picker(): void
+    {
+        // N11: setSession com messageIdEditPicker não-nulo grava o campo.
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_confirmation',
+            messageIdEditPicker: 6001,
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertSame(6001, $session['message_id_edit_picker']);
+    }
+
+    public function test_set_session_with_null_message_id_edit_picker_does_not_pollute_document(): void
+    {
+        // N12: setSession sem messageIdEditPicker (default null) não cria
+        // o campo — array_filter remove o null do merge (consistente com
+        // os outros campos opcionais).
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_confirmation',
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
+    }
+
+    public function test_clear_fields_removes_message_id_edit_picker(): void
+    {
+        // N13: clearFields pode remover o message_id_edit_picker (M8 — quando
+        // uma edição é concluída e a sessão volta para AWAITING_CONFIRMATION,
+        // o campo deve ser apagado, não apenas setado como null).
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_edition',
+            messageIdEditPicker: 6001,
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertSame(6001, $session['message_id_edit_picker']);
+
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_confirmation',
+            clearFields: ['message_id_edit_picker'],
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
+    }
+
     public function test_clear_session_removes_session(): void
     {
         $this->service->setSession('C1', state: 'idle');

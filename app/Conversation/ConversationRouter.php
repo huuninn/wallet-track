@@ -45,7 +45,8 @@ use Throwable;
  *    clique é bloqueado (CT-018).
  *  - **CT-047 (callback de keyboard antiga)**: validado PRIMEIRO em qualquer
  *    callback quando state=AWAITING_CONFIRMATION, comparando
- *    `callbackMessageId` com `message_id_confirm` da sessão.
+ *    `callbackMessageId` com `message_id_confirm` E `message_id_edit_picker`
+ *    da sessão (P6 — aceita X ou Y).
  *  - **Timeout 15min (CT-043/CT-018b)**: o primeiro passo de `route()` é
  *    carregar a sessão; se `updated_at` é mais antigo que
  *    `sessionTimeoutMinutes`, trata como expirada.
@@ -357,14 +358,12 @@ final class ConversationRouter
     private function handleAwaitingConfirmation(ConversationInput $input, string $chatId, array $session): void
     {
         if ($input->kind === InputKind::Callback) {
-            // CT-047: callback de keyboard antiga. O message_id da mensagem
-            // que carregava o keyboard mudou (foi editada ou foi cancelada).
-            $expectedMessageId = (int) ($session['message_id_confirm'] ?? 0);
+            // CT-047: callback de keyboard antiga. P6 — aceita callbacks de
+            // message_id_confirm (X) OU message_id_edit_picker (Y).
             $callbackMessageId = (int) ($input->callbackMessageId ?? 0);
 
-            if ($expectedMessageId !== 0
-                && $callbackMessageId !== 0
-                && $callbackMessageId !== $expectedMessageId
+            if ($callbackMessageId > 0
+                && ! $this->isCallbackFromValidMessage($session, $callbackMessageId)
             ) {
                 $this->messenger->answerCallback(
                     (string) $input->callbackId,
@@ -378,7 +377,11 @@ final class ConversationRouter
                 return;
             }
 
-            $data = (string) $input->callbackData;
+            $data = (string) ($input->callbackData ?? '');
+
+            // Re-derivado localmente — usado adiante no handler `edit:<field>`
+            // como messageIdConfirm ao persistir AWAITING_EDITION.
+            $expectedMessageId = (int) ($session['message_id_confirm'] ?? 0);
 
             if ($data === 'confirm') {
                 $this->handleConfirm($chatId, $session, (string) $input->callbackId);
@@ -387,16 +390,46 @@ final class ConversationRouter
             }
 
             if ($data === 'edit') {
+                // S1: idempotência — se já existe picker ativo, ignora o clique
+                // duplicado. O picker original permanece; será deletado
+                // normalmente quando o user escolher um campo (P2=B) ou
+                // confirmar/cancelar (P3=B).
+                $existingPickerId = (int) ($session['message_id_edit_picker'] ?? 0);
+                if ($existingPickerId > 0) {
+                    $this->messenger->answerCallback(
+                        (string) $input->callbackId,
+                        'Picker de edição já está aberto.',
+                    );
+
+                    return;
+                }
+
                 $this->messenger->answerCallback((string) $input->callbackId, '');
-                // Estado permanece AWAITING_CONFIRMATION — só o campo
-                // `awaiting_field` mudará quando o callback `edit:<field>` chegar.
-                $this->messenger->sendEditFieldPicker($chatId);
+
+                // P1: persistir o message_id do picker como segundo anchor (Y)
+                // para que callbacks edit:<field> passem no CT-047.
+                $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
+                $pickerMessageId = $this->messenger->sendEditFieldPicker($chatId);
+                $this->firestore->setSession(
+                    chatId: $chatId,
+                    state: ConversationState::AWAITING_CONFIRMATION->value,
+                    draft: $session['draft'] ?? null,
+                    messageIdConfirm: (int) ($session['message_id_confirm'] ?? 0),
+                    messageIdEditPicker: $pickerMessageId,
+                    source: $session['source'] ?? 'text',
+                    retryCount: 0,
+                    clearFields: ['awaiting_field'],
+                );
 
                 return;
             }
 
             if ($data === 'cancel') {
                 $this->messenger->answerCallback((string) $input->callbackId, 'Cancelado');
+
+                // P3=B: deleta o picker antes de limpar a sessão.
+                $this->deletePickerIfPresent($chatId, $session);
+
                 $this->messenger->notifyCancelled($chatId);
                 $this->assertStateTransition($session, ConversationState::IDLE->value);
                 $this->firestore->clearSession($chatId);
@@ -408,6 +441,10 @@ final class ConversationRouter
                 $field = substr($data, 5);
                 if (in_array($field, self::EDITABLE_FIELDS, true)) {
                     $this->messenger->answerCallback((string) $input->callbackId, '');
+
+                    // P2=B: deleta o picker antes de transicionar.
+                    $this->deletePickerIfPresent($chatId, $session);
+
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);
                     $this->firestore->setSession(
                         chatId: $chatId,
@@ -417,6 +454,8 @@ final class ConversationRouter
                         messageIdConfirm: $expectedMessageId,
                         source: $session['source'] ?? 'text',
                         retryCount: 0,
+                        // Limpa Y da sessão — picker foi deletado.
+                        clearFields: ['message_id_edit_picker'],
                     );
                     $this->messenger->askForEdition($chatId, $field);
 
@@ -467,7 +506,24 @@ final class ConversationRouter
         $messageIdConfirm = (int) ($session['message_id_confirm'] ?? 0);
 
         if ($input->kind === InputKind::Callback) {
-            $data = (string) $input->callbackData;
+            $data = (string) ($input->callbackData ?? '');
+
+            // P5: CT-047 estendido também em AWAITING_EDITION (re-pick).
+            // Callbacks edit:<field> devem vir de uma mensagem válida (X).
+            if (str_starts_with($data, 'edit:')) {
+                $callbackMessageId = (int) ($input->callbackMessageId ?? 0);
+                if ($callbackMessageId > 0
+                    && ! $this->isCallbackFromValidMessage($session, $callbackMessageId)
+                ) {
+                    $this->messenger->answerCallback(
+                        (string) $input->callbackId,
+                        'Esta edição não está mais ativa.',
+                    );
+
+                    return;
+                }
+            }
+
             $this->messenger->answerCallback((string) $input->callbackId, '');
 
             if (str_starts_with($data, 'edit:')) {
@@ -521,7 +577,7 @@ final class ConversationRouter
             messageIdConfirm: $messageIdConfirm,
             source: $session['source'] ?? 'text',
             retryCount: 0,
-            clearFields: ['awaiting_field'], // W-3: limpa campo stale
+            clearFields: ['awaiting_field', 'message_id_edit_picker'], // W-3: limpa campos stale
         );
 
         // Edita a mensagem original in-place com o novo resumo (mantém o keyboard).
@@ -810,6 +866,43 @@ final class ConversationRouter
         );
     }
 
+    /**
+     * Verifica se um callback veio de uma mensagem com keyboard válido (CT-047).
+     *
+     * Um callback é considerado válido se o message_id da mensagem que carregava
+     * o keyboard ($callbackMessageId) for igual a PELO MENOS UM dos IDs de
+     * mensagens ativas registrados na sessão:
+     *   - message_id_confirm (X): mensagem de resumo com [Confirmar][Editar][Cancelar]
+     *   - message_id_edit_picker (Y): mensagem do picker "Qual campo você quer editar?"
+     *
+     * Decisão P6: aceita callbacks de X ou Y.
+     * Decisão P4=B: se a sessão não tem NENHUM ID válido (sessão legacy em produção),
+     * o callback é ACEITO (comportamento conservador — deixa o fluxo normal decidir).
+     *
+     * @param  array<string, mixed>  $session
+     */
+    private function isCallbackFromValidMessage(array $session, int $callbackMessageId): bool
+    {
+        $validIds = [];
+
+        $confirmId = (int) ($session['message_id_confirm'] ?? 0);
+        if ($confirmId > 0) {
+            $validIds[] = $confirmId;
+        }
+
+        $pickerId = (int) ($session['message_id_edit_picker'] ?? 0);
+        if ($pickerId > 0) {
+            $validIds[] = $pickerId;
+        }
+
+        // P4=B: sessão sem IDs válidos → aceita (não rejeita)
+        if ($validIds === []) {
+            return true;
+        }
+
+        return in_array($callbackMessageId, $validIds, true);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Handlers de extração (IDLE)
@@ -904,6 +997,9 @@ final class ConversationRouter
      */
     private function handleConfirm(string $chatId, array $session, string $callbackId): void
     {
+        // P3=B: deleta o picker se existir (best-effort — não bloqueia confirm).
+        $this->deletePickerIfPresent($chatId, $session);
+
         if (! $this->firestore->tryAcquireSessionProcessingFlag($chatId)) {
             // Duplo clique / callback concorrente — outro já está processando.
             $this->messenger->answerCallback($callbackId, 'Já estou processando...');
@@ -1398,5 +1494,22 @@ final class ConversationRouter
             observations: $extracted->observations ?? $base->observations,
             confidence: $extracted->confidence ?? $base->confidence,
         );
+    }
+
+    /**
+     * Deleta a mensagem do picker de campos se ela existir na sessão (best-effort).
+     *
+     * Idempotente: se não houver picker ID válido, é no-op.
+     * Tolerante a falhas: o `BotMessenger::deleteMessage` já captura exceções
+     * internamente, então este helper também não propaga.
+     *
+     * @param  array<string, mixed>  $session
+     */
+    private function deletePickerIfPresent(string $chatId, array $session): void
+    {
+        $pickerId = (int) ($session['message_id_edit_picker'] ?? 0);
+        if ($pickerId > 0) {
+            $this->messenger->deleteMessage($chatId, $pickerId);
+        }
     }
 }

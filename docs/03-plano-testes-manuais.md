@@ -327,6 +327,13 @@ curl -X POST <webhook-url> -H "X-Telegram-Bot-Api-Secret-Token: errado" -d '{...
 3. Clicar Confirmar na keyboard A (cancelada)
 **Resultado esperado:** Rejeita callback antigo; "Transação já cancelada/processada".
 
+**Cobertura estendida (fix do picker — CT-047):**
+- **Callback de X (resumo original) continua aceito** — `message_id_confirm` permanece como âncora válida.
+- **Callback de Y (picker de edição) é aceito** — `message_id_edit_picker` é persistido como segunda âncora; o bug do picker de edição (clicar "Editar" e depois qualquer campo) está corrigido.
+- **Picker é deletado após escolha de campo** — em `edit:<field>`, o `deleteMessage(Y)` é chamado e `message_id_edit_picker` é limpo da sessão via `clearFields`.
+- **Picker é deletado após confirm e cancel** — em ambos, o `deleteMessage(Y)` é chamado (best-effort) antes de limpar a sessão.
+- **Sessão legacy sem IDs válidos aceita callback** (P4=B) — não trava o usuário se a sessão estiver corrompida.
+
 ---
 
 ## Testes de Regressão

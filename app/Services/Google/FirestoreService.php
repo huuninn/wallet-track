@@ -505,6 +505,7 @@ final class FirestoreService
      * @param  array<string, mixed>|null  $draft  Draft serializado do TransactionData.
      * @param  string|null  $awaitingField  Campo pedível em aberto (amount/type/date...).
      * @param  int|null  $messageIdConfirm  message_id da mensagem de confirmação (CT-047).
+     * @param  int|null  $messageIdEditPicker  message_id da mensagem do picker de campos (CT-047 âncora adicional).
      * @param  string|null  $source  Origem da extração ("text"|"image") para o SyncSheet.
      * @param  int|null  $retryCount  Reset explícito do contador (use 0; null = não mexer).
      * @param  list<string>  $clearFields  Campos a serem removidos do doc (ex.: ["awaiting_field"]).
@@ -515,6 +516,7 @@ final class FirestoreService
         ?array $draft = null,
         ?string $awaitingField = null,
         ?int $messageIdConfirm = null,
+        ?int $messageIdEditPicker = null,
         ?string $source = null,
         ?int $retryCount = null,
         array $clearFields = [],
@@ -524,6 +526,7 @@ final class FirestoreService
             'draft' => $draft,
             'awaiting_field' => $awaitingField,
             'message_id_confirm' => $messageIdConfirm,
+            'message_id_edit_picker' => $messageIdEditPicker,
             'source' => $source,
             'retry_count' => $retryCount,
             'updated_at' => $this->nowIso(),

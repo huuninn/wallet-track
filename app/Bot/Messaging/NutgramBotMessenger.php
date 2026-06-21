@@ -6,7 +6,9 @@ namespace App\Bot\Messaging;
 
 use App\Bot\Handlers\StartHandler;
 use App\Dto\TransactionData;
+use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
+use SergiX44\Nutgram\Telegram\Exceptions\TelegramException;
 use SergiX44\Nutgram\Telegram\Properties\ButtonStyle;
 use SergiX44\Nutgram\Telegram\Properties\ParseMode;
 use SergiX44\Nutgram\Telegram\Types\Keyboard\InlineKeyboardButton;
@@ -138,6 +140,29 @@ final class NutgramBotMessenger implements BotMessenger
             message_id: $messageId,
             parse_mode: ParseMode::HTML,
         );
+    }
+
+    public function deleteMessage(int|string $chatId, int $messageId): void
+    {
+        // Best-effort: se a mensagem já foi deletada (pelo usuário ou por
+        // outra chamada) ou se a rede/API falhar, NÃO propagamos — o
+        // contrato é silencioso para que o caller (Router) possa chamar
+        // deleteMessage sem se preocupar com cleanup. Logamos para
+        // diagnóstico em produção.
+        //
+        // W1 (reviewer): capturamos `Throwable` em vez de só `TelegramException`
+        // para honrar o contrato best-effort mesmo em erros não-encapsulados
+        // pela SDK (e.g., `GuzzleException`, `RuntimeException` de rede).
+        try {
+            $this->bot->deleteMessage(chat_id: $chatId, message_id: $messageId);
+        } catch (Throwable $e) {
+            Log::warning('NutgramBotMessenger: deleteMessage falhou (não-bloqueante)', [
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function notifySuccess(int|string $chatId, TransactionData $dto): void

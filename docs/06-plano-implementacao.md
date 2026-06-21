@@ -493,7 +493,7 @@ Implementar a máquina de estados (IDLE → AWAITING_DATA → AWAITING_CONFIRMAT
 | M7.7 | Implementar fluxo de AWAITING_EDITION | Callback `edit:<field>` → pergunta novo valor → atualiza draft |
 | M7.8 | Implementar timeout de sessão (15 min) | Verificado em `Router::route()`; se sessão > 15min, limpa e volta a IDLE |
 | M7.9 | Implementar idempotência em confirmar | Campo `processing: bool` na sessão; transação atômica no Firestore |
-| M7.10 | Implementar tratamento de callback antigo (CT-047) | Validar `message_id_confirm` no callback; rejeitar se sessão não corresponde |
+| M7.10 | Implementar tratamento de callback antigo (CT-047) | Validar `message_id_confirm` (X) E `message_id_edit_picker` (Y) no callback; rejeitar se nenhum bate; deleção do picker em edit:<field>, confirm e cancel |
 | M7.11 | Testes (CT-015 a CT-018b) | PHPUnit cobrindo todos os fluxos |
 
 ### 10.4 Riscos

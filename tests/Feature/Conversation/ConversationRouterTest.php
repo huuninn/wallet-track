@@ -504,26 +504,61 @@ class ConversationRouterTest extends TestCase
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
         $this->assertArrayNotHasKey('awaiting_field', $session);
+
+        // P1 (CT-047 fix): o message_id do picker foi persistido como segunda
+        // âncora (Y) para que callbacks edit:<field> passem no CT-047.
+        $this->assertArrayHasKey('message_id_edit_picker', $session);
+        $this->assertNotNull($session['message_id_edit_picker']);
+        $this->assertNotSame(
+            $session['message_id_confirm'],
+            $session['message_id_edit_picker'],
+            'Picker deve ter message_id distinto do resumo',
+        );
     }
 
     public function test_awaiting_confirmation_callback_edit_field_advances_to_awaiting_edition(): void
     {
+        // CT-047 fix: o callback edit:<field> vem do picker (Y), não do resumo (X).
+        // O teste simula o ciclo completo: 1) user clica "Editar" → picker Y criado;
+        // 2) user clica "edit:amount" no picker Y → AWAITING_EDITION.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'source' => 'text',
         ]);
 
-        $this->makeRouter()->route(ConversationInput::callback(
+        $router = $this->makeRouter();
+
+        // 1ª etapa: user clica "Editar" → cria picker (Y).
+        $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
-            callbackId: 'cb-1',
-            callbackData: 'edit:amount',
+            callbackId: 'cb-edit',
+            callbackData: 'edit',
             callbackMessageId: 5001,
+        ));
+
+        $session = $this->currentSession();
+        $pickerId = $session['message_id_edit_picker'];
+        $this->assertNotNull($pickerId, 'Picker Y deve ter sido persistido');
+
+        // 2ª etapa: user clica "edit:amount" no picker (Y).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit-amount',
+            callbackData: 'edit:amount',
+            callbackMessageId: $pickerId,
         ));
 
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
         $this->assertSame('amount', $session['awaiting_field']);
+
+        // P2 (CT-047 fix): picker Y foi deletado e removido da sessão.
+        $this->assertContains(
+            $pickerId,
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+        );
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
     }
 
     public function test_awaiting_confirmation_cancel_clears_session(): void
@@ -1072,64 +1107,440 @@ class ConversationRouterTest extends TestCase
     public function test_callback_edit_description_advances_to_awaiting_edition(): void
     {
         // S-6.2: callback edit:description → AWAITING_EDITION com awaiting_field='description'.
+        // CT-047 fix: o callback vem do picker (Y) — simula o ciclo completo.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'source' => 'text',
         ]);
 
-        $this->makeRouter()->route(ConversationInput::callback(
+        $router = $this->makeRouter();
+
+        // 1ª etapa: "Editar" → cria picker (Y).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+        $session = $this->currentSession();
+        $pickerId = $session['message_id_edit_picker'];
+
+        // 2ª etapa: "edit:description" no picker (Y).
+        $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'cb-1',
             callbackData: 'edit:description',
-            callbackMessageId: 5001,
+            callbackMessageId: $pickerId,
         ));
 
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
         $this->assertSame('description', $session['awaiting_field']);
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+
+        // Picker Y deletado e removido da sessão.
+        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
     }
 
     public function test_callback_edit_category_advances_to_awaiting_edition(): void
     {
         // S-6.3: callback edit:category → AWAITING_EDITION com awaiting_field='category'.
+        // CT-047 fix: o callback vem do picker (Y) — simula o ciclo completo.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'source' => 'text',
         ]);
 
-        $this->makeRouter()->route(ConversationInput::callback(
+        $router = $this->makeRouter();
+
+        // 1ª etapa: "Editar" → cria picker (Y).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+        $session = $this->currentSession();
+        $pickerId = $session['message_id_edit_picker'];
+
+        // 2ª etapa: "edit:category" no picker (Y).
+        $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'cb-1',
             callbackData: 'edit:category',
-            callbackMessageId: 5001,
+            callbackMessageId: $pickerId,
         ));
 
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
         $this->assertSame('category', $session['awaiting_field']);
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+
+        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
     }
 
     public function test_callback_edit_observations_advances_to_awaiting_edition(): void
     {
         // S-6.4: callback edit:observations → AWAITING_EDITION com awaiting_field='observations'.
+        // CT-047 fix: o callback vem do picker (Y) — simula o ciclo completo.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'source' => 'text',
         ]);
 
-        $this->makeRouter()->route(ConversationInput::callback(
+        $router = $this->makeRouter();
+
+        // 1ª etapa: "Editar" → cria picker (Y).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+        $session = $this->currentSession();
+        $pickerId = $session['message_id_edit_picker'];
+
+        // 2ª etapa: "edit:observations" no picker (Y).
+        $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'cb-1',
             callbackData: 'edit:observations',
-            callbackMessageId: 5001,
+            callbackMessageId: $pickerId,
         ));
 
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
         $this->assertSame('observations', $session['awaiting_field']);
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+
+        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-047 fix — bug do picker de edição
+    |--------------------------------------------------------------------------
+    |
+    | Estes testes documentam o fix do bug CT-047: ao clicar "Editar" e depois
+    | em qualquer campo do picker, o bot rejeitava com "confirmação não está
+    | mais ativa" porque o check só conhecia `message_id_confirm` (X), não
+    | o `message_id_edit_picker` (Y) da mensagem separada do picker.
+    |
+    | Cobertura:
+    |  - N1: regressão direta do bug — edit+edit:<field> com Y é aceito.
+    |  - N2: picker Y é deletado no confirm.
+    |  - N3: picker Y é deletado no cancel.
+    |  - N4: picker Y é deletado no edit:<field>.
+    |  - N5: múltiplos ciclos edit/edit:<field> em sequência.
+    |  - N6: CT-047 aceita Y em AWAITING_CONFIRMATION (P6).
+    |  - N7: CT-047 rejeita callback stale em AWAITING_EDITION (P5).
+    |  - N8: sessão sem IDs válidos aceita callback (P4=B).
+    |  - N9: message_id_edit_picker é limpo após edição (M8).
+    |  - S1: duplo clique em "Editar" é idempotente — segundo clique ignorado.
+    */
+
+    public function test_edit_then_edit_amount_with_picker_message_id_is_accepted(): void
+    {
+        // N1: regressão do bug original. Antes do fix, este teste falhava
+        // com "Esta confirmação não está mais ativa" porque o check CT-047
+        // rejeitava callback com message_id diferente de message_id_confirm.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // 1ª etapa: user clica "Editar" → cria picker Y.
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+
+        $session = $this->currentSession();
+        $pickerId = $session['message_id_edit_picker'];
+        $this->assertNotSame(5001, $pickerId, 'Picker Y é mensagem separada do resumo X');
+
+        // 2ª etapa: user clica edit:amount no picker (Y) — antes do fix isto
+        // era rejeitado pelo CT-047. Agora é aceito (P6 — aceita X ou Y).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-2',
+            callbackData: 'edit:amount',
+            callbackMessageId: $pickerId,
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
+        $this->assertSame('amount', $session['awaiting_field']);
+    }
+
+    public function test_confirm_deletes_edit_picker(): void
+    {
+        // N2: P3=B — confirm deleta o picker Y antes de persistir a transação.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'source' => 'text',
+        ]);
+        $this->syncSheet->toReturn = true;
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'confirm',
+            callbackMessageId: 5001,
+        ));
+
+        // Picker Y foi deletado (best-effort, antes do clearSession).
+        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+
+        // Transação foi persistida normalmente (não-bloqueante).
+        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
+        $this->assertCount(1, $transactions);
+    }
+
+    public function test_cancel_deletes_edit_picker(): void
+    {
+        // N3: P3=B — cancel deleta o picker Y antes de limpar a sessão.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'cancel',
+            callbackMessageId: 5001,
+        ));
+
+        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
+        $this->assertNull($this->currentSession());
+    }
+
+    public function test_edit_field_callback_deletes_picker(): void
+    {
+        // N4: P2=B — edit:<field> deleta o picker Y antes de transicionar.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 7001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'edit:amount',
+            callbackMessageId: 7001,
+        ));
+
+        $this->assertContains(7001, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+    }
+
+    public function test_multiple_edit_pickers_in_sequence(): void
+    {
+        // N5: dois ciclos edit/edit:<field> consecutivos — cada picker é
+        // um message_id distinto, e ambos são deletados no fim.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // Ciclo 1: edit → edit:amount.
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'c1',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+        $session = $this->currentSession();
+        $picker1 = $session['message_id_edit_picker'];
+
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'c2',
+            callbackData: 'edit:amount',
+            callbackMessageId: $picker1,
+        ));
+        $this->assertContains($picker1, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+
+        // Responde a edição → volta para AWAITING_CONFIRMATION.
+        $router->route(ConversationInput::text(self::CHAT_ID, '100,00'));
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
+
+        // Ciclo 2: edit → edit:date (picker NOVO, message_id distinto).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'c3',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+        $session = $this->currentSession();
+        $picker2 = $session['message_id_edit_picker'];
+        $this->assertNotSame($picker1, $picker2, 'Cada edit cria picker novo');
+
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'c4',
+            callbackData: 'edit:date',
+            callbackMessageId: $picker2,
+        ));
+        $deleted = $this->messenger->deletedMessages[self::CHAT_ID] ?? [];
+        $this->assertContains($picker1, $deleted);
+        $this->assertContains($picker2, $deleted);
+    }
+
+    public function test_callback_with_edit_picker_message_id_accepted_in_awaiting_confirmation(): void
+    {
+        // N6: P6 — em AWAITING_CONFIRMATION, callback vindo do picker (Y) é aceito.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'source' => 'text',
+        ]);
+        $this->syncSheet->toReturn = true;
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'confirm',
+            callbackMessageId: 6001, // Y
+        ));
+
+        // Callback aceito (não rejeitado pelo CT-047) → transação foi criada.
+        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
+        $this->assertCount(1, $transactions, 'Callback de Y deve ser aceito (P6)');
+    }
+
+    public function test_callback_with_stale_message_id_rejected_in_awaiting_edition(): void
+    {
+        // N7: P5 — em AWAITING_EDITION, callback com message_id que não bate
+        // nem com X nem com Y é rejeitado; estado preservado.
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'awaiting_field' => 'amount',
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'edit:type',
+            callbackMessageId: 9999, // não bate com 5001 (X) nem com qualquer Y
+        ));
+
+        // Estado preservado (não transicionou para type).
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
+        $this->assertSame('amount', $session['awaiting_field'], 'awaiting_field não mudou para type');
+    }
+
+    public function test_callback_accepted_when_session_has_no_message_ids(): void
+    {
+        // N8: P4=B — sessão legacy sem IDs válidos → callback é aceito
+        // (comportamento conservador — não rejeita para não travar usuário).
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            // sem message_id_confirm, sem message_id_edit_picker
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'cancel',
+            callbackMessageId: 9999, // não bate com nada — P4=B aceita
+        ));
+
+        // Cancel processou → sessão limpa.
+        $this->assertNull($this->currentSession());
+        $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
+    }
+
+    public function test_edit_then_valid_response_clears_message_id_edit_picker(): void
+    {
+        // N9: M8 — após edição bem-sucedida (AWAITING_EDITION → AWAITING_CONFIRMATION),
+        // o message_id_edit_picker deve ser removido do doc (clearFields).
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'awaiting_field' => 'amount',
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '100,00'));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayNotHasKey(
+            'message_id_edit_picker',
+            $session,
+            'M8: message_id_edit_picker deve ser removido após edição',
+        );
+    }
+
+    public function test_double_edit_click_is_idempotent_and_keeps_original_picker(): void
+    {
+        // S1: idempotência do "Editar" — se o usuário clicar "Editar" duas vezes
+        // (ex.: duplo-clique, ou dois toques rápidos antes do picker aparecer),
+        // o segundo clique é IGNORADO. O picker original permanece ativo, sem
+        // criação de novo picker nem deleteMessage do anterior. O picker será
+        // deletado normalmente quando o user escolher um campo (P2=B) ou
+        // confirmar/cancelar (P3=B).
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // 1º clique em "Editar" — cria picker Y1.
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+
+        $session = $this->currentSession();
+        $pickerY1 = $session['message_id_edit_picker'];
+        $this->assertNotNull($pickerY1);
+        $this->assertCount(1, $this->messenger->fieldPickers[self::CHAT_ID] ?? []);
+
+        // 2º clique em "Editar" — deve ser IGNORADO.
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-2',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+
+        // Picker Y1 continua ativo (mesmo ID), nenhum picker novo foi criado.
+        $session = $this->currentSession();
+        $this->assertSame($pickerY1, $session['message_id_edit_picker']);
+        $this->assertCount(
+            1,
+            $this->messenger->fieldPickers[self::CHAT_ID] ?? [],
+            'Duplo clique não deve criar segundo picker',
+        );
+
+        // Nenhum deleteMessage foi chamado (o picker original permanece).
+        $this->assertArrayNotHasKey(
+            self::CHAT_ID,
+            $this->messenger->deletedMessages,
+            'Duplo clique não deve deletar o picker original',
+        );
     }
 
     public function test_photo_in_awaiting_edition_state_shows_friendly_error(): void

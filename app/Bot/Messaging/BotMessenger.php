@@ -107,6 +107,24 @@ interface BotMessenger
     public function editMessageText(int|string $chatId, int $messageId, string $text): void;
 
     /**
+     * Deleta uma mensagem enviada anteriormente no chat.
+     *
+     * Usado para remover o picker de campos (enviado via
+     * {@see sendEditFieldPicker}) após o usuário escolher qual campo
+     * editar, confirmar ou cancelar — evitando poluição visual no chat.
+     *
+     * Comportamento best-effort:
+     *  - Se a mensagem já foi deletada (pelo usuário ou por outra chamada),
+     *    a implementação DEVE capturar o erro e retornar silenciosamente
+     *    (idempotente). NUNCA deve lançar exceção que interrompa o fluxo.
+     *  - Falhas de rede/API são logadas mas NÃO propagadas.
+     *
+     * @param  int|string  $chatId  ID do chat Telegram.
+     * @param  int  $messageId  ID da mensagem a ser deletada.
+     */
+    public function deleteMessage(int|string $chatId, int $messageId): void;
+
+    /**
      * Notifica o usuário que a transação foi registrada com sucesso.
      */
     public function notifySuccess(int|string $chatId, TransactionData $dto): void;

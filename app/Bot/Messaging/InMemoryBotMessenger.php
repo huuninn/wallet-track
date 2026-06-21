@@ -53,6 +53,9 @@ final class InMemoryBotMessenger implements BotMessenger
     /** @var array<int|string, list<array{message_id: int, text: string}>> */
     public array $editedMessages = [];
 
+    /** @var array<int|string, list<int>> */
+    public array $deletedMessages = [];
+
     /** @var array<int|string, list<array{dto: TransactionData}>> */
     public array $successes = [];
 
@@ -134,6 +137,11 @@ final class InMemoryBotMessenger implements BotMessenger
     public function editMessageText(int|string $chatId, int $messageId, string $text): void
     {
         $this->editedMessages[$chatId][] = ['message_id' => $messageId, 'text' => $text];
+    }
+
+    public function deleteMessage(int|string $chatId, int $messageId): void
+    {
+        $this->deletedMessages[$chatId][] = $messageId;
     }
 
     public function notifySuccess(int|string $chatId, TransactionData $dto): void
