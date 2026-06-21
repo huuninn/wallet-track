@@ -4,16 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Bot\Messaging;
 
-use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
-use App\Conversation\ConversationRouter;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
 /**
  * Testes unitários do {@see InMemoryBotMessenger} — fake do
- * {@see BotMessenger} usado em testes do
- * {@see ConversationRouter}.
+ * {@see App\Bot\Messaging\BotMessenger} usado em testes do
+ * {@see App\Conversation\ConversationRouter}.
  *
  * Foco: registro de deleções de mensagens (CT-047 fix). O array público
  * `$deletedMessages[$chatId][] = $messageId` é a fonte de asserção

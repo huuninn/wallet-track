@@ -521,6 +521,11 @@ final class FirestoreService
         ?int $retryCount = null,
         array $clearFields = [],
     ): void {
+        // S3: filtra null E 0 para campos `message_id_*`. Messenger helpers
+        // (e.g., NutgramBotMessenger::messageId) devolvem 0 quando a mensagem
+        // é null, o que polui o doc com `message_id_confirm: 0` e quebra a
+        // semântica dos checks `> 0` no Router. Demais campos mantêm o
+        // comportamento original (null omitido, 0 preservado).
         $data = array_filter([
             'state' => $state,
             'draft' => $draft,
@@ -530,7 +535,18 @@ final class FirestoreService
             'source' => $source,
             'retry_count' => $retryCount,
             'updated_at' => $this->nowIso(),
-        ], fn ($value): bool => $value !== null);
+        ], function ($value, $key): bool {
+            if ($value === null) {
+                return false;
+            }
+            // S3: message_id_* com valor 0 = "mensagem não enviada" — não
+            // persiste (mantém doc limpo).
+            if (str_starts_with($key, 'message_id_') && $value === 0) {
+                return false;
+            }
+
+            return true;
+        }, ARRAY_FILTER_USE_BOTH);
 
         $this->gateway->mergeDocument(self::COLLECTION_SESSIONS, $chatId, $data);
 

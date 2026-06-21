@@ -408,6 +408,11 @@ final class ConversationRouter
 
                 // P1: persistir o message_id do picker como segundo anchor (Y)
                 // para que callbacks edit:<field> passem no CT-047.
+                //
+                // S6: self-transition intencional (AWAITING_CONFIRMATION →
+                // AWAITING_CONFIRMATION). O estado não muda porque o picker
+                // é uma mensagem adicional, não um novo passo do fluxo.
+                // Permitido pela tabela do {@see StateMachine} (linha 55).
                 $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
                 $pickerMessageId = $this->messenger->sendEditFieldPicker($chatId);
                 $this->firestore->setSession(
@@ -508,9 +513,12 @@ final class ConversationRouter
         if ($input->kind === InputKind::Callback) {
             $data = (string) ($input->callbackData ?? '');
 
+            // S2: extraído para evitar avaliar str_starts_with duas vezes.
+            $isRePick = str_starts_with($data, 'edit:');
+
             // P5: CT-047 estendido também em AWAITING_EDITION (re-pick).
             // Callbacks edit:<field> devem vir de uma mensagem válida (X).
-            if (str_starts_with($data, 'edit:')) {
+            if ($isRePick) {
                 $callbackMessageId = (int) ($input->callbackMessageId ?? 0);
                 if ($callbackMessageId > 0
                     && ! $this->isCallbackFromValidMessage($session, $callbackMessageId)
@@ -526,7 +534,7 @@ final class ConversationRouter
 
             $this->messenger->answerCallback((string) $input->callbackId, '');
 
-            if (str_starts_with($data, 'edit:')) {
+            if ($isRePick) {
                 $field = substr($data, 5);
                 if (in_array($field, self::EDITABLE_FIELDS, true)) {
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);

@@ -1139,7 +1139,8 @@ class ConversationRouterTest extends TestCase
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
 
         // Picker Y deletado e removido da sessão.
-        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID]);
         $this->assertArrayNotHasKey('message_id_edit_picker', $session);
     }
 
@@ -1177,7 +1178,8 @@ class ConversationRouterTest extends TestCase
         $this->assertSame('category', $session['awaiting_field']);
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
 
-        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID]);
         $this->assertArrayNotHasKey('message_id_edit_picker', $session);
     }
 
@@ -1215,7 +1217,8 @@ class ConversationRouterTest extends TestCase
         $this->assertSame('observations', $session['awaiting_field']);
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
 
-        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains($pickerId, $this->messenger->deletedMessages[self::CHAT_ID]);
         $this->assertArrayNotHasKey('message_id_edit_picker', $session);
     }
 
@@ -1298,7 +1301,8 @@ class ConversationRouterTest extends TestCase
         ));
 
         // Picker Y foi deletado (best-effort, antes do clearSession).
-        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID]);
 
         // Transação foi persistida normalmente (não-bloqueante).
         $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
@@ -1321,7 +1325,8 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 5001,
         ));
 
-        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID]);
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
         $this->assertNull($this->currentSession());
     }
@@ -1342,7 +1347,8 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 7001,
         ));
 
-        $this->assertContains(7001, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains(7001, $this->messenger->deletedMessages[self::CHAT_ID]);
     }
 
     public function test_multiple_edit_pickers_in_sequence(): void
@@ -1372,7 +1378,8 @@ class ConversationRouterTest extends TestCase
             callbackData: 'edit:amount',
             callbackMessageId: $picker1,
         ));
-        $this->assertContains($picker1, $this->messenger->deletedMessages[self::CHAT_ID] ?? []);
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $this->assertContains($picker1, $this->messenger->deletedMessages[self::CHAT_ID]);
 
         // Responde a edição → volta para AWAITING_CONFIRMATION.
         $router->route(ConversationInput::text(self::CHAT_ID, '100,00'));
@@ -1397,7 +1404,8 @@ class ConversationRouterTest extends TestCase
             callbackData: 'edit:date',
             callbackMessageId: $picker2,
         ));
-        $deleted = $this->messenger->deletedMessages[self::CHAT_ID] ?? [];
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
+        $deleted = $this->messenger->deletedMessages[self::CHAT_ID];
         $this->assertContains($picker1, $deleted);
         $this->assertContains($picker2, $deleted);
     }
