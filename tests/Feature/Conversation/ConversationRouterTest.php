@@ -1556,6 +1556,66 @@ class ConversationRouterTest extends TestCase
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
     }
 
+    public function test_p7a_legacy_session_without_picker_consumed_field_works(): void
+    {
+        // P7-A-2 (W3): sessão legacy em produção NÃO tem o campo
+        // `picker_consumed` no Firestore. O código usa `?? false` no
+        // annulPickerReclickIfNeeded, então sessões existentes devem se
+        // comportar como se `picker_consumed = false` (1º click
+        // processa, re-click é annullado após edição).
+        //
+        // Este teste cobre o cenário real de deploy: milhares de sessões
+        // em produção sem o campo novo. Se o fallback `?? false` quebrar,
+        // TODAS as edições vão falhar silenciosamente em prod.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            // SEM 'picker_consumed' — simula sessão legacy em produção.
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // 1º click em edit:amount no Y → DEVE processar (legacy trata
+        // picker_consumed ausente como false = não consumido).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'edit:amount',
+            callbackMessageId: 6001, // Y
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame(
+            ConversationState::AWAITING_EDITION->value,
+            $session['state'],
+            'W3: sessão legacy sem picker_consumed deve processar 1º click normalmente',
+        );
+        $this->assertSame('amount', $session['awaiting_field']);
+        $this->assertTrue(
+            (bool) ($session['picker_consumed'] ?? false),
+            'W3: após processar, picker_consumed é setado como true (migração implícita)',
+        );
+        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+
+        // Re-click no Y após edição → annullado (picker_consumed agora é true).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-2',
+            callbackData: 'edit:amount',
+            callbackMessageId: 6001, // Y
+        ));
+
+        // Sessão INTACTA — re-click annullado.
+        $session = $this->currentSession();
+        $this->assertSame(
+            ConversationState::AWAITING_EDITION->value,
+            $session['state'],
+            'W3: re-click em EDITION é annullado em sessão legacy',
+        );
+        $this->assertSame('amount', $session['awaiting_field']);
+    }
+
     public function test_callback_with_edit_picker_message_id_accepted_in_awaiting_confirmation(): void
     {
         // N6: P6 — em AWAITING_CONFIRMATION, callback vindo do picker (Y) é aceito.

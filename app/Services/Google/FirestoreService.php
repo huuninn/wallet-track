@@ -540,18 +540,7 @@ final class FirestoreService
             'retry_count' => $retryCount,
             'picker_consumed' => $pickerConsumed,
             'updated_at' => $this->nowIso(),
-        ], function ($value, $key): bool {
-            if ($value === null) {
-                return false;
-            }
-            // S3: message_id_* com valor 0 = "mensagem não enviada" — não
-            // persiste (mantém doc limpo).
-            if (str_starts_with($key, 'message_id_') && $value === 0) {
-                return false;
-            }
-
-            return true;
-        }, ARRAY_FILTER_USE_BOTH);
+        ], self::filterSessionField(...), ARRAY_FILTER_USE_BOTH);
 
         $this->gateway->mergeDocument(self::COLLECTION_SESSIONS, $chatId, $data);
 
@@ -560,6 +549,32 @@ final class FirestoreService
         foreach ($clearFields as $field) {
             $this->gateway->deleteField(self::COLLECTION_SESSIONS, $chatId, $field);
         }
+    }
+
+    /**
+     * Filtro de campo de sessão para `array_filter` em {@see setSession()}.
+     *
+     * P7-A-2 (LOW2): extraído de closure inline para método estático —
+     * facilita teste unitário e evita recriação da closure a cada
+     * chamada de `setSession`. Regras:
+     *  - `null` → omitir do merge (não mexe no campo existente)
+     *  - `message_id_* === 0` → omitir (sentinela "mensagem não enviada")
+     *  - demais valores (incluindo `false`, `0` em outros campos) → preservar
+     *
+     * @param  array-key  $key
+     */
+    private static function filterSessionField(mixed $value, string $key): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+        // S3: message_id_* com valor 0 = "mensagem não enviada" — não
+        // persiste (mantém doc limpo).
+        if (str_starts_with($key, 'message_id_') && $value === 0) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

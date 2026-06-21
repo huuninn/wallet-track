@@ -111,6 +111,23 @@ final class ConversationRouter
         'observations',
     ];
 
+    /**
+     * Hash set de {@see EDITABLE_FIELDS} para lookup O(1) com `isset()`.
+     * P7-A-2: substitui `in_array` O(n) — otimização marginal mas mantém
+     * consistência com o padrão de hash maps do código. Recalculado uma
+     * única vez no carregamento da classe (PHP lazy const evaluation).
+     *
+     * @var array<string, true>
+     */
+    private const array EDITABLE_FIELDS_MAP = [
+        'amount' => true,
+        'type' => true,
+        'date' => true,
+        'description' => true,
+        'category' => true,
+        'observations' => true,
+    ];
+
     // S-7: DESCRIPTION_MAX_LENGTH agora é referenciado de TransactionData
     // (public const) — evita duplicação de constante.
 
@@ -380,11 +397,10 @@ final class ConversationRouter
             // P7-A: se o callback veio do picker Y e é edit:<field>, annullar.
             // O picker Y permanece visível no chat; clicks subsequentes nele
             // são no-ops (o botão já foi "consumido" no primeiro click).
-            if ($this->annulPickerReclickIfNeeded($input, $session)) {
+            $data = (string) ($input->callbackData ?? '');
+            if ($this->annulPickerReclickIfNeeded($input, $data, $session)) {
                 return;
             }
-
-            $data = (string) ($input->callbackData ?? '');
 
             // Re-derivado localmente — usado adiante no handler `edit:<field>`
             // como messageIdConfirm ao persistir AWAITING_EDITION.
@@ -456,7 +472,7 @@ final class ConversationRouter
 
             if (str_starts_with($data, 'edit:')) {
                 $field = substr($data, 5);
-                if (in_array($field, self::EDITABLE_FIELDS, true)) {
+                if (isset(self::EDITABLE_FIELDS_MAP[$field])) {
                     $this->messenger->answerCallback((string) $input->callbackId, '');
 
                     // P7-A: o picker Y NÃO é deletado. Ele permanece visível
@@ -519,6 +535,10 @@ final class ConversationRouter
      *   respondendo com texto; clicks em botões antigos são no-ops. Re-pick
      *   via P5 foi removido em favor de P7-A (decisão do usuário — trade-off:
      *   usuário que errar precisa cancelar e recomeçar).
+     * - Callback `confirm`/`cancel`: respondemos com feedback amigável
+     *   ("Esta ação não está disponível durante a edição") para que o
+     *   usuário saiba por que o botão não funcionou — antes do P7-A o
+     *   CT-047 dava "Esta edição não está mais ativa" nesses casos.
      * - Foto: erro amigável (não dá pra editar via foto).
      *
      * @param  array<string, mixed>  $session
@@ -530,15 +550,32 @@ final class ConversationRouter
         $messageIdConfirm = (int) ($session['message_id_confirm'] ?? 0);
 
         if ($input->kind === InputKind::Callback) {
+            $data = (string) ($input->callbackData ?? '');
+
             // P7-A: annullar QUALQUER click em edit:* durante AWAITING_EDITION.
             // Aplica-se tanto a clicks no picker Y (visível) quanto a clicks
             // em qualquer outra keyboard stale. Não fazemos CT-047 check aqui:
             // em AWAITING_EDITION não há keyboard válida esperando interação.
-            if ($this->annulStaleEditClickInEdition($input)) {
+            if ($this->annulStaleEditClickInEdition($input, $data)) {
                 return;
             }
 
-            // Outros callbacks (confirm/cancel sem sentido aqui, mas silencioso).
+            // W1 (P7-A-2): clicks em confirm/cancel precisam de feedback
+            // explícito. Antes do P7-A, o CT-047 dava "Esta edição não está
+            // mais ativa" nesses casos. Agora o annulStaleEditClickInEdition
+            // só pega edit:*, então confirm/cancel caem aqui. Damos um toast
+            // amigável para o user entender por que nada aconteceu.
+            if ($data === 'confirm' || $data === 'cancel') {
+                $this->messenger->answerCallback(
+                    (string) $input->callbackId,
+                    'Esta ação não está disponível durante a edição. '
+                    .'Responda à pergunta ou use /cancelar para voltar.',
+                );
+
+                return;
+            }
+
+            // Outros callbacks (silencioso — não faz sentido neste estado).
             $this->messenger->answerCallback((string) $input->callbackId, '');
 
             return;
@@ -903,6 +940,18 @@ final class ConversationRouter
     }
 
     /**
+     * Helper DRY: annulla um callback (sem texto) e retorna true. Usado
+     * pelos dois helpers de annul abaixo para centralizar a chamada
+     * `answerCallback('')` + sinal de "processado" para o caller.
+     */
+    private function annulCallbackSilently(ConversationInput $input): true
+    {
+        $this->messenger->answerCallback((string) $input->callbackId, '');
+
+        return true;
+    }
+
+    /**
      * P7-A: annulla re-click em `edit:<field>` no picker Y durante AWAITING_CONFIRMATION.
      *
      * Após o PRIMEIRO click em `edit:<field>` no picker Y (processado
@@ -926,9 +975,8 @@ final class ConversationRouter
      *
      * @param  array<string, mixed>  $session
      */
-    private function annulPickerReclickIfNeeded(ConversationInput $input, array $session): bool
+    private function annulPickerReclickIfNeeded(ConversationInput $input, string $data, array $session): bool
     {
-        $data = (string) ($input->callbackData ?? '');
         if (! str_starts_with($data, 'edit:')) {
             return false;
         }
@@ -938,8 +986,17 @@ final class ConversationRouter
         $pickerConsumed = (bool) ($session['picker_consumed'] ?? false);
 
         if ($pickerConsumed && $pickerId > 0 && $callbackMessageId === $pickerId) {
-            // P7-A: RE-click no MESMO picker Y (já consumido) → annullar
-            $this->messenger->answerCallback((string) $input->callbackId, '');
+            // P7-A: RE-click no MESMO picker Y (já consumido) → annullar.
+            // S1 (P7-A-2): log para diagnóstico em produção. Útil para
+            // monitorar quantos re-clicks acontecem (e se usuários estão
+            // confusos com o picker persistente).
+            Log::debug('ConversationRouter: re-click em picker Y annullado', [
+                'callback_data' => $data,
+                'picker_id' => $pickerId,
+                'awaiting_field' => $session['awaiting_field'] ?? null,
+            ]);
+
+            $this->annulCallbackSilently($input);
 
             return true;
         }
@@ -948,27 +1005,25 @@ final class ConversationRouter
     }
 
     /**
-     * P7-A: annulla QUALQUER click em `edit:<field>` durante AWAITING_EDITION.
+     * P7-A: annulla QUALQUER click cujo `callbackData` comece com `edit`
+     * durante AWAITING_EDITION. Cobre tanto os botões `edit:<field>` do
+     * picker Y quanto o botão `edit` (sem dois-pontos) do keyboard X —
+     * ambos são "botões de edição antiga" que o usuário não deveria clicar
+     * enquanto responde ao prompt "qual o novo valor?".
      *
-     * Em AWAITING_EDITION, o usuário deveria estar respondendo com texto ao
-     * prompt "qual o novo valor?". Clicks em botões antigos (do picker Y ou
-     * de qualquer outra keyboard stale) são silenciosamente ignorados —
-     * apenas `answerCallback` (remove o "carregando") e retorno.
-     *
-     * Diferente de {@see annulPickerReclickIfNeeded()}, aqui não importa a
-     * origem do callback (não fazemos CT-047 check): em AWAITING_EDITION não
-     * há keyboard válido esperando interação. Esta é a "perda" do P5 (re-pick)
-     * — usuário que errar deve responder via texto ou usar /cancelar.
+     * Em AWAITING_EDITION não há keyboard válida esperando interação.
+     * Esta é a "perda" do P5 (re-pick) — usuário que errar deve responder
+     * via texto ou usar /cancelar. Clicks em `confirm`/`cancel` são
+     * tratados separadamente em {@see handleAwaitingEdition()} com
+     * feedback amigável.
      */
-    private function annulStaleEditClickInEdition(ConversationInput $input): bool
+    private function annulStaleEditClickInEdition(ConversationInput $input, string $data): bool
     {
-        $data = (string) ($input->callbackData ?? '');
-
         if (! str_starts_with($data, 'edit')) {
             return false;
         }
 
-        $this->messenger->answerCallback((string) $input->callbackId, '');
+        $this->annulCallbackSilently($input);
 
         return true;
     }
