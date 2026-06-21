@@ -428,6 +428,11 @@ final class ConversationRouter
                     draft: $session['draft'] ?? null,
                     messageIdConfirm: (int) ($session['message_id_confirm'] ?? 0),
                     messageIdEditPicker: $pickerMessageId,
+                    // P7-A fix: marca picker como "não consumido" — o 1º
+                    // click em edit:<field> DEVE ser processado (transição
+                    // para AWAITING_EDITION). Sem este flag, o annulPicker
+                    // ReclickIfNeeded anullaria o 1º click também (bug).
+                    pickerConsumed: false,
                     source: $session['source'] ?? 'text',
                     retryCount: 0,
                     clearFields: ['awaiting_field'],
@@ -467,6 +472,10 @@ final class ConversationRouter
                         awaitingField: $field,
                         messageIdConfirm: $expectedMessageId,
                         messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // Y preservado
+                        // P7-A fix: marca picker como CONSUMIDO. A partir de
+                        // agora, qualquer re-click em Y (em AWAITING_CONFIRMATION
+                        // após edição) será annullado.
+                        pickerConsumed: true,
                         source: $session['source'] ?? 'text',
                         retryCount: 0,
                     );
@@ -896,11 +905,20 @@ final class ConversationRouter
     /**
      * P7-A: annulla re-click em `edit:<field>` no picker Y durante AWAITING_CONFIRMATION.
      *
-     * Após o primeiro click em `edit:<field>` no picker Y, o picker permanece
-     * visível no chat (não é mais deletado — decisão P7-A). Se o usuário clicar
-     * novamente no picker (mesmo campo ou campo diferente), respondemos ao
-     * callback (remove o "carregando" do cliente) e retornamos `true` para
-     * sinalizar que o caller deve parar o processamento.
+     * Após o PRIMEIRO click em `edit:<field>` no picker Y (processado
+     * normalmente, transiciona para AWAITING_EDITION), o picker permanece
+     * visível no chat. Quando o usuário volta para AWAITING_CONFIRMATION
+     * (respondeu à edição) e clica de novo no picker — esse é um re-click.
+     *
+     * O flag `picker_consumed` na sessão distingue 1º click de re-click:
+     *  - 1º click: `picker_consumed = false` (setado pelo handler `data === 'edit'`)
+     *  - Após processar o 1º `edit:<field>`: `picker_consumed = true`
+     *  - Re-click: detecta `picker_consumed === true` E `callbackMessageId === Y`
+     *
+     * Importante: se `picker_consumed = false`, o click é o PRIMEIRO e
+     * deve ser processado normalmente (transição para AWAITING_EDITION).
+     * Annullar o 1º click seria um bug — o usuário não receberia o
+     * prompt "qual o novo valor?".
      *
      * Só annulla se o callback veio EXPLICITAMENTE do picker Y. Click em
      * `edit:<field>` de uma ID stale (≠ Y) continua caindo no CT-047 check
@@ -917,9 +935,10 @@ final class ConversationRouter
 
         $callbackMessageId = (int) ($input->callbackMessageId ?? 0);
         $pickerId = (int) ($session['message_id_edit_picker'] ?? 0);
+        $pickerConsumed = (bool) ($session['picker_consumed'] ?? false);
 
-        if ($pickerId > 0 && $callbackMessageId === $pickerId) {
-            // P7-A: click no MESMO picker Y → annullar
+        if ($pickerConsumed && $pickerId > 0 && $callbackMessageId === $pickerId) {
+            // P7-A: RE-click no MESMO picker Y (já consumido) → annullar
             $this->messenger->answerCallback((string) $input->callbackId, '');
 
             return true;

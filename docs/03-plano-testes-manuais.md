@@ -331,7 +331,7 @@ curl -X POST <webhook-url> -H "X-Telegram-Bot-Api-Secret-Token: errado" -d '{...
 - **Callback de X (resumo original) continua aceito** — `message_id_confirm` permanece como âncora válida.
 - **Callback de Y (picker de edição) é aceito** — `message_id_edit_picker` é persistido como segunda âncora; o bug do picker de edição (clicar "Editar" e depois qualquer campo) está corrigido.
 - **Picker NÃO é deletado após escolha de campo (P7-A)** — em `edit:<field>`, o picker Y permanece visível no chat como histórico. O `message_id_edit_picker` permanece na sessão.
-- **Re-clicks no picker Y são annullados (P7-A)** — cliques subsequentes em qualquer botão do picker (mesmo campo ou campo diferente, em qualquer estado) recebem apenas `answerCallback` (remove o "carregando") e são ignorados. O usuário que errar deve responder via texto ou usar `/cancelar` para recomeçar.
+- **1º click em Y processa normalmente; re-clicks são annullados (P7-A fix)** — o flag `picker_consumed` na sessão distingue: `false` (1º click logo após "Editar") → processa e transiciona para AWAITING_EDITION; `true` (re-click) → apenas `answerCallback` (remove o "carregando") e ignora. O usuário que errar deve responder via texto ou usar `/cancelar` para recomeçar.
 - **Picker é deletado após confirm e cancel (P3=B)** — em ambos, o `deleteMessage(Y)` é chamado (best-effort) antes de limpar a sessão.
 - **Sessão legacy sem IDs válidos aceita callback** (P4=B) — não trava o usuário se a sessão estiver corrompida.
 
@@ -340,6 +340,8 @@ curl -X POST <webhook-url> -H "X-Telegram-Bot-Api-Secret-Token: errado" -d '{...
 2. Ou digitar `/cancelar` e recomeçar a transação do zero.
 
 Esta decisão foi tomada priorizando **economia de 1 API call por `edit:<field>`** e **chat mais limpo no confirm/cancel** (apenas o picker órfão fica, mas é deletado em confirm/cancel). O usuário validou P7-A ciente do trade-off.
+
+**Bug do P7-A corrigido (P7-A-1):** a 1ª versão do P7-A anullava o 1º click em `edit:<field>` no Y também (porque o flag `picker_consumed` não existia — qualquer click com `callbackMessageId === Y` era anullado). Resultado: usuário clicava "Editar", via o picker Y aparecer, clicava num campo do Y e nada acontecia (só o loading parava). Correção: o flag `picker_consumed` na sessão é setado como `false` ao criar o picker (handler `data === 'edit'`) e como `true` ao processar o 1º `edit:<field>`. O `annulPickerReclickIfNeeded` agora exige `picker_consumed === true` para anullar.
 
 ---
 

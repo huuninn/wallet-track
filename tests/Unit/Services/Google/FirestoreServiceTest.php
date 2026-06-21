@@ -520,9 +520,11 @@ class FirestoreServiceTest extends TestCase
 
     public function test_clear_fields_removes_message_id_edit_picker(): void
     {
-        // N13: clearFields pode remover o message_id_edit_picker (M8 — quando
-        // uma edição é concluída e a sessão volta para AWAITING_CONFIRMATION,
-        // o campo deve ser apagado, não apenas setado como null).
+        // N13: clearFields pode remover o message_id_edit_picker. Usado em
+        // confirm/cancel (P3=B — o picker é deletado e o ID removido da
+        // sessão). P7-A: durante edição normal, o campo NÃO é mais limpo
+        // (o picker Y permanece no chat). Ver
+        // ConversationRouterTest::test_p7a_edit_then_valid_response_keeps_message_id_edit_picker.
         $this->service->setSession(
             chatId: 'C1',
             state: 'awaiting_edition',
@@ -540,6 +542,68 @@ class FirestoreServiceTest extends TestCase
 
         $session = $this->service->getSession('C1');
         $this->assertArrayNotHasKey('message_id_edit_picker', $session);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sessão — picker_consumed (P7-A fix: distinguir 1º click de re-click)
+    |--------------------------------------------------------------------------
+    |
+    | O flag picker_consumed evita o bug onde o 1º click em edit:<field>
+    | no picker Y era anullado (porque Y já estava na sessão recém-criada).
+    | Agora o Router só anulla RE-clicks (picker_consumed=true).
+    */
+
+    public function test_set_session_persists_picker_consumed_true(): void
+    {
+        // P7-A: picker_consumed=true é gravado no doc.
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_edition',
+            pickerConsumed: true,
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertTrue($session['picker_consumed']);
+    }
+
+    public function test_set_session_persists_picker_consumed_false(): void
+    {
+        // P7-A: picker_consumed=false é gravado no doc (1º click ainda
+        // não aconteceu — 1º click processa normalmente).
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_confirmation',
+            pickerConsumed: false,
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertFalse($session['picker_consumed']);
+    }
+
+    public function test_set_session_with_null_picker_consumed_does_not_overwrite_existing(): void
+    {
+        // P7-A: setSession com pickerConsumed=null NÃO sobrescreve valor
+        // existente (preserva o flag para re-edição futura). Crítico para
+        // o text path AWAITING_EDITION → AWAITING_CONFIRMATION preservar
+        // picker_consumed=true.
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_edition',
+            pickerConsumed: true,
+        );
+
+        // Re-set sem pickerConsumed (null = não mexer).
+        $this->service->setSession(
+            chatId: 'C1',
+            state: 'awaiting_confirmation',
+        );
+
+        $session = $this->service->getSession('C1');
+        $this->assertTrue(
+            $session['picker_consumed'],
+            'P7-A: picker_consumed=true deve ser preservado quando setSession não passa o parâmetro',
+        );
     }
 
     public function test_clear_session_removes_session(): void

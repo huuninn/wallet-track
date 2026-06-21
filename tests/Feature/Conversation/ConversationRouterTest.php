@@ -1407,10 +1407,12 @@ class ConversationRouterTest extends TestCase
 
     public function test_p7a_picker_remains_after_edition_and_annul_subsequent_reclicks(): void
     {
-        // P7-A: o picker Y permanece visível e registrado na sessão após
-        // edit:<field> e após edição bem-sucedida. Re-clicks no Y são
-        // annullados (answerCallback + return). O picker só é deletado em
-        // confirm/cancel (P3=B).
+        // P7-A fix: o picker Y permanece visível e registrado na sessão
+        // após edit:<field> e após edição bem-sucedida. O flag
+        // `picker_consumed` distingue o 1º click de re-clicks:
+        //   - 1º click em edit:<field> (picker_consumed=false): PROCESSA
+        //   - Re-click em edit:<field> (picker_consumed=true): ANNULADO
+        // O picker só é deletado em confirm/cancel (P3=B).
         //
         // Substitui o antigo test_multiple_edit_pickers_in_sequence (N5)
         // que testava deleção em sequência (removido em P7-A).
@@ -1421,7 +1423,7 @@ class ConversationRouterTest extends TestCase
 
         $router = $this->makeRouter();
 
-        // 1ª etapa: "Editar" → cria picker Y1.
+        // 1ª etapa: "Editar" → cria picker Y1 (picker_consumed=false).
         $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'c1',
@@ -1430,8 +1432,13 @@ class ConversationRouterTest extends TestCase
         ));
         $session = $this->currentSession();
         $picker1 = (int) $session['message_id_edit_picker'];
+        $this->assertFalse(
+            (bool) ($session['picker_consumed'] ?? false),
+            'P7-A: picker Y1 começa como NÃO consumido',
+        );
 
-        // 2ª etapa: "edit:amount" no Y1 → AWAITING_EDITION, picker NÃO deletado.
+        // 2ª etapa: 1º click "edit:amount" no Y1 → AWAITING_EDITION.
+        // picker_consumed agora = true. Picker NÃO é deletado.
         $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'c2',
@@ -1441,38 +1448,47 @@ class ConversationRouterTest extends TestCase
         $this->assertArrayNotHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
         $session = $this->currentSession();
         $this->assertSame($picker1, $session['message_id_edit_picker']);
+        $this->assertTrue(
+            (bool) ($session['picker_consumed'] ?? false),
+            'P7-A: após 1º edit:<field>, picker é marcado como consumido',
+        );
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
 
-        // 3ª etapa: re-click no Y1 (mesmo picker) em AWAITING_EDITION → annullado.
+        // 3ª etapa: re-click no Y1 em AWAITING_EDITION → annullado.
         $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'c3',
             callbackData: 'edit:amount',
             callbackMessageId: $picker1,
         ));
-        // Sessão intacta (annullamento).
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
-        $this->assertSame('amount', $session['awaiting_field']);
+        $this->assertSame('amount', $session['awaiting_field'], 'P7-A: re-click em EDITION annullado (awaiting_field não muda)');
         $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
 
-        // 4ª etapa: responder a edição → volta para CONFIRMATION; picker Y1 AINDA ativo.
+        // 4ª etapa: responder a edição → volta para CONFIRMATION;
+        // Y1 permanece; picker_consumed permanece true.
         $router->route(ConversationInput::text(self::CHAT_ID, '100,00'));
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
         $this->assertSame($picker1, $session['message_id_edit_picker'], 'P7-A: Y1 permanece após edição');
+        $this->assertTrue(
+            (bool) ($session['picker_consumed'] ?? false),
+            'P7-A: picker_consumed preservado após edição',
+        );
 
-        // 5ª etapa: re-click no Y1 em AWAITING_CONFIRMATION → annullado.
+        // 5ª etapa: RE-CLICK no Y1 em AWAITING_CONFIRMATION → ANNULADO
+        // (picker_consumed=true indica re-click).
         $router->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
             callbackId: 'c4',
             callbackData: 'edit:date',
             callbackMessageId: $picker1,
         ));
-        // Sessão intacta (annullamento) — não transicionou para AWAITING_EDITION.
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertArrayNotHasKey('awaiting_field', $session);
+        $this->assertArrayNotHasKey('awaiting_field', $session, 'P7-A: re-click em CONFIRMATION annullado');
+        $this->assertCount(0, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
 
         // 6ª etapa: S1 — duplo clique em "Editar" no X é idempotente (Y1 já existe).
         $router->route(ConversationInput::callback(
@@ -1483,6 +1499,61 @@ class ConversationRouterTest extends TestCase
         ));
         $session = $this->currentSession();
         $this->assertSame($picker1, $session['message_id_edit_picker'], 'S1: picker Y1 continua sendo o ativo');
+    }
+
+    public function test_p7a_first_click_on_picker_after_edit_advances_to_edition(): void
+    {
+        // P7-A fix: o 1º click em edit:<field> no picker Y (logo após o
+        // user clicar "Editar") DEVE processar normalmente — não pode ser
+        // annullado. Este teste cobre o bug introduzido pela 1ª versão do
+        // P7-A, onde o annulPickerReclickIfNeeded anullava o 1º click
+        // também (porque Y já estava na sessão recém-criada).
+        //
+        // Sem o fix (flag picker_consumed), o user clicava "Editar" no X,
+        // via o picker Y aparecer, clicava num campo do Y e nada acontecia
+        // (anullado silenciosamente — só loading parava).
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // 1ª etapa: "Editar" → cria picker Y (picker_consumed=false).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+        $session = $this->currentSession();
+        $pickerId = (int) $session['message_id_edit_picker'];
+        $this->assertFalse(
+            (bool) ($session['picker_consumed'] ?? false),
+            'Sanity: picker começa como NÃO consumido',
+        );
+
+        // 2ª etapa: 1º click em edit:amount no Y → DEVE processar
+        // (transicionar para AWAITING_EDITION com askForEdition).
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-field',
+            callbackData: 'edit:amount',
+            callbackMessageId: $pickerId,
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame(
+            ConversationState::AWAITING_EDITION->value,
+            $session['state'],
+            'P7-A fix: 1º click em edit:<field> DEVE transicionar para AWAITING_EDITION',
+        );
+        $this->assertSame('amount', $session['awaiting_field']);
+        $this->assertTrue(
+            (bool) ($session['picker_consumed'] ?? false),
+            'P7-A: após processar, picker é marcado como consumido',
+        );
+        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
     }
 
     public function test_callback_with_edit_picker_message_id_accepted_in_awaiting_confirmation(): void

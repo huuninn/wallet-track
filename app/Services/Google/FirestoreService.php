@@ -508,6 +508,9 @@ final class FirestoreService
      * @param  int|null  $messageIdEditPicker  message_id da mensagem do picker de campos (CT-047 âncora adicional).
      * @param  string|null  $source  Origem da extração ("text"|"image") para o SyncSheet.
      * @param  int|null  $retryCount  Reset explícito do contador (use 0; null = não mexer).
+     * @param  bool|null  $pickerConsumed  True quando o picker Y já foi usado (1º edit:<field> processado).
+     *                                     Usado pelo Router (P7-A) para distinguir 1º click de re-click em Y.
+     *                                     Null = não mexer (default). False = explicitamente "ainda não consumido".
      * @param  list<string>  $clearFields  Campos a serem removidos do doc (ex.: ["awaiting_field"]).
      */
     public function setSession(
@@ -519,6 +522,7 @@ final class FirestoreService
         ?int $messageIdEditPicker = null,
         ?string $source = null,
         ?int $retryCount = null,
+        ?bool $pickerConsumed = null,
         array $clearFields = [],
     ): void {
         // S3: filtra null E 0 para campos `message_id_*`. Messenger helpers
@@ -534,6 +538,7 @@ final class FirestoreService
             'message_id_edit_picker' => $messageIdEditPicker,
             'source' => $source,
             'retry_count' => $retryCount,
+            'picker_consumed' => $pickerConsumed,
             'updated_at' => $this->nowIso(),
         ], function ($value, $key): bool {
             if ($value === null) {

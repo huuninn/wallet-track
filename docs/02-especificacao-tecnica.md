@@ -192,6 +192,7 @@ firestore
         ├── awaiting_field:     string | null
         ├── message_id_confirm: string | null
         ├── message_id_edit_picker: int | null   ← NOVO (fix CT-047 — P7-A: permanece após edit:<field>)
+        ├── picker_consumed: bool | null         ← NOVO (P7-A fix: distingue 1º click de re-click em Y)
         ├── updated_at:         timestamp
         └── retry_count:        integer
 ```
