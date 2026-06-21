@@ -36,12 +36,25 @@ final class TelescopeHelper
     /**
      * Indica se o Telescope está ativo para registrar entradas customizadas.
      *
-     * Retorna `true` somente se AMBOS os níveis forem satisfeitos:
-     *  - `config('telescope.enabled') === true`
-     *  - `App::environment('local') === true`
+     * Retorna `true` somente se:
+     *  - `App::environment('local') === true` (NUNCA testing/staging/production)
+     *  - E `config('telescope.enabled') === true`.
+     *
+     * **Defensivo contra env mal configurado:** o check
+     * `App::environment('local')` naturalmente rejeita `testing`,
+     * mas adicionamos um guard explícito para `testing` antes, porque
+     * em Laravel 11+ o `<env name="..."/>` do `phpunit.xml` pode não
+     * mais sobrescrever o `.env` raiz — então `TELESCOPE_ENABLED=true`
+     * setado no `.env` local durante desenvolvimento vazava para os
+     * testes e fazia `isActive()` retornar `true` em phpunit. O guard
+     * explícito elimina essa classe de bug.
      */
     public static function isActive(): bool
     {
+        if (App::environment('testing')) {
+            return false;
+        }
+
         return config('telescope.enabled') === true
             && App::environment('local');
     }

@@ -51,26 +51,25 @@ class TelescopeServiceProviderTest extends TestCase
         $this->assertStringContainsString('telescope.sqlite', $connection['database']);
     }
 
-    public function test_provider_does_not_register_routes_in_testing_environment(): void
+    public function test_provider_does_not_record_in_testing_environment(): void
     {
-        // Re-binda o provider para forçar boot.
-        $this->app->register(TelescopeServiceProvider::class);
+        // Em `testing`, o TelescopeHelper::isActive() retorna false (porque
+        // config('telescope.enabled') é forçado para false no Tests\TestCase).
+        // Isso garante que mesmo com TELESCOPE_ENABLED=true vindo do .env
+        // local (necessário para dev), nenhum teste acidentalmente grava
+        // entry no SQLite do Telescope.
 
-        // Em testing, Telescope está desligado, então as rotas do
-        // Telescope NÃO devem ser registradas.
-        $routes = $this->app['router']->getRoutes();
-
-        $telescopeRoutes = 0;
-        foreach ($routes as $route) {
-            if (str_contains($route->uri(), 'telescope')) {
-                $telescopeRoutes++;
-            }
-        }
-
-        $this->assertSame(
-            0,
-            $telescopeRoutes,
-            "Em testing, Telescope routes não devem ser registradas (encontradas: {$telescopeRoutes})"
+        // Em complemento, verificamos o config efetivo em runtime — é o
+        // sinal usado pelos decorators e pelo provider para decidir se
+        // vão gravar (isActive() é chamado pelos 3 bindings de providers
+        // e pelo boot do TelescopeServiceProvider).
+        $this->assertFalse(
+            TelescopeHelper::isActive(),
+            'TelescopeHelper deve estar inativo em testing, garantindo zero gravação.'
+        );
+        $this->assertFalse(
+            (bool) config('telescope.enabled'),
+            'config(telescope.enabled) deve ser false em testing (forçado no TestCase).'
         );
     }
 

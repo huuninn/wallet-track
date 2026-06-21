@@ -21,18 +21,50 @@ final class EntryPayload
     /**
      * Grava um evento no Telescope (wrapper único para os 3 decorators).
      *
-     * Centraliza a chamada `Telescope::recordEvent(IncomingEntry::make(...)->tags(...))`
-     * que estava duplicada nos 3 decorators. Se o Telescope estiver pausado ou
-     * desabilitado, `Telescope::recordEvent()` é internamente no-op — nenhum
-     * efeito colateral.
+     * **Estrutura esperada pela UI Vue:**
      *
-     * @param  array<string, mixed>  $content
+     * A UI do Telescope em `resources/js/screens/events/index.vue` e
+     * `preview.vue` espera que toda entry do tipo `event` tenha:
+     *
+     *   - `content.name`: string — exibida na coluna "Name".
+     *   - `content.listeners`: array — acessado via `.length` na listagem
+     *     SEM fallback para `undefined`, então **deve** estar presente.
+     *   - `content.broadcast`: truthy opcional — exibe badge "Broadcast".
+     *   - `content.payload`: mixed — exibido na aba "Event Data" via
+     *     `vue-json-pretty` no preview da entry.
+     *
+     * Sem essa normalização, a UI quebra com `TypeError: can't access
+     * property "length", r.entry.content.listeners is undefined` e a aba
+     * Events fica presa em "scanning...".
+     *
+     * Por isso, este método recebe o conteúdo "cru" (com `name` + chaves
+     * extras do decorator) e o normaliza para o formato esperado pela UI:
+     * `name` fica no topo, tudo o mais vira `payload`, e `listeners`/`
+     * broadcast` recebem defaults seguros.
+     *
+     * Se o Telescope estiver pausado ou desabilitado, `Telescope::recordEvent()`
+     * é internamente no-op — nenhum efeito colateral.
+     *
+     * @param  array<string, mixed>  $content  Deve conter ao menos `name`.
      * @param  list<string>  $tags
      */
     public static function recordEvent(array $content, array $tags): void
     {
+        $name = $content['name'] ?? '(unknown)';
+        $listeners = $content['listeners'] ?? [];
+        $broadcast = $content['broadcast'] ?? null;
+
+        // Remove chaves que têm significado especial na UI do Telescope,
+        // deixando o resto como payload propriamente dito.
+        unset($content['name'], $content['listeners'], $content['broadcast']);
+
         Telescope::recordEvent(
-            IncomingEntry::make($content)->tags($tags)
+            IncomingEntry::make([
+                'name' => $name,
+                'listeners' => $listeners,
+                'broadcast' => $broadcast,
+                'payload' => $content,
+            ])->tags($tags)
         );
     }
 

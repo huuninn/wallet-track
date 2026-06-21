@@ -20,5 +20,13 @@ abstract class TestCase extends BaseTestCase
         // log para o canal nulo durante os testes. A geração de logs estruturados
         // (stderr JSON) permanece validada por test_webhook_logs_each_received_update.
         config(['logging.default' => 'null']);
+
+        // Mesma razão acima: TELESCOPE_ENABLED=true no .env local (necessário
+        // para a instrumentação funcionar em dev) vaza para os testes porque
+        // o Dotenv imutável não deixa o phpunit.xml sobrescrever. Forçamos
+        // `telescope.enabled=false` em runtime para garantir que os testes
+        // não disparem gravação no SQLite do Telescope (que além de
+        // desnecessário poluiria o painel com entries de teste).
+        config(['telescope.enabled' => false]);
     }
 }
