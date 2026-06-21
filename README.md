@@ -239,6 +239,71 @@ Documentação completa: [`docs/M9-COMPLETO.md`](./docs/M9-COMPLETO.md).
 
 ---
 
+## Telescope (telemetria de dev local)
+
+O [Laravel Telescope](https://laravel.com/docs/13/telescope) está instalado
+como dependência de dev e instrumenta 3 pontos críticos do app:
+
+| Watcher | O que captura |
+|---------|---------------|
+| `FirestoreWatcherDecorator` | Cada operação do `FirestoreGateway` (create/set/merge/get/update/increment/deleteField/deleteDocument/query/transaction) com latência e snapshot. |
+| `GeminiImageCompleterWatcherDecorator` | Cada chamada OCR multimodal (prompt, hash+size da imagem, mime type, response, latência). |
+| `DeepSeekChatCompleterWatcherDecorator` | Cada chat completion (system prompt, user messages, options, response, latência). |
+
+**Restrição `local-only`:** Telescope **só é habilitado quando
+`APP_ENV=local` E `TELESCOPE_ENABLED=true`**. Em qualquer outro
+ambiente (`staging`, `production`, `testing`), o helper
+`App\Support\Telescope\TelescopeHelper::isActive()` retorna `false`
+e os decorators não são registrados — zero overhead, zero risco de
+vazar telemetria em prod. Decisão consciente do usuário: staging
+pode rodar em ambiente compartilhado.
+
+### Setup local
+
+```bash
+# 1. Após clonar e rodar `make setup`, adicione no .env local:
+TELESCOPE_ENABLED=true
+
+# 2. Rode a migration do SQLite dedicado:
+make artisan cmd="migrate --database=telescope --force"
+
+# 3. Acesse o painel:
+open http://localhost:8000/telescope
+```
+
+O painel é protegido por **gate IP whitelist** (configurável via
+`TELESCOPE_ALLOWED_IPS`; defaults: localhost + ranges Docker).
+
+### Watchers customizados
+
+Todos os 3 watchers ficam em [`app/Support/Telescope/`](./app/Support/Telescope/):
+
+```
+app/Support/Telescope/
+├── TelescopeHelper.php              # Portão de ativação (local-only)
+├── EntryPayload.php                 # Helpers de formatação
+├── FirestoreWatcherDecorator.php    # 10 métodos da FirestoreGateway
+├── GeminiImageCompleterWatcherDecorator.php
+└── DeepSeekChatCompleterWatcherDecorator.php
+```
+
+### Rollback
+
+Para desligar o Telescope em < 1 minuto:
+
+```bash
+# No .env local:
+TELESCOPE_ENABLED=false
+
+# Reiniciar o servidor:
+make restart
+```
+
+Em produção, Telescope já é no-op (env `production` + master switch
+desligado) — nenhuma ação necessária.
+
+---
+
 ## Licença
 
 Projeto pessoal. Sem licença pública no momento.

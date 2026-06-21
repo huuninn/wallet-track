@@ -10,6 +10,8 @@ use App\Services\Google\FirestoreGateway;
 use App\Services\Google\FirestoreService;
 use App\Services\Google\GoogleCredentials;
 use App\Services\Google\InMemoryFirestoreGateway;
+use App\Support\Telescope\FirestoreWatcherDecorator;
+use App\Support\Telescope\TelescopeHelper;
 use Google\Cloud\Firestore\FirestoreClient;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
@@ -19,7 +21,8 @@ use RuntimeException;
  *
  * Ligações:
  *
- *  - {@see FirestoreGateway} → singleton {@see CloudFirestoreGateway}.
+ *  - {@see FirestoreGateway} → {@see CloudFirestoreGateway} ou
+ *    {@see FirestoreWatcherDecorator} (condicional, ver abaixo).
  *    O `FirestoreClient` é construído uma única vez (singleton) usando
  *    {@see GoogleCredentials} para resolver o `keyFile` (dev: arquivo;
  *    prod/M10: conteúdo inline via Secret Manager).
@@ -66,7 +69,18 @@ class FirestoreServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(FirestoreGateway::class, function ($app): FirestoreGateway {
-            return new CloudFirestoreGateway($app->make(FirestoreClient::class));
+            $gateway = new CloudFirestoreGateway($app->make(FirestoreClient::class));
+
+            // M5-spec: quando Telescope está ativo (env `local` + flag
+            // ligado), envolve o gateway real com o decorator que
+            // registra cada chamada em /telescope/events. Em produção,
+            // tests ou staging, o binding retorna o gateway puro (zero
+            // overhead, zero chance de vazar dados via telemetria).
+            if (TelescopeHelper::isActive()) {
+                return new FirestoreWatcherDecorator($gateway);
+            }
+
+            return $gateway;
         });
 
         $this->app->singleton(FirestoreService::class, function ($app): FirestoreService {

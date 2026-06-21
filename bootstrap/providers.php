@@ -7,6 +7,7 @@ use App\Providers\FirestoreServiceProvider;
 use App\Providers\GeminiServiceProvider;
 use App\Providers\SheetsServiceProvider;
 use App\Providers\TelegramServiceProvider;
+use App\Providers\TelescopeServiceProvider;
 
 return [
     AppServiceProvider::class,
@@ -16,4 +17,5 @@ return [
     GeminiServiceProvider::class,
     SheetsServiceProvider::class,
     TelegramServiceProvider::class,
+    TelescopeServiceProvider::class,
 ];

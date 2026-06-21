@@ -43,6 +43,11 @@ wallet-track-*.json
 !storage/logs/.gitkeep
 !storage/app/public/.gitkeep
 
+# --- Telescope (SQLite dedicado com dados de telemetria) ---
+# database/.gitignore já cobre *.sqlite* — entrada explícita aqui como
+# redundância defensiva caso o subdiretório seja recriado sem o .gitignore.
+database/telescope.sqlite*
+
 # --- Bootstrap cache (regenerado em build) ---
 # Mantemos versionado o bootstrap/cache que vem no skeleton, mas ignoramos apenas
 # arquivos gerados em runtime para evitar poluir o diff.
