@@ -7,7 +7,6 @@ namespace Tests\Feature\Conversation;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
-use App\Actions\SuggestLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Handlers\CancelarHandler;
 use App\Bot\Messaging\BotMessenger;
@@ -137,14 +136,11 @@ class ConversationRouterTest extends TestCase
 
             public ?string $lastFirestoreId = null;
 
-            public ?string $lastSource = null;
-
-            public function handle(TransactionData $dto, string $firestoreId, string $source): bool
+            public function handle(TransactionData $dto, string $firestoreId): bool
             {
                 $this->callCount++;
                 $this->lastDto = $dto;
                 $this->lastFirestoreId = $firestoreId;
-                $this->lastSource = $source;
                 if ($this->toThrow !== null) {
                     throw $this->toThrow;
                 }
@@ -174,7 +170,6 @@ class ConversationRouterTest extends TestCase
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
             suggestCategory: new SuggestCategory($this->firestore),
-            suggestLabels: new SuggestLabels($this->firestore),
             sessionTimeoutMinutes: $timeout,
             maxDataRetries: $maxRetries,
         );
@@ -406,13 +401,11 @@ class ConversationRouterTest extends TestCase
         $stored = array_values($transactions)[0];
         $this->assertSame(self::CHAT_ID, $stored['chat_id']);
         $this->assertSame(FirestoreService::SYNC_PENDING, $stored['sync_status']);
-        $this->assertSame('text', $stored['source']);
 
-        // SyncSheet chamado com DTO+id+source corretos.
+        // SyncSheet chamado com DTO+id corretos.
         $this->assertSame(1, $this->syncSheet->callCount);
         $this->assertNotNull($this->syncSheet->lastDto);
         $this->assertNotNull($this->syncSheet->lastFirestoreId);
-        $this->assertSame('text', $this->syncSheet->lastSource);
 
         // notifySuccess enviado, cancelamento NÃO.
         $this->assertCount(1, $this->messenger->successes[self::CHAT_ID] ?? []);
@@ -1730,9 +1723,11 @@ class ConversationRouterTest extends TestCase
 
     public function test_present_confirmation_enriches_empty_labels_with_suggestions(): void
     {
-        // CT-019: histórico de labels → sugerido primeiro.
+        // Após a refatoração de labels (F2): labels NÃO são mais enriquecidas
+        // automaticamente com histórico/keywords. O DTO mantém apenas os labels
+        // que o LLM extraiu (ou vazio).
         $this->seedDefaultCategories();
-        // Histórico: ifood e restaurante já usados.
+        // Histórico: ifood e restaurante já usados (mas NÃO injetados automaticamente).
         for ($i = 0; $i < 3; $i++) {
             $this->firestore->incrementLabelUse('ifood');
         }
@@ -1751,16 +1746,15 @@ class ConversationRouterTest extends TestCase
 
         $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'pizza ifood'));
 
-        // Labels sugeridas aplicadas ao draft.
+        // Labels NÃO são enriquecidas automaticamente — o DTO preserva o que veio.
         $session = $this->currentSession();
         $labels = $session['draft']['labels'] ?? [];
-        $this->assertContains('ifood', $labels, 'Histórico deve aparecer primeiro');
-        $this->assertContains('restaurante', $labels);
+        $this->assertSame([], $labels, 'Labels devem permanecer como extraídos (vazio), sem injeção automática');
     }
 
-    public function test_present_confirmation_keywords_appear_when_no_history(): void
+    public function test_present_confirmation_labels_from_llm_are_preserved_without_merge(): void
     {
-        // CT-020: histórico vazio → keywords da descrição entram.
+        // Após F2: labels do LLM são preservados sem merge automático de histórico.
         $this->seedDefaultCategories();
         // Sem labels no histórico.
 
@@ -1777,16 +1771,14 @@ class ConversationRouterTest extends TestCase
 
         $session = $this->currentSession();
         $labels = $session['draft']['labels'] ?? [];
-        $this->assertContains('conta', $labels);
-        $this->assertContains('luz', $labels);
-        $this->assertContains('enel', $labels);
+        $this->assertSame([], $labels, 'Sem histórico automático — labels vêm apenas do LLM');
     }
 
     public function test_present_confirmation_keeps_existing_labels_from_extraction(): void
     {
-        // Se o LLM já extraiu labels, as sugestões são mergeadas (não substituem).
+        // Após F2: LLM labels são preservadas sem merge automático.
         $this->seedDefaultCategories();
-        $this->firestore->incrementLabelUse('ifood'); // histórico
+        $this->firestore->incrementLabelUse('ifood'); // histórico (não injetado)
 
         $this->extractText->toReturn = TransactionData::fromArray([
             'description' => 'Paguei 50 no iFood',
@@ -1804,16 +1796,13 @@ class ConversationRouterTest extends TestCase
         // LLM labels preservadas.
         $this->assertContains('japones', $labels);
         $this->assertContains('domingo', $labels);
-        // Histórico sugerido adicionado.
-        $this->assertContains('ifood', $labels);
+        // Histórico NÃO é injetado automaticamente (F2).
+        $this->assertCount(2, $labels, 'Apenas os labels do LLM, sem merge de histórico');
     }
 
-    public function test_present_confirmation_user_can_still_edit_labels(): void
+    public function test_present_confirmation_user_edits_labels_manually(): void
     {
-        // CT-021: após sugestões, o usuário edita labels via callback edit:labels.
-        // O edit:labels não é suportado atualmente (apenas edit:description, etc.),
-        // mas podemos simular o cenário através de edit:description + re-extração.
-        // Aqui testamos o equivalente: edição de description mantém os labels sugeridos.
+        // Após F2: labels vêm apenas do LLM ou entrada manual — sem sugestão automática.
         $this->seedDefaultCategories();
         $this->firestore->incrementLabelUse('ifood');
 
@@ -1829,11 +1818,11 @@ class ConversationRouterTest extends TestCase
         $router = $this->makeRouter();
         $router->route(ConversationInput::text(self::CHAT_ID, 'iFood'));
 
-        // Sessão criada com labels sugeridas.
+        // Sessão criada com labels do DTO (vazio — sem injeção automática).
         $session = $this->currentSession();
         $messageId = $session['message_id_confirm'];
         $originalLabels = $session['draft']['labels'] ?? [];
-        $this->assertContains('ifood', $originalLabels);
+        $this->assertSame([], $originalLabels, 'Sem sugestão automática de labels');
 
         // Usuário clica "Editar" → "Descrição" e edita.
         $router->route(ConversationInput::callback(
@@ -1844,12 +1833,10 @@ class ConversationRouterTest extends TestCase
         ));
         $router->route(ConversationInput::text(self::CHAT_ID, 'iFood de japonês'));
 
-        // Após edição, sessão volta para AWAITING_CONFIRMATION — os labels
-        // sugeridos (apenas os do histórico, "ifood") estão preservados porque
-        // a edição só tocou description.
+        // Após edição, sessão volta para AWAITING_CONFIRMATION — labels vazios preservados.
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertContains('ifood', $session['draft']['labels'] ?? []);
+        $this->assertSame([], $session['draft']['labels'] ?? []);
     }
 
     public function test_confirm_increments_label_use_count(): void

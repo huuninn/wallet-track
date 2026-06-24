@@ -7,7 +7,6 @@ namespace Tests\Feature\Conversation;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
-use App\Actions\SuggestLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\InMemoryBotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
@@ -109,7 +108,7 @@ class WizardHandlerTest extends TestCase
         };
         $this->syncSheet = new class implements SyncsSheet
         {
-            public function handle(TransactionData $dto, string $firestoreId, string $source): bool
+            public function handle(TransactionData $dto, string $firestoreId): bool
             {
                 throw new \LogicException('syncSheet não deve ser chamado neste teste (wizard ainda em etapa).');
             }
@@ -133,7 +132,6 @@ class WizardHandlerTest extends TestCase
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
             suggestCategory: new SuggestCategory($this->firestore),
-            suggestLabels: new SuggestLabels($this->firestore),
             sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );

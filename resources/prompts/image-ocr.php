@@ -41,7 +41,15 @@ REGRAS DE EXTRAÇÃO:
 
 4. **category**: sugira UMA categoria em PT-BR. Sugestões padrão: Mercado, Alimentação, Transporte, Combustível, Moradia, Saúde, Lazer, Educação, Vestuário, Farmácia, Serviços, Outros. Se não houver contexto suficiente, retorne null.
 
-5. **labels**: lista (array) de etiquetas curtas úteis para busca — ex.: ["supermercado", "alimentação"], ["combustível", "carro"]. Se não houver, retorne [] (array vazio, nunca null).
+5. **labels**: lista (array) de etiquetas curtas úteis para busca. Regras OBRIGATÓRIAS:
+   - Máximo de 3 etiquetas (apenas as mais relevantes).
+   - Cada etiqueta em MINÚSCULAS e SEM ACENTOS (ex.: "almoco", "restaurante", "gasolina", "manutencao").
+   - NUNCA duplique sinônimos: escolha UM termo (ex.: use "gasolina" OU "combustivel", nunca ambos).
+   - NUNCA duplique variantes ortográficas da mesma palavra.
+   - NUNCA inclua a própria categoria como label (redundante).
+   - Prefira substantivos concretos a verbos/qualificadores.
+   - Se não houver etiquetas relevantes, retorne [] (array vazio, nunca null).
+   - Exemplos: "Manutenção do carro" → ["manutencao", "carro"]; "Almoço no iFood" → ["almoco", "ifood"].
 
 6. **date**: data da transação no formato ISO YYYY-MM-DD. Consulte a INFORMAÇÃO TEMPORAL do cabeçalho para saber a data de hoje e interprete:
    - Se a nota tiver uma data impressa legível, extraia-a no formato ISO.

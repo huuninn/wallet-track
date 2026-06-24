@@ -29,8 +29,7 @@ interface SyncsSheet
      *
      * @param  TransactionData  $dto  DTO completo (amount/type já validados).
      * @param  string  $firestoreId  ID do documento em `transactions/`.
-     * @param  string  $source  "text" (DeepSeek) ou "image" (Gemini).
      * @return bool `true` em sucesso, `false` em falha esperada de I/O.
      */
-    public function handle(TransactionData $dto, string $firestoreId, string $source): bool;
+    public function handle(TransactionData $dto, string $firestoreId): bool;
 }

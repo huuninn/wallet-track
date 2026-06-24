@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace App\Services\Google;
 
 use Google\Service\Sheets;
+use Google\Service\Sheets\BatchUpdateSpreadsheetRequest;
 use Google\Service\Sheets\ClearValuesRequest;
+use Google\Service\Sheets\DeleteDimensionRequest;
+use Google\Service\Sheets\DimensionRange;
+use Google\Service\Sheets\Request as SheetsRequest;
 use Google\Service\Sheets\ValueRange;
 
 /**
@@ -17,7 +21,7 @@ use Google\Service\Sheets\ValueRange;
  * API REST do Sheets v4 (HTTP — não gRPC).
  *
  * **Tradução das options**:
- *  - `getHeaderRow`     → `spreadsheets_values->get("{aba}!A1:I1")`; devolve
+ *  - `getHeaderRow`     → `spreadsheets_values->get("{aba}!A1:H1")`; devolve
  *    null quando o range está vazio.
  *  - `writeHeaderRow`   → `update(...)` com `valueInputOption=RAW` (texto
  *    literal, sem reinterpretação de datas/números).
@@ -40,7 +44,7 @@ final class GoogleSheetsGateway implements SheetsGateway
 
     public function getHeaderRow(): ?array
     {
-        $range = $this->sheetName.'!A1:I1';
+        $range = $this->sheetName.'!A1:H1';
 
         /** @var ValueRange $response */
         $response = $this->sheets->spreadsheets_values->get($this->spreadsheetId, $range);
@@ -57,7 +61,7 @@ final class GoogleSheetsGateway implements SheetsGateway
 
     public function writeHeaderRow(array $headers): void
     {
-        $range = $this->sheetName.'!A1:I1';
+        $range = $this->sheetName.'!A1:H1';
 
         $body = new ValueRange([
             'values' => [array_values($headers)],
@@ -92,6 +96,30 @@ final class GoogleSheetsGateway implements SheetsGateway
                 'insertDataOption' => 'INSERT_ROWS',
             ],
         );
+    }
+
+    public function deleteColumn(int $sheetId, int $columnIndex): void
+    {
+        $dimensionRange = new DimensionRange([
+            'sheetId' => $sheetId,
+            'dimension' => 'COLUMNS',
+            'startIndex' => $columnIndex,
+            'endIndex' => $columnIndex + 1,
+        ]);
+
+        $deleteRequest = new DeleteDimensionRequest([
+            'range' => $dimensionRange,
+        ]);
+
+        $request = new SheetsRequest([
+            'deleteDimension' => $deleteRequest,
+        ]);
+
+        $batchRequest = new BatchUpdateSpreadsheetRequest([
+            'requests' => [$request],
+        ]);
+
+        $this->sheets->spreadsheets->batchUpdate($this->spreadsheetId, $batchRequest);
     }
 
     public function writeAll(string $range, array $rows): void

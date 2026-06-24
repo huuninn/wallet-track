@@ -47,9 +47,19 @@ interface SheetsGateway
      * Adiciona uma linha na próxima posição livre da aba principal
      * (INSERT_ROWS via append).
      *
-     * @param  list<mixed>  $row  Valores das colunas A..I na ordem do schema.
+     * @param  list<mixed>  $row  Valores das colunas A..H na ordem do schema (8 colunas).
      */
     public function appendRow(array $row): void;
+
+    /**
+     * Deleta uma coluna inteira pelo índice (0-based).
+     *
+     * Caso de uso: remoção da coluna G (Origem) após migração para 8 colunas.
+     *
+     * @param  int  $sheetId  ID numérico da sheet (0 = primeira aba).
+     * @param  int  $columnIndex  Índice 0-based da coluna a deletar.
+     */
+    public function deleteColumn(int $sheetId, int $columnIndex): void;
 
     /**
      * Sobrescreve integralmente um range qualquer (notação A1).

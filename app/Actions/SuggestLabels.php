@@ -6,9 +6,12 @@ namespace App\Actions;
 
 use App\Services\Google\FirestoreService;
 use App\Support\Stopwords;
+use App\Support\TextNormalizer;
 
 /**
  * Heurística PHP (sem LLM) para sugestão de labels — M8.
+ *
+ * @deprecated no fluxo principal desde a refatoração de labels — preservada para reuso futuro.
  *
  * Implementa o algoritmo definido em `docs/04-clarificacoes.md` §4 e em
  * `docs/06-plano-implementacao.md` §11 (M8.1). O objetivo é sugerir
@@ -82,7 +85,7 @@ final class SuggestLabels
         foreach ($existingLabels as $l) {
             // Folds tudo para garantir dedup case-insensitive e sem-acento.
             // Se o caller já passou normalizado, fold() é idempotente.
-            $existingSet[mb_strtolower(trim($l))] = true;
+            $existingSet[TextNormalizer::fold($l)] = true;
         }
 
         $result = [];
@@ -98,7 +101,7 @@ final class SuggestLabels
                 continue;
             }
 
-            $key = mb_strtolower(trim($name));
+            $key = TextNormalizer::fold($name);
 
             if (isset($existingSet[$key]) || isset($resultSet[$key])) {
                 continue;
@@ -120,7 +123,7 @@ final class SuggestLabels
                 break;
             }
 
-            $key = mb_strtolower(trim($kw));
+            $key = TextNormalizer::fold($kw);
 
             if ($key === '' || isset($existingSet[$key]) || isset($resultSet[$key])) {
                 continue;

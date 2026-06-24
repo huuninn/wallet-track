@@ -80,9 +80,9 @@ class SyncSheetTest extends TestCase
     public function test_sync_appends_row_and_marks_transaction_synced_on_success(): void
     {
         $dto = $this->dto();
-        $firestoreId = $this->firestore->saveTransaction('C1', $dto, 'text');
+        $firestoreId = $this->firestore->saveTransaction('C1', $dto);
 
-        $result = $this->action->handle($dto, $firestoreId, 'text');
+        $result = $this->action->handle($dto, $firestoreId);
 
         $this->assertTrue($result);
 
@@ -95,24 +95,14 @@ class SyncSheetTest extends TestCase
         $this->assertSame('Almoço no restaurante', $row[1]);
         $this->assertSame(47.50, $row[2]);
         $this->assertSame('Despesa', $row[3]);
-        $this->assertSame('texto', $row[6]);
-        $this->assertSame($firestoreId, $row[7]);
+        // F4: coluna Origem removida — ID Firestore está em G (índice 6).
+        $this->assertSame($firestoreId, $row[6]);
 
         // Firestore marcado como synced, sem erro, sem incremento de tentativas.
         $stored = $this->firestore->getTransaction($firestoreId);
         $this->assertSame(FirestoreService::SYNC_SYNCED, $stored['sync_status']);
         $this->assertNull($stored['sync_error_message']);
         $this->assertSame(0, $stored['sync_attempts']);
-    }
-
-    public function test_sync_with_image_source_writes_imagem_in_origin_column(): void
-    {
-        $dto = $this->dto();
-        $firestoreId = $this->firestore->saveTransaction('C1', $dto, 'image');
-
-        $this->action->handle($dto, $firestoreId, 'image');
-
-        $this->assertSame('imagem', $this->sheetsGateway->rows()[1][6]);
     }
 
     /*
@@ -124,11 +114,10 @@ class SyncSheetTest extends TestCase
     public function test_sync_marks_failed_with_error_and_attempts_and_does_not_rethrow(): void
     {
         $dto = $this->dto();
-        $firestoreId = $this->firestore->saveTransaction('C1', $dto, 'text');
+        $firestoreId = $this->firestore->saveTransaction('C1', $dto);
 
         // Gateway de Sheets que sempre falha ao appendar com
         // GoogleServiceException (erro HTTP da API Sheets — 403/404/429/500).
-        // (Double anônimo baseado na interface — InMemorySheetsGateway é final.)
         $failingSheets = new SheetsService(new class implements SheetsGateway
         {
             public function getHeaderRow(): ?array
@@ -143,12 +132,14 @@ class SyncSheetTest extends TestCase
                 throw new GoogleServiceException('Sheets API offline (503)');
             }
 
+            public function deleteColumn(int $sheetId, int $columnIndex): void {}
+
             public function writeAll(string $range, array $rows): void {}
         });
         $action = new SyncSheet($failingSheets, $this->firestore);
 
         // Não deve relançar.
-        $result = $action->handle($dto, $firestoreId, 'text');
+        $result = $action->handle($dto, $firestoreId);
 
         $this->assertFalse($result);
 
@@ -161,7 +152,7 @@ class SyncSheetTest extends TestCase
     public function test_sync_failure_repeated_increments_attempts_each_time(): void
     {
         $dto = $this->dto();
-        $firestoreId = $this->firestore->saveTransaction('C1', $dto, 'text');
+        $firestoreId = $this->firestore->saveTransaction('C1', $dto);
 
         $failingSheets = new SheetsService(new class implements SheetsGateway
         {
@@ -177,13 +168,15 @@ class SyncSheetTest extends TestCase
                 throw new GoogleServiceException('quota excedida (429)');
             }
 
+            public function deleteColumn(int $sheetId, int $columnIndex): void {}
+
             public function writeAll(string $range, array $rows): void {}
         });
         $action = new SyncSheet($failingSheets, $this->firestore);
 
-        $action->handle($dto, $firestoreId, 'text');
-        $action->handle($dto, $firestoreId, 'text');
-        $action->handle($dto, $firestoreId, 'text');
+        $action->handle($dto, $firestoreId);
+        $action->handle($dto, $firestoreId);
+        $action->handle($dto, $firestoreId);
 
         // Após 3 tentativas falhas: sync_attempts=3. (Notificação ao usuário
         // após 3 falhas é responsabilidade do M9 — aqui só confirmamos o
@@ -202,12 +195,12 @@ class SyncSheetTest extends TestCase
     {
         // DTO incompleto: appendTransaction lança InvalidArgumentException.
         $incompleteDto = $this->dto(['amount' => null, 'type' => null]);
-        $firestoreId = $this->firestore->saveTransaction('C1', $this->dto(), 'text');
+        $firestoreId = $this->firestore->saveTransaction('C1', $this->dto());
 
         // Mesmo que o gateway esteja saudável, a action PROPAGA a exceção.
         $caught = null;
         try {
-            $this->action->handle($incompleteDto, $firestoreId, 'text');
+            $this->action->handle($incompleteDto, $firestoreId);
         } catch (\InvalidArgumentException $e) {
             $caught = $e;
         }
@@ -230,7 +223,7 @@ class SyncSheetTest extends TestCase
     public function test_sync_marks_failed_when_runtime_exception_occurs(): void
     {
         $dto = $this->dto();
-        $firestoreId = $this->firestore->saveTransaction('C1', $dto, 'text');
+        $firestoreId = $this->firestore->saveTransaction('C1', $dto);
 
         $failingSheets = new SheetsService(new class implements SheetsGateway
         {
@@ -246,11 +239,13 @@ class SyncSheetTest extends TestCase
                 throw new \RuntimeException('connection timeout');
             }
 
+            public function deleteColumn(int $sheetId, int $columnIndex): void {}
+
             public function writeAll(string $range, array $rows): void {}
         });
         $action = new SyncSheet($failingSheets, $this->firestore);
 
-        $result = $action->handle($dto, $firestoreId, 'text');
+        $result = $action->handle($dto, $firestoreId);
 
         $this->assertFalse($result);
 

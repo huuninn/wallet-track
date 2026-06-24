@@ -13,14 +13,14 @@ use Illuminate\Support\Facades\Log;
  *
  * Cada transação persistida no Firestore (M5) é espelhada como uma linha na
  * planilha (spec §4). Esta classe contém toda a lógica de mapeamento
- * {@see TransactionData} → linha de 9 colunas, e depende apenas de
+ * {@see TransactionData} → linha de 8 colunas, e depende apenas de
  * {@see SheetsGateway} (interface) — nunca do SDK bruto — o que a torna
  * trivialmente testável com {@see InMemorySheetsGateway}.
  *
  * Colunas da aba principal (linha 1 = cabeçalho, linha 2+ = dados):
  *
  *   A Data | B Descrição | C Valor | D Tipo | E Categoria | F Labels |
- *   G Origem | H ID Firestore | I Observações
+ *   G ID Firestore | H Observações
  *
  * **Formatação visual** (FORMAT de data/moeda, freeze linha 1) é M10 (polish).
  * Aqui apenas garantimos o cabeçalho textual via {@see ensureHeaders()}.
@@ -37,7 +37,6 @@ final class SheetsService
         'Tipo',
         'Categoria',
         'Labels',
-        'Origem',
         'ID Firestore',
         'Observações',
     ];
@@ -48,14 +47,6 @@ final class SheetsService
     private const array TYPE_MAP = [
         'expense' => 'Despesa',
         'income' => 'Receita',
-    ];
-
-    /**
-     * Map source → rótulo em PT-BR exibido na coluna G.
-     */
-    private const array SOURCE_MAP = [
-        'text' => 'texto',
-        'image' => 'imagem',
     ];
 
     /**
@@ -89,7 +80,7 @@ final class SheetsService
      * Espelha uma transação como nova linha na aba principal.
      *
      * Chama {@see ensureHeaders()} primeiro (defensivo — a planilha pode estar
-     * vazia no primeiro lançamento), monta a row de 9 colunas na ordem do
+     * vazia no primeiro lançamento), monta a row de 8 colunas na ordem do
      * schema e faz append (INSERT_ROWS).
      *
      * **Guarda de completude**: o schema exige `Valor` e `Tipo` preenchidos
@@ -97,13 +88,12 @@ final class SheetsService
      * fluxo conversacional pedindo esses dados), validar aqui evita gravar
      * uma linha "corrompida" — o caller deve garantir DTO completo antes.
      *
-     * @param  string  $firestoreId  UUID do documento Firestore (coluna H).
-     * @param  string  $source  "text" ou "image" (origem da extração).
+     * @param  string  $firestoreId  UUID do documento Firestore (coluna G).
      *
      * @throws \InvalidArgumentException Quando `$dto->amount` ou `$dto->type`
      *                                   são null (mesma regra de saveTransaction).
      */
-    public function appendTransaction(TransactionData $dto, string $firestoreId, string $source): void
+    public function appendTransaction(TransactionData $dto, string $firestoreId): void
     {
         if ($dto->amount === null || $dto->type === null) {
             throw new \InvalidArgumentException(
@@ -115,7 +105,7 @@ final class SheetsService
 
         $this->ensureHeaders();
 
-        $this->gateway->appendRow($this->buildRow($dto, $firestoreId, $source));
+        $this->gateway->appendRow($this->buildRow($dto, $firestoreId));
     }
 
     /**
@@ -159,13 +149,13 @@ final class SheetsService
     }
 
     /**
-     * Monta a linha de 9 colunas na ordem exata do schema, aplicando todas
-     * as conversões de formato (data ISO preservada, labels→#tags, maps de
-     * tipo/origem, nulls→string vazia).
+     * Monta a linha de 8 colunas na ordem exata do schema, aplicando todas
+     * as conversões de formato (data ISO preservada, labels→vírgula, maps de
+     * tipo, nulls→string vazia).
      *
      * @return list<mixed>
      */
-    private function buildRow(TransactionData $dto, string $firestoreId, string $source): array
+    private function buildRow(TransactionData $dto, string $firestoreId): array
     {
         return [
             $this->formatDate($dto->date),          // A — Data (ISO)
@@ -174,9 +164,8 @@ final class SheetsService
             $this->mapType($dto->type),              // D — Tipo
             (string) ($dto->category ?? ''),         // E — Categoria
             $this->formatLabels($dto->labels),       // F — Labels
-            $this->mapSource($source),               // G — Origem
-            $firestoreId,                            // H — ID Firestore
-            (string) ($dto->observations ?? ''),     // I — Observações
+            $firestoreId,                            // G — ID Firestore
+            (string) ($dto->observations ?? ''),     // H — Observações
         ];
     }
 
@@ -231,10 +220,9 @@ final class SheetsService
     }
 
     /**
-     * Monta a string de labels no formato `#tag1 #tag2`.
+     * Monta a string de labels no formato `tag1, tag2` (vírgula + espaço).
      *
-     * Filtra vazias e evita `##` (ltrim do `#` prefixo antes de re-adicionar).
-     * Lista vazia → string vazia (coluna Labels em branco).
+     * Filtra vazias. Lista vazia → string vazia (coluna Labels em branco).
      *
      * @param  array<int, string>  $labels
      */
@@ -246,10 +234,10 @@ final class SheetsService
             if ($label === '') {
                 continue;
             }
-            $tags[] = '#'.ltrim($label, '#');
+            $tags[] = $label;
         }
 
-        return implode(' ', $tags);
+        return implode(', ', $tags);
     }
 
     /**
@@ -270,19 +258,5 @@ final class SheetsService
         }
 
         return (string) ($type ?? '');
-    }
-
-    /**
-     * Map source → rótulo PT-BR (coluna G). Desconhecido mantém cru + warning.
-     */
-    private function mapSource(string $source): string
-    {
-        if (isset(self::SOURCE_MAP[$source])) {
-            return self::SOURCE_MAP[$source];
-        }
-
-        Log::warning('Origem desconhecida ao montar linha Sheets.', ['source' => $source]);
-
-        return $source;
     }
 }

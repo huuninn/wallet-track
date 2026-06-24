@@ -73,7 +73,7 @@ class FirestoreServiceTest extends TestCase
 
     public function test_save_transaction_creates_document_with_pending_sync_and_returns_id(): void
     {
-        $id = $this->service->saveTransaction('12345', $this->dto(), 'text');
+        $id = $this->service->saveTransaction('12345', $this->dto());
 
         $this->assertNotEmpty($id);
 
@@ -87,7 +87,6 @@ class FirestoreServiceTest extends TestCase
         $this->assertSame('expense', $stored['type']);
         $this->assertSame('Alimentação', $stored['category']);
         $this->assertSame(['almoço', 'restaurante'], $stored['labels']);
-        $this->assertSame('text', $stored['source']);
         $this->assertNull($stored['observations']);
 
         // Campos de sync inicializados.
@@ -115,13 +114,11 @@ class FirestoreServiceTest extends TestCase
         $id = $this->service->saveTransaction(
             '99999',
             $this->dto(['observations' => 'Foto ruim']),
-            'image',
         );
 
         $stored = $this->service->getTransaction($id);
 
         $this->assertNotNull($stored);
-        $this->assertSame('image', $stored['source']);
         $this->assertSame('Foto ruim', $stored['observations']);
     }
 
@@ -162,7 +159,7 @@ class FirestoreServiceTest extends TestCase
     {
         // DTO completo (amount + type + description + date não-null):
         // deve persistir sem lançar e devolver um id válido.
-        $id = $this->service->saveTransaction('C1', $this->dto(), 'text');
+        $id = $this->service->saveTransaction('C1', $this->dto());
 
         $this->assertNotEmpty($id);
 
@@ -207,9 +204,9 @@ class FirestoreServiceTest extends TestCase
 
     public function test_list_recent_orders_by_date_desc_and_applies_limit(): void
     {
-        $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-10']), 'text');
-        $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-15']), 'text');
-        $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-12']), 'text');
+        $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-10']));
+        $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-15']));
+        $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-12']));
 
         $list = $this->service->listRecent('C1');
 
@@ -221,8 +218,8 @@ class FirestoreServiceTest extends TestCase
 
     public function test_list_recent_filters_out_other_chats(): void
     {
-        $this->service->saveTransaction('C1', $this->dto(), 'text');
-        $this->service->saveTransaction('C2', $this->dto(), 'text');
+        $this->service->saveTransaction('C1', $this->dto());
+        $this->service->saveTransaction('C2', $this->dto());
 
         $list = $this->service->listRecent('C1');
 
@@ -232,9 +229,9 @@ class FirestoreServiceTest extends TestCase
 
     public function test_list_recent_filters_by_type_when_provided(): void
     {
-        $this->service->saveTransaction('C1', $this->dto(['type' => 'expense', 'amount' => 10]), 'text');
-        $this->service->saveTransaction('C1', $this->dto(['type' => 'income', 'amount' => 100, 'description' => 'Salário']), 'text');
-        $this->service->saveTransaction('C1', $this->dto(['type' => 'expense', 'amount' => 20]), 'text');
+        $this->service->saveTransaction('C1', $this->dto(['type' => 'expense', 'amount' => 10]));
+        $this->service->saveTransaction('C1', $this->dto(['type' => 'income', 'amount' => 100, 'description' => 'Salário']));
+        $this->service->saveTransaction('C1', $this->dto(['type' => 'expense', 'amount' => 20]));
 
         $list = $this->service->listRecent('C1', type: 'income');
 
@@ -246,7 +243,7 @@ class FirestoreServiceTest extends TestCase
     public function test_list_recent_applies_limit(): void
     {
         for ($i = 0; $i < 5; $i++) {
-            $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-'.str_pad((string) ($i + 1), 2, '0', STR_PAD_LEFT)]), 'text');
+            $this->service->saveTransaction('C1', $this->dto(['date' => '2026-06-'.str_pad((string) ($i + 1), 2, '0', STR_PAD_LEFT)]));
         }
 
         $list = $this->service->listRecent('C1', limit: 2);
@@ -265,7 +262,7 @@ class FirestoreServiceTest extends TestCase
 
     public function test_update_sync_status_to_synced(): void
     {
-        $id = $this->service->saveTransaction('C1', $this->dto(), 'text');
+        $id = $this->service->saveTransaction('C1', $this->dto());
 
         $this->service->updateSyncStatus($id, FirestoreService::SYNC_SYNCED);
 
@@ -277,7 +274,7 @@ class FirestoreServiceTest extends TestCase
 
     public function test_update_sync_status_to_failed_increments_attempts_and_sets_error(): void
     {
-        $id = $this->service->saveTransaction('C1', $this->dto(), 'text');
+        $id = $this->service->saveTransaction('C1', $this->dto());
 
         // Primeira falha.
         $this->service->updateSyncStatus($id, FirestoreService::SYNC_FAILED, 'timeout');
@@ -298,7 +295,7 @@ class FirestoreServiceTest extends TestCase
 
     public function test_update_sync_status_to_pending_after_failure(): void
     {
-        $id = $this->service->saveTransaction('C1', $this->dto(), 'text');
+        $id = $this->service->saveTransaction('C1', $this->dto());
 
         // Falhou uma vez.
         $this->service->updateSyncStatus($id, FirestoreService::SYNC_FAILED, 'timeout');
@@ -647,7 +644,7 @@ class FirestoreServiceTest extends TestCase
     {
         $this->service->incrementLabelUse('almoço');
 
-        $raw = $this->gateway->raw()['labels']['almoço'];
+        $raw = $this->gateway->raw()['labels']['almoco'];
         $this->assertSame('almoço', $raw['name']);
         $this->assertSame(1, $raw['use_count']);
         $this->assertNotEmpty($raw['last_used_at']);
@@ -658,7 +655,7 @@ class FirestoreServiceTest extends TestCase
         $this->service->incrementLabelUse('almoço');
         $this->service->incrementLabelUse('almoço');
 
-        $raw = $this->gateway->raw()['labels']['almoço'];
+        $raw = $this->gateway->raw()['labels']['almoco'];
         $this->assertSame(2, $raw['use_count']);
     }
 
@@ -677,7 +674,7 @@ class FirestoreServiceTest extends TestCase
 
         // Mais usado primeiro.
         $this->assertCount(3, $top);
-        $this->assertSame('almoço', $top[0]['id']);
+        $this->assertSame('almoco', $top[0]['id']);
         $this->assertSame(5, $top[0]['data']['use_count']);
         $this->assertSame('mercado', $top[1]['id']);
         $this->assertSame(3, $top[1]['data']['use_count']);
@@ -698,6 +695,31 @@ class FirestoreServiceTest extends TestCase
     public function test_get_top_labels_returns_empty_when_collection_empty(): void
     {
         $this->assertSame([], $this->service->getTopLabels());
+    }
+
+    public function test_increment_label_use_accent_insensitive_same_document(): void
+    {
+        // 2× increment com acentos diferentes ("Almoço"/"almoco") → mesmo doc,
+        // use_count=2.
+        $this->service->incrementLabelUse('Almoço');
+        $this->service->incrementLabelUse('almoco');
+
+        $raw = $this->gateway->raw()['labels']['almoco'];
+        $this->assertSame(2, $raw['use_count']);
+    }
+
+    public function test_create_category_preserves_accent_in_id(): void
+    {
+        // Categorias continuam com normalizeName (mb_strtolower, SEM fold).
+        // Acentos são preservados no id do documento.
+        $this->service->createCategory('Alimentação', 'expense', isDefault: true);
+
+        $raw = $this->gateway->raw()['categories'] ?? [];
+        $this->assertArrayHasKey('alimentação', $raw);
+        $this->assertArrayNotHasKey('alimentacao', $raw);
+
+        $data = $raw['alimentação'];
+        $this->assertSame('Alimentação', $data['display_name']);
     }
 
     /*
@@ -977,7 +999,7 @@ class FirestoreServiceTest extends TestCase
         // devem ser inicializados em saveTransaction para que o command
         // (que depende de notified_at=null na 1ª falha) funcione sem
         // precisar de merge explícito.
-        $id = $this->service->saveTransaction('C1', $this->dto(), 'text');
+        $id = $this->service->saveTransaction('C1', $this->dto());
 
         $doc = $this->service->getTransaction($id);
         $this->assertNull($doc['notified_at']);

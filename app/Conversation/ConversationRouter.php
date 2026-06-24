@@ -7,7 +7,6 @@ namespace App\Conversation;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
-use App\Actions\SuggestLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
@@ -16,6 +15,7 @@ use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Exceptions\ExtractionException;
 use App\Services\Google\FirestoreService;
+use App\Support\TextNormalizer;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -147,7 +147,6 @@ final class ConversationRouter
         private readonly ExtractsImage $extractImage,
         private readonly SyncsSheet $syncSheet,
         private readonly SuggestCategory $suggestCategory,
-        private readonly SuggestLabels $suggestLabels,
         int $sessionTimeoutMinutes,
         int $maxDataRetries,
     ) {
@@ -686,26 +685,24 @@ final class ConversationRouter
     }
 
     /**
-     * Enriquece o DTO com sugestões de categoria e labels (M8).
+     * Enriquece o DTO com sugestão de categoria (M8).
      *
-     * Pipeline (CT-011, CT-019, CT-020, CT-021):
+     * Pipeline (CT-011):
      *
      *  1. {@see SuggestCategory::suggest()} resolve a categoria final
      *     (fuzzy match → existente; abaixo do threshold → nova; sem
      *     entrada → default). O `display` retornado é aplicado ao DTO.
-     *  2. {@see SuggestLabels::suggest()} recebe a categoria final
-     *     (apenas o `name` canônico quando NÃO for nova) e a descrição,
-     *     e devolve até 5 labels. O resultado é mergeado com
-     *     `$dto->labels` (deduplicado, ordem preservada) — o usuário pode
-     *     sempre editar antes de confirmar (CT-021), então apenas somar
-     *     sugestões ao que já existe é o comportamento conservador certo.
-     *  3. Imutável: devolve um novo {@see TransactionData} (helpers
-     *     `withCategory`/`withLabels`).
+     *  2. Imutável: devolve um novo {@see TransactionData} (helper
+     *     `withCategory`).
      *
-     * Falhas de qualquer uma das heurísticas (ex.: Firestore indisponível
-     * para buscar histórico) são capturadas localmente — uma exceção aqui
+     * Falhas da heurística (ex.: Firestore indisponível para buscar
+     * categorias) são capturadas localmente — uma exceção aqui
      * não pode impedir o usuário de confirmar uma transação. O log
      * warning fica disponível para diagnóstico.
+     *
+     * A sugestão de labels foi removida do fluxo principal na refatoração
+     * de labels (F2) — o histórico global não é mais injetado
+     * automaticamente. O usuário define labels manualmente ou via LLM.
      */
     private function enrichDtoWithSuggestions(TransactionData $dto): TransactionData
     {
@@ -723,33 +720,7 @@ final class ConversationRouter
             $category = ['name' => 'outros', 'display' => SuggestCategory::DEFAULT_CATEGORY, 'isNew' => false];
         }
 
-        $dtoWithCategory = $dto->withCategory($category['display']);
-
-        try {
-            // Passa a categoria apenas se for EXISTENTE (isNew=false): labels
-            // devem ser sugeridas com base em histórico já populado, não em
-            // uma categoria que acabou de nascer. Quando é nova, passamos
-            // null para que o histórico global entre em jogo.
-            $suggestedLabels = $this->suggestLabels->suggest(
-                $dto->description,
-                $category['isNew'] ? null : $category['name'],
-                $dto->labels,
-            );
-        } catch (Throwable $e) {
-            Log::warning('ConversationRouter: SuggestLabels falhou — seguindo sem labels sugeridas', [
-                'exception' => $e::class,
-                'message' => $e->getMessage(),
-            ]);
-            $suggestedLabels = [];
-        }
-
-        if ($suggestedLabels === []) {
-            return $dtoWithCategory;
-        }
-
-        $merged = array_values(array_unique(array_merge($dto->labels, $suggestedLabels)));
-
-        return $dtoWithCategory->withLabels($merged);
+        return $dto->withCategory($category['display']);
     }
 
     /**
@@ -1102,14 +1073,12 @@ final class ConversationRouter
             return;
         }
 
-        $source = (string) ($session['source'] ?? 'text');
-
         // 1. Persiste no Firestore. saveTransaction exige amount+type (já
         // garantido por isComplete), mas defensivamente capturamos erros
         // inesperados — o webhook controller também capturaria, mas
         // queremos responder com toast amigável antes.
         try {
-            $firestoreId = $this->firestore->saveTransaction($chatId, $dto, $source);
+            $firestoreId = $this->firestore->saveTransaction($chatId, $dto);
         } catch (Throwable $e) {
             Log::error('ConversationRouter: saveTransaction falhou', [
                 'chat_id' => $chatId,
@@ -1135,7 +1104,7 @@ final class ConversationRouter
 
         // 3. Tenta espelhar na planilha (best-effort).
         try {
-            $synced = $this->syncSheet->handle($dto, $firestoreId, $source);
+            $synced = $this->syncSheet->handle($dto, $firestoreId);
         } catch (Throwable $e) {
             // Bug de programação (ex.: DTO incompleto) — logamos mas NÃO
             // falhamos o confirm: a transação está persistida, o cron M9
@@ -1567,7 +1536,7 @@ final class ConversationRouter
                 continue;
             }
 
-            $key = mb_strtolower($token);
+            $key = TextNormalizer::fold($token);
             if (isset($seen[$key])) {
                 continue;
             }

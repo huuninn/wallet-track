@@ -150,6 +150,24 @@ class SuggestLabelsTest extends TestCase
         $this->assertNotContains('IFOOD', $result);
     }
 
+    public function test_dedupes_accent_insensitive(): void
+    {
+        // CT-021a: existingLabels: ['almoco'] (já folded),
+        // descrição com "Almoço" → não duplica.
+        $this->firestore->incrementLabelUse('ifood');
+
+        $result = $this->action->suggest(
+            'Almoço no restaurante',
+            'Alimentação',
+            existingLabels: ['almoco'],
+        );
+
+        // "almoco" já existe como label → não deve ser sugerido.
+        $this->assertNotContains('almoco', $result);
+        // "ifood" do histórico deve aparecer.
+        $this->assertContains('ifood', $result);
+    }
+
     public function test_dedupes_keyword_against_existing_label(): void
     {
         // Sem histórico.

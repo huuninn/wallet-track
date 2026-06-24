@@ -71,6 +71,17 @@ final class InMemorySheetsGateway implements SheetsGateway
         $this->rows[] = array_values($row);
     }
 
+    public function deleteColumn(int $sheetId, int $columnIndex): void
+    {
+        foreach ($this->rows as $i => $row) {
+            if (isset($row[$columnIndex])) {
+                unset($this->rows[$i][$columnIndex]);
+                // Reindexa para garantir índices consecutivos.
+                $this->rows[$i] = array_values($this->rows[$i]);
+            }
+        }
+    }
+
     public function writeAll(string $range, array $rows): void
     {
         $this->ranges[$range] = array_values($rows);

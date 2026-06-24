@@ -408,7 +408,7 @@ class StubSyncsSheet implements SyncsSheet
         private readonly ?FirestoreService $firestore = null,
     ) {}
 
-    public function handle(TransactionData $dto, string $firestoreId, string $source): bool
+    public function handle(TransactionData $dto, string $firestoreId): bool
     {
         $this->callCount++;
 

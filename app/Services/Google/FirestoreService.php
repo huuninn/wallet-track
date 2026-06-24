@@ -6,6 +6,7 @@ namespace App\Services\Google;
 
 use App\Dto\SessionData;
 use App\Dto\TransactionData;
+use App\Support\TextNormalizer;
 
 /**
  * Camada de persistência do Wallet Track (M5).
@@ -71,12 +72,11 @@ final class FirestoreService
      * de chamar este método.
      *
      * @param  string  $chatId  ID do chat do Telegram (spec §5: `chat_id`).
-     * @param  string  $source  "text" (DeepSeek) ou "image" (Gemini).
      * @return string ID do documento criado em `transactions/`.
      *
      * @throws \InvalidArgumentException Quando o DTO não tem `amount`/`type`.
      */
-    public function saveTransaction(string $chatId, TransactionData $dto, string $source): string
+    public function saveTransaction(string $chatId, TransactionData $dto): string
     {
         if ($dto->amount === null || $dto->type === null) {
             throw new \InvalidArgumentException(
@@ -95,7 +95,6 @@ final class FirestoreService
             'type' => $dto->type,
             'category' => $dto->category,
             'labels' => $dto->labels,
-            'source' => $source,
             'observations' => $dto->observations,
 
             // Campos de sincronização com Sheets (consumidos pelo M6).
@@ -697,7 +696,7 @@ final class FirestoreService
      */
     public function incrementLabelUse(string $name): void
     {
-        $id = $this->normalizeName($name);
+        $id = $this->normalizeLabelName($name);
         $now = $this->nowIso();
 
         $this->gateway->transaction(function (FirestoreGateway $gw) use ($id, $name, $now): void {
@@ -726,6 +725,44 @@ final class FirestoreService
         );
     }
 
+    /**
+     * Define (cria ou sobrescreve) um documento em `labels/`.
+     *
+     * Usado pelo comando de deduplicação (F6) para criar o documento
+     * canônico após consolidar duplicatas.
+     */
+    public function setLabelDoc(string $id, array $data): void
+    {
+        $this->gateway->setDocument(self::COLLECTION_LABELS, $id, $data);
+    }
+
+    /**
+     * Remove um documento de `labels/`.
+     *
+     * Usado pelo comando de deduplicação (F6) para deletar duplicatas
+     * após consolidá-las no documento canônico.
+     */
+    public function deleteLabelDoc(string $id): void
+    {
+        $this->gateway->deleteDocument(self::COLLECTION_LABELS, $id);
+    }
+
+    /**
+     * Lista todos os documentos da coleção `labels/` (sem limites).
+     *
+     * Usado pelo comando de deduplicação (F6).
+     *
+     * @return list<array{id: string, data: array<string, mixed>}>
+     */
+    public function listAllLabels(): array
+    {
+        return $this->gateway->query(
+            collection: self::COLLECTION_LABELS,
+            wheres: [],
+            limit: 1000,
+        );
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Helpers internos
@@ -747,6 +784,19 @@ final class FirestoreService
     private function nowIso(): string
     {
         return gmdate('Y-m-d\TH:i:s.u\Z');
+    }
+
+    /**
+     * Normaliza um nome de label para id de documento (fold: minúsculas + sem
+     * acentos + trim), via {@see TextNormalizer::fold()}.
+     *
+     * Diferente de {@see normalizeName()} (que preserva acentos para categorias),
+     * labels usam folding completo porque a heurística de dedup (SuggestLabels,
+     * validateLabels) também opera acento-insensível.
+     */
+    private function normalizeLabelName(string $name): string
+    {
+        return TextNormalizer::fold($name);
     }
 
     /**

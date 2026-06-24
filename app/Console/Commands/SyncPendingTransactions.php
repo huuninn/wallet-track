@@ -250,7 +250,6 @@ final class SyncPendingTransactions extends Command
         bool $isJson,
     ): array {
         $chatId = (string) ($data['chat_id'] ?? '');
-        $source = (string) ($data['source'] ?? 'text');
 
         // 1. Tenta adquirir o lock atômico `processing`. Se outra execução
         // já tem o lock, pula (Decisão Portão 2 #8 — lock atômico).
@@ -279,7 +278,7 @@ final class SyncPendingTransactions extends Command
         }
 
         try {
-            $success = $syncSheet->handle($dto, $id, $source);
+            $success = $syncSheet->handle($dto, $id);
         } catch (Throwable $e) {
             // Bug de programação escapou do SyncSheet (esperado que ele
             // capture erros de I/O, mas pode escapar DTO inválido, etc).

@@ -36,10 +36,10 @@ use Tests\Feature\Conversation\ConversationRouterTest;
  *    falharia (Laravel auto-resolveria as interfaces para `new Interface()`
  *    que é erro de classe abstrata).
  *
- *  - **M8 — Heurística**: {@see SuggestCategory} e {@see SuggestLabels}
- *    são singletons que dependem apenas do {@see FirestoreService}. São
- *    auto-resolvidos, mas o bind explícito torna a intenção clara e
- *    acelera a inspeção via `php artisan about` ou Telescope.
+     *  - **M8 — Heurística**: {@see SuggestCategory} (ativa no fluxo
+     *    principal) e {@see SuggestLabels} (deprecated — preservada para
+     *    reuso futuro) são singletons que dependem apenas do
+     *    {@see FirestoreService}.
  *
  *  - **BotMessenger → NutgramBotMessenger**: a implementação concreta
  *    depende do singleton Nutgram, que por sua vez é registrado no
@@ -111,7 +111,6 @@ class ConversationServiceProvider extends ServiceProvider
                 extractImage: $app->make(ExtractsImage::class),
                 syncSheet: $app->make(SyncsSheet::class),
                 suggestCategory: $app->make(SuggestCategory::class),
-                suggestLabels: $app->make(SuggestLabels::class),
                 sessionTimeoutMinutes: (int) $app->make('config')->get('conversation.timeout_minutes', 15),
                 maxDataRetries: (int) $app->make('config')->get('conversation.max_data_retries', 3),
             );

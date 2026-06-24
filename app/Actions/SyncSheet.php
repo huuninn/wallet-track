@@ -49,17 +49,16 @@ final class SyncSheet implements SyncsSheet
      * Espelha a transação na planilha e atualiza o status de sync no Firestore.
      *
      * @param  string  $firestoreId  ID do documento em `transactions/`.
-     * @param  string  $source  "text" (DeepSeek) ou "image" (Gemini).
      * @return bool `true` em sucesso (sync_status=synced), `false` em falha
      *              esperada de I/O (sync_status=failed + sync_attempts
      *              incrementado). Exceções de programação (DTO incompleto,
      *              etc.) **propagam** ao caller — não devem ser mascaradas
      *              como falha de sync.
      */
-    public function handle(TransactionData $dto, string $firestoreId, string $source): bool
+    public function handle(TransactionData $dto, string $firestoreId): bool
     {
         try {
-            $this->sheets->appendTransaction($dto, $firestoreId, $source);
+            $this->sheets->appendTransaction($dto, $firestoreId);
         } catch (GoogleServiceException|\RuntimeException $e) {
             // Apenas erros esperados de I/O da API Sheets (403/404/429/500) e
             // falhas de rede/timeout (RuntimeException propagada pelo SDK/HTTP
