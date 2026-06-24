@@ -14,6 +14,7 @@ use App\Actions\SyncSheet;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\NutgramBotMessenger;
+use App\Bot\Messaging\SessionMessageCleaner;
 use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Conversation\ConversationRouter;
 use App\Conversation\StateMachine;
@@ -84,6 +85,12 @@ class ConversationServiceProvider extends ServiceProvider
                 $app->make(TransactionSummaryFormatter::class), // S-1: reusa singleton
             );
         });
+
+        // SessionMessageCleaner: depende do BotMessenger para deletar
+        // mensagens-âncora (X, Y, Z) durante transições de comando.
+        $this->app->singleton(SessionMessageCleaner::class, fn (Container $app) => new SessionMessageCleaner(
+            $app->make(BotMessenger::class),
+        ));
 
         // TransactionSummaryFormatter: puro, singleton.
         $this->app->singleton(TransactionSummaryFormatter::class);

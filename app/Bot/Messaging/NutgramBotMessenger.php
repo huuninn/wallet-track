@@ -58,21 +58,12 @@ final class NutgramBotMessenger implements BotMessenger
 
     public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?string $firestoreId = null): int
     {
-        $keyboard = InlineKeyboardMarkup::make()
-            ->addRow(
-                InlineKeyboardButton::make('✅ Confirmar', callback_data: 'confirm', style: ButtonStyle::SUCCESS),
-                InlineKeyboardButton::make('✏️ Editar', callback_data: 'edit'),
-            )
-            ->addRow(
-                InlineKeyboardButton::make('❌ Cancelar', callback_data: 'cancel', style: ButtonStyle::DANGER),
-            );
-
         return $this->messageId(
             $this->bot->sendMessage(
                 text: $this->formatter->summary($draft),
                 chat_id: $chatId,
                 parse_mode: ParseMode::HTML,
-                reply_markup: $keyboard,
+                reply_markup: $this->buildConfirmationKeyboard(),
             ),
         );
     }
@@ -112,6 +103,7 @@ final class NutgramBotMessenger implements BotMessenger
             )
             ->addRow(
                 InlineKeyboardButton::make('🏷 Categoria', callback_data: 'edit:category'),
+                InlineKeyboardButton::make('📝 Observações', callback_data: 'edit:observations'),
             );
 
         return $this->messageId(
@@ -132,6 +124,11 @@ final class NutgramBotMessenger implements BotMessenger
         );
     }
 
+    /**
+     * @deprecated R2: nenhuma mensagem é editada in-place. O Router envia
+     *             nova mensagem via sendText/sendConfirmationRequest. Mantido
+     *             para retrocompatibilidade de testes.
+     */
     public function editMessageText(int|string $chatId, int $messageId, string $text): void
     {
         $this->bot->editMessageText(
@@ -140,6 +137,63 @@ final class NutgramBotMessenger implements BotMessenger
             message_id: $messageId,
             parse_mode: ParseMode::HTML,
         );
+    }
+
+    public function editMessageReplyMarkup(int|string $chatId, int $messageId, ?array $markup): void
+    {
+        // Best-effort: silencioso em caso de falha (mesma política que
+        // deleteMessage). Envolvemos em try/catch para honrar o contrato —
+        // TelegramException e outros Throwables (GuzzleException,
+        // RuntimeException) são logados mas NÃO propagados.
+        try {
+            // Normaliza de `?array` (interface BotMessenger) para
+            // `?InlineKeyboardMarkup` (Nutgram SDK). null ou [] → null
+            // (remove keyboard). Array 2D de InlineKeyboardButton →
+            // InlineKeyboardMarkup via buildInlineKeyboardMarkup().
+            $normalizedMarkup = $this->buildInlineKeyboardMarkup($markup);
+
+            $this->bot->editMessageReplyMarkup(
+                chat_id: $chatId,
+                message_id: $messageId,
+                reply_markup: $normalizedMarkup,
+            );
+        } catch (Throwable $e) {
+            Log::warning('NutgramBotMessenger: editMessageReplyMarkup falhou (não-bloqueante)', [
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * @deprecated R2: nenhuma mensagem é editada in-place. O Router envia
+     *             nova mensagem via sendText/sendConfirmationRequest. Mantido
+     *             para retrocompatibilidade de testes.
+     */
+    public function restoreConfirmationKeyboard(int|string $chatId, int $messageId): void
+    {
+        // Best-effort: mesma política de deleteMessage/editMessageReplyMarkup.
+        // Silencioso em caso de falha — a sessão/UX não pode quebrar por
+        // causa de um erro de rede. Chamamos a SDK diretamente
+        // (editMessageReplyMarkup) com InlineKeyboardMarkup em vez de
+        // passar pelo nosso editMessageReplyMarkup (que espera ?array),
+        // para evitar conversão desnecessária para array e de volta.
+        try {
+            $this->bot->editMessageReplyMarkup(
+                chat_id: $chatId,
+                message_id: $messageId,
+                reply_markup: $this->buildConfirmationKeyboard(),
+            );
+        } catch (Throwable $e) {
+            Log::warning('NutgramBotMessenger: restoreConfirmationKeyboard falhou (não-bloqueante)', [
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function deleteMessage(int|string $chatId, int $messageId): void
@@ -197,6 +251,63 @@ final class NutgramBotMessenger implements BotMessenger
     | Helpers
     |--------------------------------------------------------------------------
     */
+
+    /**
+     * Constrói o inline keyboard de confirmação padrão:
+     * [✅ Confirmar] [✏️ Editar] na primeira linha,
+     * [❌ Cancelar] na segunda.
+     *
+     * Centralizado como método privado para reuso em
+     * {@see sendConfirmationRequest()} e {@see restoreConfirmationKeyboard()}.
+     */
+    private function buildConfirmationKeyboard(): InlineKeyboardMarkup
+    {
+        return InlineKeyboardMarkup::make()
+            ->addRow(
+                InlineKeyboardButton::make('✅ Confirmar', callback_data: 'confirm', style: ButtonStyle::SUCCESS),
+                InlineKeyboardButton::make('✏️ Editar', callback_data: 'edit'),
+            )
+            ->addRow(
+                InlineKeyboardButton::make('❌ Cancelar', callback_data: 'cancel', style: ButtonStyle::DANGER),
+            );
+    }
+
+    /**
+     * Constrói um `InlineKeyboardMarkup` (ou null para "sem keyboard") a
+     * partir de uma estrutura array 2D vinda da interface {@see BotMessenger}.
+     *
+     * Formato esperado: `list<list<InlineKeyboardButton>>` — cada linha é
+     * uma lista de botões. `null` ou `[]` no nível superior → null
+     * (remove o keyboard, mantém texto).
+     *
+     * @param  array<mixed>|null  $markup
+     */
+    private function buildInlineKeyboardMarkup(?array $markup): ?InlineKeyboardMarkup
+    {
+        if ($markup === null || $markup === []) {
+            return null;
+        }
+
+        $keyboard = InlineKeyboardMarkup::make();
+
+        foreach ($markup as $row) {
+            // Cada $row deve ser uma lista de InlineKeyboardButton (array
+            // variadic). Filtramos apenas os que são do tipo esperado —
+            // silenciosamente ignora entradas malformadas (defensivo).
+            $buttons = array_values(array_filter(
+                (array) $row,
+                static fn (mixed $b): bool => $b instanceof InlineKeyboardButton,
+            ));
+
+            if ($buttons === []) {
+                continue;
+            }
+
+            $keyboard->addRow(...$buttons);
+        }
+
+        return $keyboard;
+    }
 
     /**
      * Extrai o message_id de uma resposta de sendMessage — defensivo contra

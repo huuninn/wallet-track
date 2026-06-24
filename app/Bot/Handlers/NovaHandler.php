@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
+use App\Bot\Messaging\SessionMessageCleaner;
 use App\Conversation\WizardHandler;
 use App\Dto\SessionData;
 use App\Enums\ConversationState;
@@ -81,6 +82,7 @@ final class NovaHandler
         $services = app();
         $firestore = $services->make(FirestoreService::class);
         $messenger = $services->make(BotMessenger::class);
+        $cleaner = $services->make(SessionMessageCleaner::class);
 
         // Decisão #2: /nova durante AWAITING_CONFIRMATION → limpar sessão
         // anterior e iniciar wizard (descartar pendente). CT-025l.
@@ -90,6 +92,11 @@ final class NovaHandler
         ) {
             $this->notifyDiscarded($messenger, $chatId);
         }
+
+        // R1/R2: remove teclados inline de X e Y via SessionMessageCleaner
+        // (mantém os textos como histórico no chat). Z é prompt de texto
+        // puro sem teclado — ignorado por design. Nenhuma mensagem é deletada.
+        $cleaner->cleanup($chatId, $existingSession);
 
         try {
             $firestore->clearSession($chatId);

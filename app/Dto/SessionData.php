@@ -21,9 +21,9 @@ namespace App\Dto;
  *  - `$awaitingField`     → `awaitingField`
  *  - `$messageIdConfirm`  → `messageIdConfirm`
  *  - `$messageIdEditPicker` → `messageIdEditPicker` (CT-047 / P7-A)
+ *  - `$messageIdAskEdition` → `messageIdAskEdition` (P7-B: message_id do prompt "✏️ Digite o novo ...")
  *  - `$source`            → `source` ("text" | "image" | "wizard")
  *  - `$retryCount`        → `retryCount` (null = preservar; 0 = reset explícito)
- *  - `$pickerConsumed`    → `pickerConsumed` (P7-A: distingue 1º click de re-click em Y)
  *
  * A lista de campos a serem **apagados** (`clearFields` no método antigo)
  * permanece como segundo argumento de `FirestoreService::setSession()` —
@@ -47,6 +47,36 @@ final readonly class SessionData
 {
     /**
      * @param  array<string, mixed>|null  $draft  Draft serializado (snake_case).
+     * @param  int|null  $messageIdConfirm  ID da msg de confirmação enviada em
+     *                                       AWAITING_CONFIRMATION (com keyboard
+     *                                       Confirmar/Editar/Cancelar). Âncora
+     *                                       do CT-047: callbacks de keyboards
+     *                                       antigos são rejeitados por message_id
+     *                                       diferente. Veja semântica de `0`/
+     *                                       `null` em "Campos `message_id_*`".
+     * @param  int|null  $messageIdEditPicker  ID da msg do picker "✏️ Qual
+     *                                          campo você quer editar?" (P7-A).
+     *                                          Veja semântica de `0`/`null`
+     *                                          em "Campos `message_id_*`".
+ * @param  int|null  $messageIdAskEdition  [DEPRECIADO após R2] — não usado para
+ *                                          deleção. Mantido para compatibilidade.
+     *
+     * **Campos `message_id_*` — semântica unificada** (P7-B):
+     *  - `null` (default) → omitido do merge via `filterSessionField()`. Use
+     *    para indicar "não mexe no campo existente" — útil em call sites
+     *    que só querem atualizar parte da sessão.
+     *  - `0` → sentinela "mensagem não enviada" — também omitido do merge
+     *    por `filterSessionField()`. Use quando o helper do
+     *    {@see BotMessenger} devolve `null`/0 (defensivo contra falhas de
+     *    envio ou chats restritos) e o caller converte para int.
+     *  - `> 0` → persistido no merge como `message_id_<campo>` no Firestore.
+     *
+     * Para **remover** um campo `message_id_*` de uma sessão existente
+     * (ex.: após edição válida o `message_id_ask_edition` deve desaparecer),
+     * passe `clearFields: ['message_id_<campo>']` como segundo argumento de
+     * {@see FirestoreService::setSession()}. Merge com `null`/`0` apenas
+     * omite — não apaga — campos já persistidos (limitação do merge do
+     * Firestore). Ver uso real em {@see ConversationRouter::handleAwaitingEdition()}.
      */
     public function __construct(
         public ?string $state = null,
@@ -54,9 +84,9 @@ final readonly class SessionData
         public ?string $awaitingField = null,
         public ?int $messageIdConfirm = null,
         public ?int $messageIdEditPicker = null,
+        public ?int $messageIdAskEdition = null,
         public ?string $source = null,
         public ?int $retryCount = null,
-        public ?bool $pickerConsumed = null,
     ) {}
 
     /**
@@ -65,8 +95,8 @@ final readonly class SessionData
      * Aplica o filtro herdado de `FirestoreService::filterSessionField()`
      * (P7-A-2): `null` sempre omitido; `0` em `message_id_*` omitido (sentinela
      * "mensagem não enviada" do `BotMessenger::messageId`); demais valores
-     * preservados — incluindo `false` em `picker_consumed` e `0` em
-     * `retry_count`, que são semânticos (reset explícito / "ainda não consumido").
+     * preservados — incluindo `0` em `retry_count`, que é semântico
+     * (reset explícito).
      *
      * O carimbo `updated_at` é fornecido pelo caller (serviço) para que o DTO
      * permaneça livre de dependências de relógio/timezone e possa ser
@@ -82,9 +112,9 @@ final readonly class SessionData
             'awaiting_field' => $this->awaitingField,
             'message_id_confirm' => $this->messageIdConfirm,
             'message_id_edit_picker' => $this->messageIdEditPicker,
+            'message_id_ask_edition' => $this->messageIdAskEdition,
             'source' => $this->source,
             'retry_count' => $this->retryCount,
-            'picker_consumed' => $this->pickerConsumed,
             'updated_at' => $updatedAt,
         ], self::filterSessionField(...), ARRAY_FILTER_USE_BOTH);
     }

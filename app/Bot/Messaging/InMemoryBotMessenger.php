@@ -23,11 +23,14 @@ use App\Services\Google\InMemorySheetsGateway;
  * Estrutura dos registros:
  *
  *  - $sentTexts[$chatId][]        = ['message_id' => int, 'text' => string]
- *  - $confirmations[$chatId][]    = ['message_id' => int, 'draft' => TransactionData, 'firestoreId' => ?string]
+ *  - $confirmations[$chatId][]    = ['message_id' => int, 'draft' => TransactionData, 'firestore_id' => ?string]
  *  - $fieldAsks[$chatId][]        = ['message_id' => int, 'field' => string, 'prompt' => string]
  *  - $editionAsks[$chatId][]      = ['message_id' => int, 'field' => string]
  *  - $fieldPickers[$chatId][]     = ['message_id' => int]
  *  - $editedMessages[$chatId][]   = ['message_id' => int, 'text' => string]
+ *  - $editedMarkups[$chatId][]    = ['message_id' => int, 'markup' => ?array]
+ *  - $deletedMessages[$chatId][]  = int
+ *  - $restoredKeyboards[$chatId][] = int (message_id que teve keyboard de confirmação restaurado)
  *  - $successes[$chatId][]        = ['dto' => TransactionData]
  *  - $cancelled[$chatId]          = int (count)
  *  - $errors[$chatId][]           = ['message' => string]
@@ -53,8 +56,26 @@ final class InMemoryBotMessenger implements BotMessenger
     /** @var array<int|string, list<array{message_id: int, text: string}>> */
     public array $editedMessages = [];
 
+    /**
+     * Registro de chamadas a `editMessageReplyMarkup()` — útil para
+     * asserções determinísticas em testes (P7-A → P7-B: "botões do picker
+     * somem após seleção de campo").
+     *
+     * @var array<int|string, list<array{message_id: int, markup: ?array}>>
+     */
+    public array $editedMarkups = [];
+
     /** @var array<int|string, list<int>> */
     public array $deletedMessages = [];
+
+    /**
+     * Registro de chamadas a `restoreConfirmationKeyboard()` — útil para
+     * asserções em testes que verificam se o teclado de confirmação foi
+     * restaurado após uma edição bem-sucedida.
+     *
+     * @var array<int|string, list<int>>
+     */
+    public array $restoredKeyboards = [];
 
     /** @var array<int|string, list<array{dto: TransactionData}>> */
     public array $successes = [];
@@ -134,9 +155,29 @@ final class InMemoryBotMessenger implements BotMessenger
         $this->callbackAnswers[] = ['callback_id' => $callbackId, 'text' => $text];
     }
 
+    /**
+     * @deprecated R2: nenhuma mensagem é editada in-place. O Router envia
+     *             nova mensagem via sendText/sendConfirmationRequest. Mantido
+     *             para retrocompatibilidade de testes.
+     */
     public function editMessageText(int|string $chatId, int $messageId, string $text): void
     {
         $this->editedMessages[$chatId][] = ['message_id' => $messageId, 'text' => $text];
+    }
+
+    public function editMessageReplyMarkup(int|string $chatId, int $messageId, ?array $markup): void
+    {
+        $this->editedMarkups[$chatId][] = ['message_id' => $messageId, 'markup' => $markup];
+    }
+
+    /**
+     * @deprecated R2: nenhuma mensagem é editada in-place. O Router envia
+     *             nova mensagem via sendText/sendConfirmationRequest. Mantido
+     *             para retrocompatibilidade de testes.
+     */
+    public function restoreConfirmationKeyboard(int|string $chatId, int $messageId): void
+    {
+        $this->restoredKeyboards[$chatId][] = $messageId;
     }
 
     public function deleteMessage(int|string $chatId, int $messageId): void

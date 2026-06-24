@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Bot\Handlers;
 
+use App\Bot\Messaging\SessionMessageCleaner;
 use App\Services\Google\FirestoreService;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
@@ -75,7 +76,15 @@ HTML;
         if ($message !== null) {
             $chatId = (string) (int) $message->chat->id;
             try {
-                app(FirestoreService::class)->clearSession($chatId);
+                $firestore = app(FirestoreService::class);
+
+                // R1/R2: remove teclados inline de X e Y via SessionMessageCleaner
+                // (mantém os textos como histórico no chat). Z é prompt de texto
+                // puro sem teclado — ignorado por design. Nenhuma mensagem é deletada.
+                $session = $firestore->getSession($chatId);
+                app(SessionMessageCleaner::class)->cleanup($chatId, $session);
+
+                $firestore->clearSession($chatId);
             } catch (\Throwable $e) {
                 // Best-effort: loga e segue. O `/start` nunca pode quebrar
                 // a UX por falha de Firestore — o usuário ainda recebe a

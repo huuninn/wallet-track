@@ -97,26 +97,9 @@ final class ConversationRouter
      * Campos aceitos para edição via callback `edit:<field>` (M7.6, M9.3).
      *
      * Usado nos handlers AWAITING_CONFIRMATION e AWAITING_EDITION para
-     * validar o payload do botão "Editar campo". A lista é fixa — campos
-     * do DTO que são editáveis pelo usuário. Centralizada como constante
-     * para evitar recriação do array a cada callback.
-     *
-     * @var list<string>
-     */
-    private const array EDITABLE_FIELDS = [
-        'amount',
-        'type',
-        'date',
-        'description',
-        'category',
-        'observations',
-    ];
-
-    /**
-     * Hash set de {@see EDITABLE_FIELDS} para lookup O(1) com `isset()`.
-     * P7-A-2: substitui `in_array` O(n) — otimização marginal mas mantém
-     * consistência com o padrão de hash maps do código. Recalculado uma
-     * única vez no carregamento da classe (PHP lazy const evaluation).
+     * validar o payload do botão "Editar campo". Hash set para lookup O(1)
+     * com `isset()`. P7-A-2: substitui `in_array` O(n) — otimização
+     * marginal mas mantém consistência com o padrão de hash maps do código.
      *
      * @var array<string, true>
      */
@@ -129,8 +112,14 @@ final class ConversationRouter
         'observations' => true,
     ];
 
-    // S-7: DESCRIPTION_MAX_LENGTH agora é referenciado de TransactionData
-    // (public const) — evita duplicação de constante.
+    /**
+     * Limite máximo de caracteres para o campo observações.
+     *
+     * Observações podem ser mais longas que a descrição (que é truncada em
+     * 500 chars via {@see TransactionData::DESCRIPTION_MAX_LENGTH}), mas
+     * ainda precisam de um teto para evitar abuso (ex.: 10 KB de texto).
+     */
+    private const int OBSERVATIONS_MAX_LENGTH = 1000;
 
     /**
      * Janela (minutos) de validade da sessão — antes disso, considera expirada.
@@ -399,19 +388,14 @@ final class ConversationRouter
                 return;
             }
 
-            // P7-A: se o callback veio do picker Y e é edit:<field>, annullar.
-            // O picker Y permanece visível no chat; clicks subsequentes nele
-            // são no-ops (o botão já foi "consumido" no primeiro click).
             $data = (string) ($input->callbackData ?? '');
-            if ($this->annulPickerReclickIfNeeded($input, $data, $session)) {
-                return;
-            }
 
-            // Re-derivado localmente — usado adiante no handler `edit:<field>`
+            // Preservado localmente — usado adiante no handler `edit:<field>`
             // como messageIdConfirm ao persistir AWAITING_EDITION.
-            $expectedMessageId = (int) ($session['message_id_confirm'] ?? 0);
+            $currentConfirmId = (int) ($session['message_id_confirm'] ?? 0);
 
             if ($data === 'confirm') {
+                $this->removeConfirmationKeyboard($chatId, $session);
                 $this->handleConfirm($chatId, $session, (string) $input->callbackId);
 
                 return;
@@ -432,6 +416,7 @@ final class ConversationRouter
                     return;
                 }
 
+                $this->removeConfirmationKeyboard($chatId, $session);
                 $this->messenger->answerCallback((string) $input->callbackId, '');
 
                 // P1: persistir o message_id do picker como segundo anchor (Y)
@@ -450,11 +435,6 @@ final class ConversationRouter
                         draft: $session['draft'] ?? null,
                         messageIdConfirm: (int) ($session['message_id_confirm'] ?? 0),
                         messageIdEditPicker: $pickerMessageId,
-                        // P7-A fix: marca picker como "não consumido" — o 1º
-                        // click em edit:<field> DEVE ser processado (transição
-                        // para AWAITING_EDITION). Sem este flag, o annulPicker
-                        // ReclickIfNeeded anullaria o 1º click também (bug).
-                        pickerConsumed: false,
                         source: $session['source'] ?? 'text',
                         retryCount: 0,
                     ),
@@ -466,9 +446,7 @@ final class ConversationRouter
 
             if ($data === 'cancel') {
                 $this->messenger->answerCallback((string) $input->callbackId, 'Cancelado');
-
-                // P3=B: deleta o picker antes de limpar a sessão.
-                $this->deletePickerIfPresent($chatId, $session);
+                $this->removeConfirmationKeyboard($chatId, $session);
 
                 $this->messenger->notifyCancelled($chatId);
                 $this->assertStateTransition($session, ConversationState::IDLE->value);
@@ -482,10 +460,17 @@ final class ConversationRouter
                 if (isset(self::EDITABLE_FIELDS_MAP[$field])) {
                     $this->messenger->answerCallback((string) $input->callbackId, '');
 
-                    // P7-A: o picker Y NÃO é deletado. Ele permanece visível
-                    // no chat como histórico; clicks subsequentes em seus
-                    // botões serão annullados (annulPickerReclickIfNeeded).
-                    // O picker é deletado apenas em confirm/cancel (P3=B).
+                    // Remove o keyboard do picker Y imediatamente.
+                    // Defesa em camadas: annulStaleEditClickInEdition
+                    // cobre race conditions (cliente offline, latência).
+                    $pickerId = (int) ($session['message_id_edit_picker'] ?? 0);
+                    if ($pickerId > 0) {
+                        $this->messenger->editMessageReplyMarkup($chatId, $pickerId, null);
+                    }
+
+                    // R2: envia o prompt "Digite o novo ..." (Z). O prompt
+                    // permanece como histórico — não é deletado após edição.
+                    $this->messenger->askForEdition($chatId, $field);
 
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);
                     $this->firestore->setSession(
@@ -494,17 +479,15 @@ final class ConversationRouter
                             state: ConversationState::AWAITING_EDITION->value,
                             draft: $session['draft'] ?? null,
                             awaitingField: $field,
-                            messageIdConfirm: $expectedMessageId,
+                            messageIdConfirm: $currentConfirmId,
                             messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // Y preservado
-                            // P7-A fix: marca picker como CONSUMIDO. A partir de
-                            // agora, qualquer re-click em Y (em AWAITING_CONFIRMATION
-                            // após edição) será annullado.
-                            pickerConsumed: true,
                             source: $session['source'] ?? 'text',
                             retryCount: 0,
                         ),
+                        // R2: messageIdAskEdition depreciado — não grava mais.
+                        // Limpa campos legacy/stale que podem existir em sessões antigas.
+                        clearFields: ['message_id_ask_edition'],
                     );
-                    $this->messenger->askForEdition($chatId, $field);
 
                     return;
                 }
@@ -608,10 +591,25 @@ final class ConversationRouter
             return;
         }
 
+        // Captura valor antigo ANTES de withField.
+        $oldRaw = $draft->getFieldValue($awaitingField);
         $newDraft = $draft->withField($awaitingField, $normalized);
 
-        // Volta para AWAITING_CONFIRMATION com o draft atualizado; reseta
-        // retry_count (edição bem-sucedida zera o contador).
+        // R2: NÃO deleta Z, NÃO deleta Y, NÃO edita X in-place.
+        // Em vez disso: envia feedback + nova confirmação X_new.
+
+        // 1. Mensagem de feedback "campo alterado de X para Y".
+        $this->messenger->sendText(
+            $chatId,
+            $this->formatter->fieldChangeMessage($awaitingField, $oldRaw, $normalized),
+        );
+
+        // 2. NOVA confirmação X_new (D1: não chama presentConfirmation para
+        //    evitar re-enriquecimento M8 — o draft já tem categoria/labels).
+        $newConfirmId = $this->messenger->sendConfirmationRequest($chatId, $newDraft);
+
+        // 3. Persiste sessão com message_id_confirm sobrescrito (D3: CT-047
+        //    rejeita X_old automaticamente).
         $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
         $this->firestore->setSession(
             $chatId,
@@ -619,18 +617,17 @@ final class ConversationRouter
                 state: ConversationState::AWAITING_CONFIRMATION->value,
                 draft: $newDraft->toDraftArray(),
                 awaitingField: null,
-                messageIdConfirm: $messageIdConfirm,
-                messageIdEditPicker: (int) ($session['message_id_edit_picker'] ?? 0), // P7-A: Y preservado
+                messageIdConfirm: $newConfirmId,
                 source: $session['source'] ?? 'text',
                 retryCount: 0,
             ),
-            clearFields: ['awaiting_field'], // W-3: limpa campo stale (NÃO message_id_edit_picker — P7-A)
+            clearFields: [
+                'awaiting_field',
+                'message_id_ask_edition',
+                'message_id_edit_picker',
+                'picker_consumed',
+            ],
         );
-
-        // Edita a mensagem original in-place com o novo resumo (mantém o keyboard).
-        if ($messageIdConfirm > 0) {
-            $this->messenger->editMessageText($chatId, $messageIdConfirm, $this->formatter->summary($newDraft));
-        }
     }
 
     /*
@@ -956,7 +953,7 @@ final class ConversationRouter
 
     /**
      * Helper DRY: annulla um callback (sem texto) e retorna true. Usado
-     * pelos dois helpers de annul abaixo para centralizar a chamada
+     * pelo helper de annul abaixo para centralizar a chamada
      * `answerCallback('')` + sinal de "processado" para o caller.
      */
     private function annulCallbackSilently(ConversationInput $input): true
@@ -967,70 +964,11 @@ final class ConversationRouter
     }
 
     /**
-     * P7-A: annulla re-click em `edit:<field>` no picker Y durante AWAITING_CONFIRMATION.
+     * Annulla qualquer click em edit:* durante AWAITING_EDITION.
      *
-     * Após o PRIMEIRO click em `edit:<field>` no picker Y (processado
-     * normalmente, transiciona para AWAITING_EDITION), o picker permanece
-     * visível no chat. Quando o usuário volta para AWAITING_CONFIRMATION
-     * (respondeu à edição) e clica de novo no picker — esse é um re-click.
-     *
-     * O flag `picker_consumed` na sessão distingue 1º click de re-click:
-     *  - 1º click: `picker_consumed = false` (setado pelo handler `data === 'edit'`)
-     *  - Após processar o 1º `edit:<field>`: `picker_consumed = true`
-     *  - Re-click: detecta `picker_consumed === true` E `callbackMessageId === Y`
-     *
-     * Importante: se `picker_consumed = false`, o click é o PRIMEIRO e
-     * deve ser processado normalmente (transição para AWAITING_EDITION).
-     * Annullar o 1º click seria um bug — o usuário não receberia o
-     * prompt "qual o novo valor?".
-     *
-     * Só annulla se o callback veio EXPLICITAMENTE do picker Y. Click em
-     * `edit:<field>` de uma ID stale (≠ Y) continua caindo no CT-047 check
-     * antes desta função.
-     *
-     * @param  array<string, mixed>  $session
-     */
-    private function annulPickerReclickIfNeeded(ConversationInput $input, string $data, array $session): bool
-    {
-        if (! str_starts_with($data, 'edit:')) {
-            return false;
-        }
-
-        $callbackMessageId = (int) ($input->callbackMessageId ?? 0);
-        $pickerId = (int) ($session['message_id_edit_picker'] ?? 0);
-        $pickerConsumed = (bool) ($session['picker_consumed'] ?? false);
-
-        if ($pickerConsumed && $pickerId > 0 && $callbackMessageId === $pickerId) {
-            // P7-A: RE-click no MESMO picker Y (já consumido) → annullar.
-            // S1 (P7-A-2): log para diagnóstico em produção. Útil para
-            // monitorar quantos re-clicks acontecem (e se usuários estão
-            // confusos com o picker persistente).
-            Log::debug('ConversationRouter: re-click em picker Y annullado', [
-                'callback_data' => $data,
-                'picker_id' => $pickerId,
-                'awaiting_field' => $session['awaiting_field'] ?? null,
-            ]);
-
-            $this->annulCallbackSilently($input);
-
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * P7-A: annulla QUALQUER click cujo `callbackData` comece com `edit`
-     * durante AWAITING_EDITION. Cobre tanto os botões `edit:<field>` do
-     * picker Y quanto o botão `edit` (sem dois-pontos) do keyboard X —
-     * ambos são "botões de edição antiga" que o usuário não deveria clicar
-     * enquanto responde ao prompt "qual o novo valor?".
-     *
-     * Em AWAITING_EDITION não há keyboard válida esperando interação.
-     * Esta é a "perda" do P5 (re-pick) — usuário que errar deve responder
-     * via texto ou usar /cancelar. Clicks em `confirm`/`cancel` são
-     * tratados separadamente em {@see handleAwaitingEdition()} com
-     * feedback amigável.
+     * Cobre botões edit:<field> do picker Y e o botão "Editar" do keyboard X.
+     * Defesa em camadas complementar à remoção imediata do keyboard via
+     * editMessageReplyMarkup — cobre race conditions (cliente offline).
      */
     private function annulStaleEditClickInEdition(ConversationInput $input, string $data): bool
     {
@@ -1137,9 +1075,6 @@ final class ConversationRouter
      */
     private function handleConfirm(string $chatId, array $session, string $callbackId): void
     {
-        // P3=B: deleta o picker se existir (best-effort — não bloqueia confirm).
-        $this->deletePickerIfPresent($chatId, $session);
-
         if (! $this->firestore->tryAcquireSessionProcessingFlag($chatId)) {
             // Duplo clique / callback concorrente — outro já está processando.
             $this->messenger->answerCallback($callbackId, 'Já estou processando...');
@@ -1319,7 +1254,35 @@ final class ConversationRouter
         }
 
         if ($isEdition) {
+            // R2: o retry envia um NOVO `askForEdition()` (com novo
+            // message_id). NÃO persiste messageIdAskEdition (depreciado após R2);
+            // limpa campos legacy/stale que possam existir em sessões antigas.
+            // O prompt Z permanece como histórico no chat — não é deletado.
+            // `retryCount: null` preserva o valor recém-incrementado por
+            // `incrementSessionRetry()` acima.
             $this->messenger->askForEdition($chatId, $field);
+
+            $this->firestore->setSession(
+                $chatId,
+                new SessionData(
+                    state: ConversationState::AWAITING_EDITION->value,
+                    draft: $session['draft'] ?? null,
+                    awaitingField: $field,
+                    messageIdConfirm: isset($session['message_id_confirm'])
+                        ? (int) $session['message_id_confirm']
+                        : null,
+                    messageIdEditPicker: isset($session['message_id_edit_picker'])
+                        ? (int) $session['message_id_edit_picker']
+                        : null,
+                    source: $session['source'] ?? 'text',
+                    // null = preserva retry_count recém-incrementado por
+                    // incrementSessionRetry().
+                    retryCount: null,
+                ),
+                // R2: messageIdAskEdition depreciado — não grava mais.
+                // Limpa campos legacy/stale que podem existir em sessões antigas.
+                clearFields: ['message_id_ask_edition'],
+            );
         } else {
             $this->messenger->askForField(
                 $chatId,
@@ -1553,7 +1516,13 @@ final class ConversationRouter
      */
     private function validateObservations(string $raw): string
     {
-        return trim($raw);
+        $cleaned = trim($raw);
+
+        if (mb_strlen($cleaned) > self::OBSERVATIONS_MAX_LENGTH) {
+            return mb_substr($cleaned, 0, self::OBSERVATIONS_MAX_LENGTH - 3).'...';
+        }
+
+        return $cleaned;
     }
 
     /**
@@ -1637,19 +1606,20 @@ final class ConversationRouter
     }
 
     /**
-     * Deleta a mensagem do picker de campos se ela existir na sessão (best-effort).
+     * Remove o teclado inline da mensagem de confirmação X (best-effort).
      *
-     * Idempotente: se não houver picker ID válido, é no-op.
-     * Tolerante a falhas: o `BotMessenger::deleteMessage` já captura exceções
-     * internamente, então este helper também não propaga.
+     * Usado nos branches confirm/edit/cancel do AWAITING_CONFIRMATION
+     * para consumir o keyboard [Confirmar][Editar][Cancelar] imediatamente
+     * após o clique — sem isto o usuário veria botões de uma ação já
+     * concluída.
      *
      * @param  array<string, mixed>  $session
      */
-    private function deletePickerIfPresent(string $chatId, array $session): void
+    private function removeConfirmationKeyboard(string $chatId, array $session): void
     {
-        $pickerId = (int) ($session['message_id_edit_picker'] ?? 0);
-        if ($pickerId > 0) {
-            $this->messenger->deleteMessage($chatId, $pickerId);
+        $confirmId = (int) ($session['message_id_confirm'] ?? 0);
+        if ($confirmId > 0) {
+            $this->messenger->editMessageReplyMarkup($chatId, $confirmId, null);
         }
     }
 }

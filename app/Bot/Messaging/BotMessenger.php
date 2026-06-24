@@ -103,8 +103,35 @@ interface BotMessenger
      * (mantendo o inline keyboard) e evitar acumular mensagens no chat.
      *
      * @param  int  $messageId  ID da mensagem original (geralmente = message_id_confirm).
+     *
+     * @deprecated R2: nenhuma mensagem é editada in-place. O Router envia
+     *             nova mensagem via sendText/sendConfirmationRequest. Mantido
+     *             para retrocompatibilidade de testes.
      */
     public function editMessageText(int|string $chatId, int $messageId, string $text): void;
+
+    /**
+     * Edita APENAS o inline keyboard de uma mensagem, mantendo o texto original.
+     *
+     * Usado para "consumir" o picker de campos (enviado via
+     * {@see sendEditFieldPicker}) sem deletar a mensagem — o texto
+     * "✏️ Qual campo você quer editar?" permanece como histórico no chat,
+     * mas os botões interativos desaparecem (evita cliques errados do
+     * usuário em botões velhos durante AWAITING_EDITION).
+     *
+     * Comportamento:
+     *  - `$markup = null` ou `[]` → remove o keyboard, mantém texto
+     *  - `$markup` array não-vazio → substitui pelo novo keyboard
+     *
+     * Best-effort: mesma política de {@see deleteMessage} — silencioso em
+     * caso de falha (a sessão/UX não pode quebrar por causa de um erro
+     * de rede).
+     *
+     * @param  int|string  $chatId
+     * @param  int  $messageId  ID da mensagem original
+     * @param  array<mixed>|null  $markup  Keyboard de substituição, ou null para remover
+     */
+    public function editMessageReplyMarkup(int|string $chatId, int $messageId, ?array $markup): void;
 
     /**
      * Deleta uma mensagem enviada anteriormente no chat.
@@ -123,6 +150,18 @@ interface BotMessenger
      * @param  int  $messageId  ID da mensagem a ser deletada.
      */
     public function deleteMessage(int|string $chatId, int $messageId): void;
+
+    /**
+     * Restaura o inline keyboard de confirmação (✅ Confirmar / ✏️ Editar / ❌ Cancelar)
+     * em uma mensagem X existente. Usado após edição bem-sucedida: o teclado de X
+     * foi removido ao clicar em "Editar" (decisão 1A), e precisa ser restaurado ao
+     * concluir a edição para que o usuário possa confirmar/cancelar/editar novamente.
+     *
+     * @deprecated R2: nenhuma mensagem é editada in-place. O Router envia
+     *             nova mensagem via sendText/sendConfirmationRequest. Mantido
+     *             para retrocompatibilidade de testes.
+     */
+    public function restoreConfirmationKeyboard(int|string $chatId, int $messageId): void;
 
     /**
      * Notifica o usuário que a transação foi registrada com sucesso.

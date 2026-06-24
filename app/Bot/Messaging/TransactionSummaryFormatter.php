@@ -61,6 +61,33 @@ final class TransactionSummaryFormatter
         'observations' => 'observações',
     ];
 
+    private const array FIELD_EMOJIS = [
+        'amount' => '💵',
+        'type' => '🔖',
+        'date' => '📅',
+        'description' => '💸',
+        'category' => '🏷',
+        'observations' => '📝',
+    ];
+
+    private const array FIELD_LABELS_DISPLAY = [
+        'amount' => 'Valor',
+        'type' => 'Tipo',
+        'date' => 'Data',
+        'description' => 'Descrição',
+        'category' => 'Categoria',
+        'observations' => 'Observações',
+    ];
+
+    private const array FIELD_CHANGE_VERB = [
+        'amount' => 'alterado',
+        'type' => 'alterado',
+        'date' => 'alterada',
+        'description' => 'alterada',
+        'category' => 'alterada',
+        'observations' => 'alteradas',
+    ];
+
     /**
      * Monta o resumo multilinha do draft, com labels em PT-BR.
      *
@@ -71,17 +98,24 @@ final class TransactionSummaryFormatter
      */
     public function summary(TransactionData $dto): string
     {
+        $E = self::FIELD_EMOJIS;
+        $L = self::FIELD_LABELS_DISPLAY;
+
         $lines = [
             '📝 <b>Confirme a transação</b>',
             '',
-            '💸 <b>Descrição:</b> '.$this->escape($dto->description),
-            '💵 <b>Valor:</b> '.$this->formatAmount($dto->amount),
-            '🔖 <b>Tipo:</b> '.$this->formatType($dto->type),
+            "{$E['description']} <b>{$L['description']}:</b> ".$this->escape($dto->description),
+            "{$E['amount']} <b>{$L['amount']}:</b> ".$this->formatAmount($dto->amount),
+            "{$E['type']} <b>{$L['type']}:</b> ".$this->formatType($dto->type),
         ];
 
         $category = $dto->category ?? '—';
-        $lines[] = '🏷 <b>Categoria:</b> '.$this->escape($category);
-        $lines[] = '📅 <b>Data:</b> '.$this->formatDate($dto->date);
+        $lines[] = "{$E['category']} <b>{$L['category']}:</b> ".$this->escape($category);
+        $lines[] = "{$E['date']} <b>{$L['date']}:</b> ".$this->formatDate($dto->date);
+
+        if ($dto->observations !== null && $dto->observations !== '') {
+            $lines[] = "{$E['observations']} <b>{$L['observations']}:</b> ".$this->escape($dto->observations);
+        }
 
         return implode("\n", $lines);
     }
@@ -159,7 +193,7 @@ final class TransactionSummaryFormatter
             'date' => '✏️ Digite a nova 📅 <b>data</b> (ex.: <code>15/06/2026</code> ou <code>ontem</code>):',
             'description' => '✏️ Digite a nova 💸 <b>descrição</b>:',
             'category' => '✏️ Digite a nova 🏷 <b>categoria</b>:',
-            'observations' => '✏️ Digite as novas observações:',
+            'observations' => '✏️ Digite as novas 📝 <b>observações</b>:',
             default => "✏️ Digite o novo valor para <b>{$label}</b>:",
         };
     }
@@ -170,6 +204,29 @@ final class TransactionSummaryFormatter
     public function fieldLabel(string $field): string
     {
         return self::FIELD_LABELS[$field] ?? $field;
+    }
+
+    /**
+     * Formata a mensagem de feedback de alteração de campo.
+     *
+     * Formato: "<Emoji> <Campo> alteradX de <valor antigo> para <valor novo>"
+     * com concordância de gênero PT-BR.
+     *
+     * @param  string  $field  Nome canônico ("amount"|"type"|...).
+     * @param  mixed   $oldRaw Valor antigo (do DTO antes do withField).
+     * @param  mixed   $newRaw Valor novo (normalizado pelo validador).
+     * @return string  Mensagem HTML (parse_mode=HTML).
+     */
+    public function fieldChangeMessage(string $field, mixed $oldRaw, mixed $newRaw): string
+    {
+        $emoji = self::FIELD_EMOJIS[$field] ?? '📝';
+        $label = self::FIELD_LABELS_DISPLAY[$field] ?? ucfirst($field);
+        $verb = self::FIELD_CHANGE_VERB[$field] ?? 'alterado';
+
+        $oldDisplay = $this->formatFieldValue($field, $oldRaw);
+        $newDisplay = $this->formatFieldValue($field, $newRaw);
+
+        return "{$emoji} {$label} {$verb} de {$oldDisplay} para {$newDisplay}";
     }
 
     /*
@@ -259,7 +316,9 @@ final class TransactionSummaryFormatter
             return '—';
         }
 
-        return self::TYPE_LABELS[$type] ?? $type;
+        // Fallback: escapa valor não-confiável — nunca exibir texto cru
+        // sem escape em mensagens Telegram HTML.
+        return self::TYPE_LABELS[$type] ?? htmlspecialchars($type, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     }
 
     private function formatDate(?string $iso): string
@@ -270,10 +329,27 @@ final class TransactionSummaryFormatter
 
         $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $iso);
 
-        // Se não for ISO válido, devolve cru — o usuário saberá reconhecer.
+        // Se não for ISO válido, escapa o valor cru — nunca exibir texto
+        // não-confiável sem escape em mensagens Telegram HTML.
         return $date !== false
             ? $date->format('d/m/Y')
-            : $iso;
+            : htmlspecialchars($iso, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    /**
+     * Formata um valor bruto de campo para exibição na mensagem de alteração.
+     *
+     * @param  string  $field  Nome canônico do campo.
+     * @param  mixed   $value  Valor bruto (float, string, ou null).
+     */
+    private function formatFieldValue(string $field, mixed $value): string
+    {
+        return match ($field) {
+            'amount' => $this->formatAmount($value !== null && is_numeric($value) ? (float) $value : null),
+            'type' => $this->formatType(is_string($value) ? $value : null),
+            'date' => $this->formatDate(is_string($value) ? $value : null),
+            default => $this->escape(is_string($value) && $value !== '' ? $value : null),
+        };
     }
 
     /**

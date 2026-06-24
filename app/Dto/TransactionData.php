@@ -276,6 +276,32 @@ final readonly class TransactionData
     }
 
     /**
+     * Devolve o valor bruto de um campo pelo nome (para captura do valor
+     * antigo antes de withField no fluxo de edição).
+     *
+     * Universo idêntico a EDITABLE_FIELDS_MAP do ConversationRouter:
+     * amount, type, date, description, category, observations.
+     * Labels e confidence NÃO são acessíveis (não são editáveis pelo picker).
+     *
+     * @param  string  $field  "amount"|"type"|"date"|"description"|"category"|"observations".
+     * @return mixed   Valor bruto (float, string, ou null).
+     */
+    public function getFieldValue(string $field): mixed
+    {
+        return match ($field) {
+            'amount' => $this->amount,
+            'type' => $this->type,
+            'date' => $this->date,
+            'description' => $this->description,
+            'category' => $this->category,
+            'observations' => $this->observations,
+            default => throw new \InvalidArgumentException(
+                "Campo não acessível no DTO: {$field}.",
+            ),
+        };
+    }
+
+    /**
      * Trunca a descrição para o máximo de 500 caracteres, anexando "..."
      * nos 3 últimos quando o limite é excedido. Mantém o valor null.
      */

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
+use App\Bot\Messaging\SessionMessageCleaner;
 use App\Conversation\ConversationRouter;
 use App\Enums\ConversationState;
 use App\Services\Google\FirestoreService;
@@ -52,14 +53,11 @@ class CancelarHandler
             return;
         }
 
-        // S-5: padronizado para (int) na origem — consistente com
-        // MessageRouterHandler e CallbackQueryRouterHandler. O casting final
-        // para string é feito inline porque FirestoreService exige `string`
-        // (strict_types=1 impede coerção automática).
+        // FirestoreService exige `string` (strict_types=1 impede coerção
+        // automática), então convertemos o ID numérico do Telegram.
         $chatId = (int) $message->chat->id;
         $chatIdStr = (string) $chatId;
 
-        // S-8: resolve o container uma única vez em vez de várias chamadas app().
         $services = app();
         $firestore = $services->make(FirestoreService::class);
         $messenger = $services->make(BotMessenger::class);
@@ -80,6 +78,10 @@ class CancelarHandler
         }
 
         // Caso normal (CT-026b, CT-026c, CT-026d, CT-026e): clearSession + notifyCancelled.
+
+        // R1 — remove teclados inline de X e Y via SessionMessageCleaner.
+        $services->make(SessionMessageCleaner::class)->cleanup($chatIdStr, $session);
+
         $firestore->clearSession($chatIdStr);
         $messenger->notifyCancelled($chatIdStr);
     }
