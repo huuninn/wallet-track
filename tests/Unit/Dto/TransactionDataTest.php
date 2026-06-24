@@ -233,4 +233,50 @@ class TransactionDataTest extends TestCase
 
         $this->assertSame([0, 1, 2], array_keys($updated->labels));
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M1 (R1/R2) — getFieldValue
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_get_field_value_returns_correct_values_for_all_editable_fields(): void
+    {
+        $dto = new TransactionData(
+            description: 'Almoço',
+            amount: 47.50,
+            type: 'expense',
+            category: 'Alimentação',
+            date: '2026-06-15',
+            observations: 'Pago no débito',
+        );
+
+        $this->assertSame(47.50, $dto->getFieldValue('amount'));
+        $this->assertSame('expense', $dto->getFieldValue('type'));
+        $this->assertSame('2026-06-15', $dto->getFieldValue('date'));
+        $this->assertSame('Almoço', $dto->getFieldValue('description'));
+        $this->assertSame('Alimentação', $dto->getFieldValue('category'));
+        $this->assertSame('Pago no débito', $dto->getFieldValue('observations'));
+    }
+
+    public function test_get_field_value_invalid_field_throws_exception(): void
+    {
+        $dto = new TransactionData(description: 'X');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Campo não acessível no DTO');
+
+        $dto->getFieldValue('labels');
+    }
+
+    public function test_get_field_value_returns_null_for_unset_fields(): void
+    {
+        $dto = new TransactionData(description: 'Apenas descrição');
+
+        $this->assertNull($dto->getFieldValue('amount'));
+        $this->assertNull($dto->getFieldValue('type'));
+        $this->assertNull($dto->getFieldValue('date'));
+        $this->assertNull($dto->getFieldValue('category'));
+        $this->assertNull($dto->getFieldValue('observations'));
+    }
 }

@@ -202,4 +202,60 @@ class CancelarHandlerTest extends TestCase
         );
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
     }
+
+    public function test_cancelar_removes_keyboards_from_x_and_y_via_cleaner(): void
+    {
+        // Sessão com message_id_confirm (X), message_id_edit_picker (Y),
+        // message_id_ask_edition (Z) → /cancelar remove teclados de X e Y,
+        // NÃO deleta mensagens.
+        // Z é ignorado intencionalmente (texto puro sem keyboard inline).
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, [
+            'message_id_confirm' => 5001,       // X
+            'message_id_edit_picker' => 6001,   // Y
+            'message_id_ask_edition' => 7001,   // Z
+            'source' => 'text',
+            'draft' => [
+                'description' => 'Cinema',
+                'amount' => 35.0,
+                'type' => 'expense',
+            ],
+        ]);
+
+        $bot = $this->makeBotMock();
+        (new CancelarHandler)($bot);
+
+        // NENHUMA mensagem é deletada (R2).
+        $deleted = $this->messenger->deletedMessages[self::CHAT_ID] ?? [];
+        $this->assertEmpty($deleted, 'Nenhuma mensagem deve ser deletada pelo /cancelar (R2)');
+
+        // Teclados removidos de X e Y (R1).
+        $markups = $this->messenger->editedMarkups[self::CHAT_ID] ?? [];
+        $editedIds = array_column($markups, 'message_id');
+        $this->assertContains(5001, $editedIds, 'X (confirm) deve ter keyboard removido');
+        $this->assertContains(6001, $editedIds, 'Y (picker) deve ter keyboard removido');
+        $this->assertNotContains(7001, $editedIds, 'Z (ask_edition) NÃO deve ter keyboard removido');
+        $this->assertCount(2, $markups, 'Apenas X e Y devem ter keyboard removido');
+    }
+
+    public function test_cancelar_without_edit_picker_does_not_try_delete(): void
+    {
+        // Sessão sem message_id_* → /cancelar chama cleanup anyway,
+        // que é no-op. NENHUMA mensagem é deletada (R2).
+        $this->seedSession(ConversationState::AWAITING_DATA->value, [
+            'awaiting_field' => 'amount',
+            'draft' => ['description' => 'Almoço'],
+        ]);
+
+        $bot = $this->makeBotMock();
+        (new CancelarHandler)($bot);
+
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            '/cancelar sem picker não deve chamar deleteMessage',
+        );
+        $this->assertEmpty(
+            $this->messenger->editedMarkups[self::CHAT_ID] ?? [],
+            '/cancelar sem IDs de mensagem deve ser no-op para removers de keyboard',
+        );
+    }
 }

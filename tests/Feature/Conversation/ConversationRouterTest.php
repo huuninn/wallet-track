@@ -725,9 +725,30 @@ class ConversationRouterTest extends TestCase
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
 
-        // Mensagem editada in-place.
-        $this->assertCount(1, $this->messenger->editedMessages[self::CHAT_ID] ?? []);
-        $this->assertSame(5001, $this->messenger->editedMessages[self::CHAT_ID][0]['message_id']);
+        // R2: NENHUMA mensagem é deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem deletada na edição',
+        );
+
+        // R2: NENHUMA mensagem é editada in-place.
+        $this->assertEmpty(
+            $this->messenger->editedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem editada in-place na edição',
+        );
+
+        // R2: NOVA confirmação X_new foi enviada (sem keyboard restoration).
+        $confirms = $this->messenger->confirmations[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $confirms, 'Nova confirmação X_new deve ser enviada');
+
+        // O message_id_confirm agora referencia X_new (não 5001 X_old).
+        $this->assertNotSame(5001, $session['message_id_confirm'], 'message_id_confirm deve ser atualizado para X_new');
+        $this->assertSame($confirms[0]['message_id'], $session['message_id_confirm']);
+
+        // Feedback de alteração enviado via sendText.
+        $sentTexts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $feedbackText = $sentTexts[count($sentTexts) - 2]['text'] ?? ''; // penúltima msg (antes da confirmação)
+        $this->assertStringContainsString('alterado', $feedbackText, 'Feedback de "campo alterado" deve estar presente');
 
         // retry_count zerado (edição bem-sucedida zera contador).
         $this->assertSame(0, $session['retry_count']);
@@ -750,7 +771,7 @@ class ConversationRouterTest extends TestCase
         $this->assertSame(1, $session['retry_count']);
     }
 
-    public function test_p7a_annul_stale_edit_click_in_awaiting_edition(): void
+    public function test_annul_stale_edit_click_in_awaiting_edition(): void
     {
         // P7-A: em AWAITING_EDITION, QUALQUER click em edit:<field> (mesmo
         // vindo do picker Y) é annullado. O usuário deveria estar
@@ -1054,33 +1075,6 @@ class ConversationRouterTest extends TestCase
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
     }
 
-    public function test_p7a_annul_does_not_trigger_state_machine_assertion(): void
-    {
-        // P7-A: como o re-pick foi removido, não há mais self-transition
-        // AWAITING_EDITION → AWAITING_EDITION. O click é annullado antes
-        // de chegar no assertStateTransition, então a sessão fica intacta.
-        // Substitui o antigo test_state_machine_assertion_consulted_on_edition_self_transition_on_repick.
-        $dto = $this->completeDto();
-        $this->seedSession(ConversationState::AWAITING_EDITION->value, $dto, [
-            'awaiting_field' => 'amount',
-            'message_id_confirm' => 5001,
-            'message_id_edit_picker' => 6001,
-            'source' => 'text',
-        ]);
-
-        $this->makeRouter()->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'cb-1',
-            callbackData: 'edit:date',
-            callbackMessageId: 6001,
-        ));
-
-        // Sessão INTACTA — annullamento ocorre antes de qualquer transição.
-        $session = $this->currentSession();
-        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
-        $this->assertSame('amount', $session['awaiting_field']);
-    }
-
     /*
     |--------------------------------------------------------------------------
     | S-6: testes faltantes da revisão
@@ -1319,9 +1313,10 @@ class ConversationRouterTest extends TestCase
         $this->assertSame('amount', $session['awaiting_field']);
     }
 
-    public function test_confirm_deletes_edit_picker(): void
+    public function test_confirm_does_not_delete_edit_picker_after_r2(): void
     {
-        // N2: P3=B — confirm deleta o picker Y antes de persistir a transação.
+        // R2: confirm NÃO deleta Y nem Z — deletePictureIfPresent e
+        // deleteAskEditionIfPresent foram removidos do handleConfirm.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'message_id_edit_picker' => 6001,
@@ -1336,18 +1331,21 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 5001,
         ));
 
-        // Picker Y foi deletado (best-effort, antes do clearSession).
-        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
-        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID]);
+        // R2: NENHUMA mensagem é deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: confirm não deve deletar mensagens',
+        );
 
         // Transação foi persistida normalmente (não-bloqueante).
         $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
         $this->assertCount(1, $transactions);
     }
 
-    public function test_cancel_deletes_edit_picker(): void
+    public function test_cancel_does_not_delete_edit_picker_after_r2(): void
     {
-        // N3: P3=B — cancel deleta o picker Y antes de limpar a sessão.
+        // R2: cancel NÃO deleta Y nem Z — deletePictureIfPresent e
+        // deleteAskEditionIfPresent foram removidos do cancel branch.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'message_id_edit_picker' => 6001,
@@ -1361,18 +1359,21 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 5001,
         ));
 
-        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
-        $this->assertContains(6001, $this->messenger->deletedMessages[self::CHAT_ID]);
+        // R2: NENHUMA mensagem é deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: cancel não deve deletar mensagens',
+        );
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
         $this->assertNull($this->currentSession());
     }
 
-    public function test_edit_field_callback_does_not_delete_picker_in_p7a(): void
+    public function test_edit_field_callback_removes_picker_keyboard(): void
     {
         // P7-A: edit:<field> NÃO deleta o picker Y. O picker permanece
         // visível no chat e registrado na sessão; será deletado apenas em
         // confirm/cancel (P3=B). Re-click subsequente em Y é annullado
-        // (ver test_p7a_annul_reclick_em_picker).
+        // (ver test_annul_stale_edit_click_in_awaiting_edition).
         //
         // Substitui o antigo test_edit_field_callback_deletes_picker (N4)
         // que testava o comportamento P2=B (removido em P7-A).
@@ -1405,250 +1406,69 @@ class ConversationRouterTest extends TestCase
         $this->assertSame(7001, $session['message_id_edit_picker']);
     }
 
-    public function test_p7a_picker_remains_after_edit_field_advances_to_edition(): void
+    public function test_picker_lifecycle_after_edition_r2(): void
     {
-        // P7-A: o picker Y criado por "Editar" NÃO é deletado após
-        // edit:<field> (P7-A substitui P2=B). O flag `picker_consumed`
-        // é setado como `true` ao processar o 1º edit:<field>, permitindo
-        // distinguir re-clicks (annullados) do 1º click (processado).
-        //
-        // Substitui o antigo test_multiple_edit_pickers_in_sequence (N5)
-        // que testava deleção em sequência (removido em P7-A).
-        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
-            'message_id_confirm' => 5001,
-            'source' => 'text',
-        ]);
-
-        $router = $this->makeRouter();
-
-        // 1ª etapa: "Editar" → cria picker Y1 (picker_consumed=false).
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'c1',
-            callbackData: 'edit',
-            callbackMessageId: 5001,
-        ));
-        $session = $this->currentSession();
-        $pickerId = (int) $session['message_id_edit_picker'];
-        $this->assertFalse(
-            (bool) ($session['picker_consumed'] ?? false),
-            'P7-A: picker Y1 começa como NÃO consumido',
-        );
-
-        // 2ª etapa: 1º click "edit:amount" no Y1 → AWAITING_EDITION.
-        // picker_consumed agora = true. Picker NÃO é deletado.
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'c2',
-            callbackData: 'edit:amount',
-            callbackMessageId: $pickerId,
-        ));
-        $this->assertArrayNotHasKey(self::CHAT_ID, $this->messenger->deletedMessages);
-        $session = $this->currentSession();
-        $this->assertSame($pickerId, $session['message_id_edit_picker']);
-        $this->assertTrue(
-            (bool) ($session['picker_consumed'] ?? false),
-            'P7-A: após 1º edit:<field>, picker é marcado como consumido',
-        );
-        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
-    }
-
-    public function test_p7a_reclick_on_picker_during_edition_is_annulled(): void
-    {
-        // P7-A: re-click no picker Y durante AWAITING_EDITION é
-        // annullado silenciosamente (annulStaleEditClickInEdition).
-        // O usuário deveria estar respondendo com texto, não clicando
-        // em botões antigos.
+        // R2: após edição válida (AWAITING_EDITION → AWAITING_CONFIRMATION):
+        // - NENHUMA mensagem é deletada (Y permanece, Z permanece)
+        // - NENHUM keyboard é restaurado em X_old
+        // - NOVA confirmação X_new é enviada
+        // - message_id_confirm muda para X_new
+        // - message_id_edit_picker e ask_edition são limpos da sessão
         $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001,
             'awaiting_field' => 'amount',
             'source' => 'text',
         ]);
 
-        $router = $this->makeRouter();
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '100,00'));
 
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'c3',
-            callbackData: 'edit:amount',
-            callbackMessageId: 6001, // Y
-        ));
-
-        $session = $this->currentSession();
-        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
-        $this->assertSame(
-            'amount',
-            $session['awaiting_field'],
-            'P7-A: re-click em EDITION annullado (awaiting_field não muda)',
+        // R2: NENHUMA mensagem deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem deletada após edição',
         );
-        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
-    }
 
-    public function test_p7a_reclick_on_picker_in_confirmation_after_edit_is_annulled(): void
-    {
-        // P7-A: após edição bem-sucedida (AWAITING_EDITION →
-        // AWAITING_CONFIRMATION), o picker Y permanece visível E com
-        // picker_consumed=true. Re-click em Y no CONFIRMATION é
-        // annullado (annulPickerReclickIfNeeded) porque o flag indica
-        // re-click. S1 também: "Editar" no X com Y já existente é
-        // idempotente (não cria novo picker).
-        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
-            'message_id_confirm' => 5001,
-            'message_id_edit_picker' => 6001,
-            'awaiting_field' => 'amount',
-            'source' => 'text',
-        ]);
+        // R2: NENHUM keyboard restaurado.
+        $this->assertEmpty(
+            $this->messenger->restoredKeyboards[self::CHAT_ID] ?? [],
+            'R2: nenhum keyboard restaurado após edição',
+        );
 
-        $router = $this->makeRouter();
+        // R2: NENHUMA mensagem editada in-place.
+        $this->assertEmpty(
+            $this->messenger->editedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem editada in-place após edição',
+        );
 
-        // 4ª etapa: responder a edição → volta para CONFIRMATION.
-        $router->route(ConversationInput::text(self::CHAT_ID, '100,00'));
+        // Session is back to AWAITING_CONFIRMATION.
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertSame(6001, $session['message_id_edit_picker'], 'P7-A: Y1 permanece após edição');
-        $this->assertTrue(
-            (bool) ($session['picker_consumed'] ?? false),
-            'P7-A: picker_consumed preservado após edição',
-        );
 
-        // 5ª etapa: RE-CLICK no Y1 em AWAITING_CONFIRMATION → ANNULADO.
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'c4',
-            callbackData: 'edit:date',
-            callbackMessageId: 6001, // Y
-        ));
-        $session = $this->currentSession();
-        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertArrayNotHasKey('awaiting_field', $session, 'P7-A: re-click em CONFIRMATION annullado');
-        $this->assertCount(0, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+        // Session no longer has message_id_edit_picker key.
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
 
-        // 6ª etapa: S1 — duplo clique em "Editar" no X é idempotente.
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'c5',
-            callbackData: 'edit',
-            callbackMessageId: 5001, // X
-        ));
-        $session = $this->currentSession();
-        $this->assertSame(6001, $session['message_id_edit_picker'], 'S1: picker Y1 continua sendo o ativo');
+        // Session no longer has message_id_ask_edition key.
+        $this->assertArrayNotHasKey('message_id_ask_edition', $session);
+
+        // Session no longer has picker_consumed key.
+        $this->assertArrayNotHasKey('picker_consumed', $session);
+
+        // R2: message_id_confirm mudou para X_new (não é mais 5001).
+        $this->assertNotSame(5001, $session['message_id_confirm'], 'message_id_confirm deve ser X_new, não X_old');
+
+        // NOVA confirmação foi enviada.
+        $confirms = $this->messenger->confirmations[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $confirms, 'Nova confirmação X_new deve ser enviada');
+
+        // Feedback de alteração está presente.
+        $sentTexts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $feedbackText = $sentTexts[count($sentTexts) - 2]['text'] ?? '';
+        $this->assertStringContainsString('alterado', $feedbackText);
     }
 
-    public function test_p7a_first_click_on_picker_after_edit_advances_to_edition(): void
-    {
-        // P7-A fix: o 1º click em edit:<field> no picker Y (logo após o
-        // user clicar "Editar") DEVE processar normalmente — não pode ser
-        // annullado. Este teste cobre o bug introduzido pela 1ª versão do
-        // P7-A, onde o annulPickerReclickIfNeeded anullava o 1º click
-        // também (porque Y já estava na sessão recém-criada).
-        //
-        // Sem o fix (flag picker_consumed), o user clicava "Editar" no X,
-        // via o picker Y aparecer, clicava num campo do Y e nada acontecia
-        // (anullado silenciosamente — só loading parava).
-        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
-            'message_id_confirm' => 5001,
-            'source' => 'text',
-        ]);
 
-        $router = $this->makeRouter();
-
-        // 1ª etapa: "Editar" → cria picker Y (picker_consumed=false).
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'cb-edit',
-            callbackData: 'edit',
-            callbackMessageId: 5001,
-        ));
-        $session = $this->currentSession();
-        $pickerId = (int) $session['message_id_edit_picker'];
-        $this->assertFalse(
-            (bool) ($session['picker_consumed'] ?? false),
-            'Sanity: picker começa como NÃO consumido',
-        );
-
-        // 2ª etapa: 1º click em edit:amount no Y → DEVE processar
-        // (transicionar para AWAITING_EDITION com askForEdition).
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'cb-field',
-            callbackData: 'edit:amount',
-            callbackMessageId: $pickerId,
-        ));
-
-        $session = $this->currentSession();
-        $this->assertSame(
-            ConversationState::AWAITING_EDITION->value,
-            $session['state'],
-            'P7-A fix: 1º click em edit:<field> DEVE transicionar para AWAITING_EDITION',
-        );
-        $this->assertSame('amount', $session['awaiting_field']);
-        $this->assertTrue(
-            (bool) ($session['picker_consumed'] ?? false),
-            'P7-A: após processar, picker é marcado como consumido',
-        );
-        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
-    }
-
-    public function test_p7a_legacy_session_without_picker_consumed_field_works(): void
-    {
-        // P7-A-2 (W3): sessão legacy em produção NÃO tem o campo
-        // `picker_consumed` no Firestore. O código usa `?? false` no
-        // annulPickerReclickIfNeeded, então sessões existentes devem se
-        // comportar como se `picker_consumed = false` (1º click
-        // processa, re-click é annullado após edição).
-        //
-        // Este teste cobre o cenário real de deploy: milhares de sessões
-        // em produção sem o campo novo. Se o fallback `?? false` quebrar,
-        // TODAS as edições vão falhar silenciosamente em prod.
-        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
-            'message_id_confirm' => 5001,
-            'message_id_edit_picker' => 6001,
-            // SEM 'picker_consumed' — simula sessão legacy em produção.
-            'source' => 'text',
-        ]);
-
-        $router = $this->makeRouter();
-
-        // 1º click em edit:amount no Y → DEVE processar (legacy trata
-        // picker_consumed ausente como false = não consumido).
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'cb-1',
-            callbackData: 'edit:amount',
-            callbackMessageId: 6001, // Y
-        ));
-
-        $session = $this->currentSession();
-        $this->assertSame(
-            ConversationState::AWAITING_EDITION->value,
-            $session['state'],
-            'W3: sessão legacy sem picker_consumed deve processar 1º click normalmente',
-        );
-        $this->assertSame('amount', $session['awaiting_field']);
-        $this->assertTrue(
-            (bool) ($session['picker_consumed'] ?? false),
-            'W3: após processar, picker_consumed é setado como true (migração implícita)',
-        );
-        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
-
-        // Re-click no Y após edição → annullado (picker_consumed agora é true).
-        $router->route(ConversationInput::callback(
-            chatId: self::CHAT_ID,
-            callbackId: 'cb-2',
-            callbackData: 'edit:amount',
-            callbackMessageId: 6001, // Y
-        ));
-
-        // Sessão INTACTA — re-click annullado.
-        $session = $this->currentSession();
-        $this->assertSame(
-            ConversationState::AWAITING_EDITION->value,
-            $session['state'],
-            'W3: re-click em EDITION é annullado em sessão legacy',
-        );
-        $this->assertSame('amount', $session['awaiting_field']);
-    }
 
     public function test_callback_with_edit_picker_message_id_accepted_in_awaiting_confirmation(): void
     {
@@ -1672,7 +1492,7 @@ class ConversationRouterTest extends TestCase
         $this->assertCount(1, $transactions, 'Callback de Y deve ser aceito (P6)');
     }
 
-    public function test_p7a_stale_callback_in_awaiting_edition_is_annulled_not_rejected(): void
+    public function test_stale_callback_in_awaiting_edition_is_annulled_not_rejected(): void
     {
         // P7-A: em AWAITING_EDITION, QUALQUER callback edit:<field> é
         // annullado (silencioso), independente do message_id de origem. Não
@@ -1723,33 +1543,6 @@ class ConversationRouterTest extends TestCase
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
     }
 
-    public function test_p7a_edit_then_valid_response_keeps_message_id_edit_picker(): void
-    {
-        // P7-A: após edição bem-sucedida (AWAITING_EDITION → AWAITING_CONFIRMATION),
-        // o message_id_edit_picker PERMANECE no doc. O picker Y ainda está
-        // visível no chat (não foi deletado); manter o ID permite que o
-        // annulPickerReclickIfNeeded saiba identificar re-clicks no Y.
-        // O picker é deletado apenas em confirm/cancel (P3=B).
-        //
-        // Substitui o antigo test_edit_then_valid_response_clears_message_id_edit_picker (N9)
-        // que testava a remoção via clearFields (removido em P7-A).
-        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
-            'message_id_confirm' => 5001,
-            'message_id_edit_picker' => 6001,
-            'awaiting_field' => 'amount',
-            'source' => 'text',
-        ]);
-
-        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '100,00'));
-
-        $session = $this->currentSession();
-        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertSame(
-            6001,
-            $session['message_id_edit_picker'],
-            'P7-A: message_id_edit_picker deve PERMANECER após edição (picker ainda visível)',
-        );
-    }
 
     public function test_double_edit_click_is_idempotent_and_keeps_original_picker(): void
     {
@@ -2256,5 +2049,553 @@ class ConversationRouterTest extends TestCase
         // Label foi incrementada (caminho feliz deste teste).
         $labels = $this->firestoreGw->raw()['labels'] ?? [];
         $this->assertSame(1, $labels['label-que-vai-falhar']['use_count'] ?? 0);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | P7-B — UX do picker de edição e prompt de "Digite o novo ..."
+    |--------------------------------------------------------------------------
+    |
+    | Estes testes documentam o fix P7-A → P7-B:
+    |
+    |  1. Ao clicar num campo do picker (edit:<field>), os botões do picker
+    |     SOMEM imediatamente (markup=null via editMessageReplyMarkup),
+    |     mas o texto "✏️ Qual campo você quer editar?" PERMANECE no chat
+    |     como histórico. Resolve o bug onde o usuário clicava em botões
+    |     velhos e recebia silêncio.
+    |
+    |  2. Quando o usuário responde com texto válido em AWAITING_EDITION,
+    |     a msg do prompt "✏️ Digite o novo 💵 valor" é DELETADA — sem
+    |     pergunta órfã no chat após edição.
+    |
+    |  3. Texto inválido em AWAITING_EDITION NÃO deleta a msg do prompt
+    |     (o usuário ainda está respondendo — não deve perder a pergunta).
+    |
+    |  4. Após edição válida, o fluxo de confirm/cancel continua intacto:
+    |     message_id_confirm e o keyboard X permanecem válidos.
+    |
+    | A defesa em camadas (editMessageReplyMarkup com markup=null,
+    | annulStaleEditClickInEdition) é mantida para race conditions onde o
+    | Telegram entrega callbacks de mensagens antigas que ainda têm
+    | keyboards no client do user — ver comentários nos métodos.
+    */
+
+    public function test_p7b_picker_buttons_disappear_after_field_selection(): void
+    {
+        // Cenário 1: ao clicar edit:<field> no picker, os botões somem
+        // (markup=null) mas o texto "✏️ Qual campo você quer editar?"
+        // permanece como histórico no chat.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-1',
+            callbackData: 'edit:amount',
+            callbackMessageId: 6001, // vindo do picker Y
+        ));
+
+        // P7-B: editMessageReplyMarkup foi chamado UMA vez com o ID do
+        // picker e markup=null (remove keyboard, mantém texto).
+        $this->assertArrayHasKey(self::CHAT_ID, $this->messenger->editedMarkups);
+        $this->assertCount(1, $this->messenger->editedMarkups[self::CHAT_ID]);
+        $this->assertSame(
+            6001,
+            $this->messenger->editedMarkups[self::CHAT_ID][0]['message_id'],
+            'P7-B: message_id editado deve ser o do picker (Y)',
+        );
+        $this->assertNull(
+            $this->messenger->editedMarkups[self::CHAT_ID][0]['markup'],
+            'P7-B: markup deve ser null (remove keyboard, mantém texto)',
+        );
+
+        // Comportamento esperado continua: transicionou para AWAITING_EDITION
+        // e enviou o prompt de edição.
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
+        $this->assertSame('amount', $session['awaiting_field']);
+        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+    }
+
+    public function test_p7b_ask_edition_prompt_not_deleted_on_valid_response_after_r2(): void
+    {
+        // R2: resposta válida em AWAITING_EDITION → a msg do prompt Z
+        // NÃO é deletada, NÃO há editMessageText/RestoreKeyboards.
+        // Em vez disso, envia feedback + nova confirmação X_new.
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'message_id_ask_edition' => 7001, // ID do prompt "✏️ Digite o novo 💵 valor"
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '75,00'));
+
+        // R2: NENHUMA mensagem é deletada (nem Z nem Y).
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem deletada após edição válida',
+        );
+
+        // R2: NENHUMA mensagem é editada in-place.
+        $this->assertEmpty(
+            $this->messenger->editedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem editada in-place',
+        );
+
+        // Transição normal: AWAITING_CONFIRMATION com NOVO message_id_confirm.
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertNotSame(5001, $session['message_id_confirm'], 'message_id_confirm deve ser X_new');
+    }
+
+    public function test_p7b_ask_edition_prompt_not_deleted_on_invalid_text_response(): void
+    {
+        // Cenário 3: resposta INVÁLIDA em AWAITING_EDITION → a msg do
+        // prompt NÃO deve ser deletada (o usuário ainda está respondendo
+        // — perder a pergunta seria pior que mantê-la).
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'message_id_ask_edition' => 7001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'lixo'));
+
+        // P7-B: a msg do prompt NÃO foi deletada.
+        $deleted = $this->messenger->deletedMessages[self::CHAT_ID] ?? [];
+        $this->assertNotContains(7001, $deleted, 'P7-B: prompt não deve ser deletado em resposta inválida');
+
+        // Sessão continua em AWAITING_EDITION com retry_count incrementado.
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
+        $this->assertSame(1, $session['retry_count']);
+    }
+
+    public function test_p7b_confirm_cancel_still_work_after_edition_with_r2(): void
+    {
+        // R2: após edição válida, o fluxo de confirm/cancel continua
+        // funcionando normalmente via X_new. message_id_confirm muda para
+        // X_new após edição.
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001,
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // Edição válida → volta para AWAITING_CONFIRMATION com X_new.
+        $router->route(ConversationInput::text(self::CHAT_ID, '99,00'));
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+
+        // R2: message_id_confirm agora é X_new (não 5001 X_old).
+        $newConfirmId = $session['message_id_confirm'];
+        $this->assertNotSame(5001, $newConfirmId, 'R2: message_id_confirm deve ser X_new');
+
+        // Confirm: processa normalmente via X_new.
+        $this->syncSheet->toReturn = true;
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-confirm',
+            callbackData: 'confirm',
+            callbackMessageId: $newConfirmId, // X_new
+        ));
+
+        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
+        $this->assertCount(1, $transactions, 'Confirm deve persistir a transação');
+        $this->assertCount(1, $this->messenger->successes[self::CHAT_ID] ?? [], 'notifySuccess deve ser chamado');
+    }
+
+    public function test_p7b_ask_edition_id_is_updated_after_invalid_retry(): void
+    {
+        // R2: resposta INVÁLIDA em AWAITING_EDITION gera um NOVO `askForEdition()`
+        // (com novo message_id). Após R2, `message_id_ask_edition` é DEPRECIADO
+        // e NÃO é mais gravado na sessão — o prompt Z permanece como histórico.
+        // Este teste verifica que:
+        //  - Um novo prompt de edição é enviado ao usuário
+        //  - A sessão NÃO contém mais o campo `message_id_ask_edition`
+        //  - retry_count é incrementado e preservado
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001, // ID do prompt original (legacy)
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'lixo'));
+
+        // O retry emitiu UM novo prompt de edição.
+        $this->assertCount(1, $this->messenger->editionAsks[self::CHAT_ID] ?? []);
+
+        // R2: message_id_ask_edition NÃO é mais gravado na sessão.
+        // O campo é limpo via clearFields — sessions legacy são sanitizadas.
+        $session = $this->currentSession();
+        $this->assertNotNull($session);
+        $this->assertArrayNotHasKey(
+            'message_id_ask_edition',
+            $session,
+            'R2: message_id_ask_edition depreciado — não deve estar na sessão após retry',
+        );
+        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
+        $this->assertSame(1, $session['retry_count'], 'retry_count deve ter sido incrementado e preservado');
+
+        // O prompt original (7001) não foi deletado — o user ainda está
+        // respondendo (mesma semântica do test_p7b_ask_edition_prompt_not_deleted_*).
+        $deleted = $this->messenger->deletedMessages[self::CHAT_ID] ?? [];
+        $this->assertNotContains(7001, $deleted, 'R2: prompt original não deve ser deletado em retry');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | T-NEW: Novos testes da refatoração de botões inline (P7-B)
+    |--------------------------------------------------------------------------
+    |
+    | Cobrem os novos comportamentos:
+    |  1. Remoção de markup de X ao clicar Editar/Confirmar/Cancelar
+    |  2. Deleção de Y e Z + restauração de teclado em X após edição
+    |  3. Botão de Observações no picker
+    */
+
+    public function test_edit_removes_keyboard_from_confirmation_message_X(): void
+    {
+        // Ao clicar "Editar", o markup do teclado de confirmação de X
+        // deve ser removido (markup=null) ANTES de mostrar o picker Y.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit',
+            callbackData: 'edit',
+            callbackMessageId: 5001,
+        ));
+
+        // Verifica que editMessageReplyMarkup foi chamado para remover
+        // o keyboard de X (markup=null).
+        $markups = $this->messenger->editedMarkups[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $markups);
+        $this->assertSame(5001, $markups[0]['message_id']);
+        $this->assertNull($markups[0]['markup'], 'Keyboard de X deve ser null (removido)');
+    }
+
+    public function test_confirm_removes_keyboard_from_X_but_does_not_delete_Y_or_Z(): void
+    {
+        // R2: ao clicar "Confirmar": remove markup de X, mas NÃO deleta Y nem Z.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-confirm',
+            callbackData: 'confirm',
+            callbackMessageId: 5001,
+        ));
+
+        // X: markup removido.
+        $markups = $this->messenger->editedMarkups[self::CHAT_ID] ?? [];
+        $confirmMarkup = array_values(array_filter($markups, fn (array $e): bool => $e['message_id'] === 5001));
+        $this->assertCount(1, $confirmMarkup);
+        $this->assertNull($confirmMarkup[0]['markup'], 'Keyboard de X deve ser removido');
+
+        // R2: NENHUMA mensagem é deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: confirm não deleta Y nem Z',
+        );
+    }
+
+    public function test_cancel_removes_keyboard_from_X_but_does_not_delete_Y_or_Z(): void
+    {
+        // R2: ao clicar "Cancelar": remove markup de X, mas NÃO deleta Y nem Z.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-cancel',
+            callbackData: 'cancel',
+            callbackMessageId: 5001,
+        ));
+
+        // X: markup removido.
+        $markups = $this->messenger->editedMarkups[self::CHAT_ID] ?? [];
+        $confirmMarkup = array_values(array_filter($markups, fn (array $e): bool => $e['message_id'] === 5001));
+        $this->assertCount(1, $confirmMarkup);
+        $this->assertNull($confirmMarkup[0]['markup'], 'Keyboard de X deve ser removido');
+
+        // R2: NENHUMA mensagem é deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: cancel não deleta Y nem Z',
+        );
+    }
+
+    public function test_edition_conclusion_r2_sends_new_confirmation_not_edit_in_place(): void
+    {
+        // R2: após edição válida (AWAITING_EDITION → AWAITING_CONFIRMATION):
+        // - NENHUMA mensagem é deletada
+        // - NENHUMA mensagem é editada in-place
+        // - NENHUM keyboard é restaurado
+        // - NOVA confirmação X_new é enviada
+        // - Feedback de alteração é enviado
+        // - message_id_confirm, ask_edition, edit_picker são limpos da sessão
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001,
+            'awaiting_field' => 'amount',
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '100,00'));
+
+        // R2: NENHUMA mensagem deletada.
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem deletada',
+        );
+
+        // Sessão: campos limpos.
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayNotHasKey('message_id_edit_picker', $session, 'Y deve ser limpo da sessão');
+        $this->assertArrayNotHasKey('message_id_ask_edition', $session, 'Z deve ser limpo da sessão');
+
+        // R2: NENHUM keyboard restaurado.
+        $this->assertEmpty(
+            $this->messenger->restoredKeyboards[self::CHAT_ID] ?? [],
+            'R2: nenhum keyboard restaurado',
+        );
+
+        // R2: NENHUMA mensagem editada in-place.
+        $this->assertEmpty(
+            $this->messenger->editedMessages[self::CHAT_ID] ?? [],
+            'R2: nenhuma mensagem editada in-place',
+        );
+
+        // R2: NOVA confirmação X_new foi enviada.
+        $confirms = $this->messenger->confirmations[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $confirms, 'R2: nova confirmação X_new deve ser enviada');
+        $this->assertSame($confirms[0]['message_id'], $session['message_id_confirm'], 'message_id_confirm deve ser X_new');
+
+        // Feedback de alteração enviado.
+        $sentTexts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $feedbackText = $sentTexts[count($sentTexts) - 2]['text'] ?? '';
+        $this->assertStringContainsString('alterado', $feedbackText);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M4 (R1/R2) — Novos testes específicos da refatoração
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_field_change_message_gender_agreement_amount_alterado(): void
+    {
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '150,00'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        $this->assertStringContainsString('Valor alterado', $feedback);
+        $this->assertStringContainsString('R$ 47,50', $feedback); // valor antigo
+        $this->assertStringContainsString('R$ 150,00', $feedback); // valor novo
+    }
+
+    public function test_field_change_message_gender_agreement_type_alterado(): void
+    {
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'type',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'receita'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        $this->assertStringContainsString('Tipo alterado', $feedback);
+        $this->assertStringContainsString('Despesa', $feedback); // valor antigo
+        $this->assertStringContainsString('Receita', $feedback); // valor novo
+    }
+
+    public function test_field_change_message_gender_agreement_date_alterada(): void
+    {
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'date',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '20/06/2026'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        // "Data" é feminino → "alterada"
+        $this->assertStringContainsString('Data alterada', $feedback);
+        $this->assertStringContainsString('15/06/2026', $feedback); // valor antigo
+    }
+
+    public function test_field_change_message_gender_agreement_description_alterada(): void
+    {
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'description',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'Novo almoço'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        // "Descrição" é feminino → "alterada"
+        $this->assertStringContainsString('Descrição alterada', $feedback);
+    }
+
+    public function test_field_change_message_gender_agreement_category_alterada(): void
+    {
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'category',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'Lazer'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        // "Categoria" é feminino → "alterada"
+        $this->assertStringContainsString('Categoria alterada', $feedback);
+    }
+
+    public function test_field_change_message_gender_agreement_observations_alteradas(): void
+    {
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'observations',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'Novas obs'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        // "Observações" é feminino plural → "alteradas"
+        $this->assertStringContainsString('Observações alteradas', $feedback);
+    }
+
+    public function test_ct047_rejects_x_old_after_edition(): void
+    {
+        // CT-047 (D3): após uma edição, X_old (5001) é rejeitado por callbacks.
+        // O novo message_id_confirm (X_new) é gravado na sessão e apenas ele
+        // é aceito como válido (side effect de sobrescrever message_id_confirm).
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, '99,00'));
+
+        $session = $this->currentSession();
+        $newConfirmId = $session['message_id_confirm'];
+        $this->assertNotSame(5001, $newConfirmId, 'X_old não deve ser mais o message_id_confirm');
+
+        // Callback de X_old (5001) deve ser rejeitado (não está na sessão).
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-stale',
+            callbackData: 'confirm',
+            callbackMessageId: 5001, // X_old
+        ));
+
+        // A sessão NÃO foi limpa (o confirm não processou).
+        $this->assertNotNull($this->currentSession(), 'Sessão não deve ser limpa por callback stale');
+        // Uma mensagem de erro foi enviada.
+        $this->assertCount(1, $this->messenger->errors[self::CHAT_ID] ?? []);
+    }
+
+    public function test_multiple_editions_create_x_new_each_cycle(): void
+    {
+        // R2: cada edição cria uma nova confirmação X_new.
+        // message_id_confirm muda a cada ciclo.
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $this->completeDto(), [
+            'awaiting_field' => 'amount',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $router = $this->makeRouter();
+
+        // Primeira edição: amount.
+        $router->route(ConversationInput::text(self::CHAT_ID, '99,00'));
+        $session1 = $this->currentSession();
+        $confirmId1 = $session1['message_id_confirm'];
+        $this->assertNotSame(5001, $confirmId1, 'Edição 1: message_id_confirm deve ser X_new');
+
+        // Número de confirmações: 1.
+        $this->assertCount(1, $this->messenger->confirmations[self::CHAT_ID] ?? []);
+
+        // Prepara segunda edição (editar type agora).
+        // Simula callback edit:type no X_new para entrar em AWAITING_EDITION.
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit-type',
+            callbackData: 'edit:type',
+            callbackMessageId: $confirmId1, // do X_new
+        ));
+
+        $router->route(ConversationInput::text(self::CHAT_ID, 'receita'));
+        $session2 = $this->currentSession();
+        $confirmId2 = $session2['message_id_confirm'];
+        $this->assertNotSame($confirmId1, $confirmId2, 'Edição 2: message_id_confirm deve ser novo X_new');
+
+        // Número de confirmações: 2 (cada edição criou uma nova).
+        $this->assertCount(2, $this->messenger->confirmations[self::CHAT_ID] ?? []);
+
+        // Cada edição gerou feedback.
+        $feedbackTexts = array_map(fn ($e) => $e['text'], $this->messenger->sentTexts[self::CHAT_ID] ?? []);
+        $feedbackMessages = array_values(array_filter(
+            $feedbackTexts,
+            fn (string $t): bool => str_contains($t, 'alterad'),
+        ));
+        $this->assertCount(2, $feedbackMessages, 'Cada edição deve gerar um feedback');
+    }
+
+    public function test_null_value_displays_dash_in_feedback(): void
+    {
+        // Quando o valor antigo é null, o feedback mostra "—".
+        // Usamos category (null por default no DTO parcial).
+        $dto = $this->completeDto()->withCategory(null);
+        $this->seedSession(ConversationState::AWAITING_EDITION->value, $dto, [
+            'awaiting_field' => 'category',
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'NovaCat'));
+
+        $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
+        $this->assertStringContainsString('—', $feedback, 'Valor null deve exibir "—"');
+        $this->assertStringContainsString('NovaCat', $feedback);
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Bot\Messaging;
 
 use App\Bot\Messaging\TransactionSummaryFormatter;
+use App\Dto\TransactionData;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
@@ -219,5 +220,225 @@ class TransactionSummaryFormatterTest extends TestCase
         $this->assertStringContainsString('1.', $out);
         $this->assertStringContainsString('50.', $out);
         $this->assertStringContainsString('<i>Mostrando 50 transações.</i>', $out);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Testes do método summary() — confirmação/resumo de transação única
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_summary_includes_observations_when_present(): void
+    {
+        $dto = new TransactionData(
+            description: 'Almoço no restaurante',
+            amount: 47.50,
+            type: 'expense',
+            category: 'Alimentação',
+            date: '2026-06-15',
+            observations: 'Cliente: João, mesa 5',
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('📝 <b>Observações:</b>', $out);
+        $this->assertStringContainsString('Cliente: João, mesa 5', $out);
+        // Observações devem aparecer após a Data (última linha fixa).
+        $this->assertStringContainsString("📅 <b>Data:</b> 15/06/2026\n📝 <b>Observações:</b>", $out);
+    }
+
+    public function test_summary_omits_observations_when_null(): void
+    {
+        $dto = new TransactionData(
+            description: 'Uber',
+            amount: 23.90,
+            type: 'expense',
+            category: 'Transporte',
+            date: '2026-06-15',
+            observations: null,
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringNotContainsString('Observações', $out);
+    }
+
+    public function test_summary_omits_observations_when_empty_string(): void
+    {
+        $dto = new TransactionData(
+            description: 'Cinema',
+            amount: 35.0,
+            type: 'expense',
+            category: 'Lazer',
+            date: '2026-06-15',
+            observations: '',
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringNotContainsString('Observações', $out);
+    }
+
+    public function test_summary_escapes_html_in_observations(): void
+    {
+        $dto = new TransactionData(
+            description: 'Teste',
+            amount: 10.0,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            observations: '<script>alert(1)</script>',
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringNotContainsString('<script>', $out);
+        $this->assertStringContainsString('&lt;script&gt;', $out);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M1 (R1/R2) — fieldChangeMessage
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_field_change_message_for_amount(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('amount', 47.50, 100.00);
+
+        $this->assertStringContainsString('💵', $msg);
+        $this->assertStringContainsString('Valor', $msg);
+        $this->assertStringContainsString('alterado', $msg);
+        $this->assertStringContainsString('R$ 47,50', $msg);
+        $this->assertStringContainsString('R$ 100,00', $msg);
+        $this->assertStringContainsString('de', $msg);
+        $this->assertStringContainsString('para', $msg);
+    }
+
+    public function test_field_change_message_for_type(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('type', 'expense', 'income');
+
+        $this->assertStringContainsString('🔖', $msg);
+        $this->assertStringContainsString('Tipo', $msg);
+        $this->assertStringContainsString('alterado', $msg);
+        $this->assertStringContainsString('Despesa', $msg);
+        $this->assertStringContainsString('Receita', $msg);
+    }
+
+    public function test_field_change_message_for_date(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('date', '2026-06-15', '2026-06-20');
+
+        $this->assertStringContainsString('📅', $msg);
+        $this->assertStringContainsString('Data', $msg);
+        $this->assertStringContainsString('alterada', $msg); // feminino
+        $this->assertStringContainsString('15/06/2026', $msg);
+        $this->assertStringContainsString('20/06/2026', $msg);
+    }
+
+    public function test_field_change_message_for_description(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('description', 'Almoço', 'Jantar');
+
+        $this->assertStringContainsString('💸', $msg);
+        $this->assertStringContainsString('Descrição', $msg);
+        $this->assertStringContainsString('alterada', $msg); // feminino
+        $this->assertStringContainsString('Almoço', $msg);
+        $this->assertStringContainsString('Jantar', $msg);
+    }
+
+    public function test_field_change_message_for_category(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('category', 'Alimentação', 'Lazer');
+
+        $this->assertStringContainsString('🏷', $msg);
+        $this->assertStringContainsString('Categoria', $msg);
+        $this->assertStringContainsString('alterada', $msg); // feminino
+        $this->assertStringContainsString('Alimentação', $msg);
+        $this->assertStringContainsString('Lazer', $msg);
+    }
+
+    public function test_field_change_message_for_observations(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('observations', 'Obs antiga', 'Obs nova');
+
+        $this->assertStringContainsString('📝', $msg);
+        $this->assertStringContainsString('Observações', $msg);
+        $this->assertStringContainsString('alteradas', $msg); // feminino plural
+        $this->assertStringContainsString('Obs antiga', $msg);
+        $this->assertStringContainsString('Obs nova', $msg);
+    }
+
+    public function test_field_change_message_null_values_display_dash(): void
+    {
+        // Valor antigo null → "—", novo valor normal.
+        $msg = $this->formatter->fieldChangeMessage('category', null, 'Nova Cat');
+
+        $this->assertStringContainsString('—', $msg);
+        $this->assertStringContainsString('Nova Cat', $msg);
+    }
+
+    public function test_field_change_message_escapes_html_in_values(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('description', '<b>old</b>', '<i>new</i>');
+
+        $this->assertStringNotContainsString('<b>', $msg);
+        $this->assertStringNotContainsString('<i>', $msg);
+        $this->assertStringContainsString('&lt;b&gt;', $msg);
+        $this->assertStringContainsString('&lt;i&gt;', $msg);
+    }
+
+    public function test_field_change_message_escapes_malicious_date_in_old_value(): void
+    {
+        // WARNING #1 (reviewer): data maliciosa injetada via sessão legacy/corrompida
+        // deve ser escapada — nunca exibida sem escape no Telegram HTML.
+        $msg = $this->formatter->fieldChangeMessage('date', '<script>alert(1)</script>', '2026-06-20');
+
+        $this->assertStringNotContainsString('<script>', $msg);
+        $this->assertStringContainsString('&lt;script&gt;', $msg);
+    }
+
+    public function test_field_change_message_escapes_malicious_type_in_old_value(): void
+    {
+        // WARNING #1 (reviewer): tipo malicioso injetado via sessão legacy/corrompida
+        // deve ser escapado — nunca exibido sem escape no Telegram HTML.
+        $msg = $this->formatter->fieldChangeMessage('type', '<script>xss</script>', 'expense');
+
+        $this->assertStringNotContainsString('<script>', $msg);
+        $this->assertStringContainsString('&lt;script&gt;', $msg);
+    }
+
+    public function test_field_change_message_gender_agreement_pt_br(): void
+    {
+        // Concordância de gênero PT-BR:
+        // amount/type → "alterado" (masculino)
+        // date/description/category → "alterada" (feminino)
+        // observations → "alteradas" (feminino plural)
+
+        $this->assertStringContainsString(
+            'alterado',
+            $this->formatter->fieldChangeMessage('amount', 10.0, 20.0),
+        );
+        $this->assertStringContainsString(
+            'alterado',
+            $this->formatter->fieldChangeMessage('type', 'expense', 'income'),
+        );
+        $this->assertStringContainsString(
+            'alterada',
+            $this->formatter->fieldChangeMessage('date', '2026-01-01', '2026-01-02'),
+        );
+        $this->assertStringContainsString(
+            'alterada',
+            $this->formatter->fieldChangeMessage('description', 'A', 'B'),
+        );
+        $this->assertStringContainsString(
+            'alterada',
+            $this->formatter->fieldChangeMessage('category', 'A', 'B'),
+        );
+        $this->assertStringContainsString(
+            'alteradas',
+            $this->formatter->fieldChangeMessage('observations', 'A', 'B'),
+        );
     }
 }

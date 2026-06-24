@@ -260,4 +260,54 @@ class NovaHandlerTest extends TestCase
         $this->assertSame(1, $session2['draft']['_wizard_step']);
         $this->assertSame('type', $session2['awaiting_field']);
     }
+
+    public function test_nova_removes_keyboards_from_x_and_y(): void
+    {
+        // Sessão com X (confirm), Y (picker), Z (ask_edition) → /nova remove
+        // teclados inline de X e Y via SessionMessageCleaner, NÃO deleta nada.
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, [
+            'message_id_confirm' => 5001,
+            'message_id_edit_picker' => 6001,
+            'message_id_ask_edition' => 7001,
+            'source' => 'text',
+            'draft' => [
+                'description' => 'Cinema',
+                'amount' => 35.0,
+                'type' => 'expense',
+            ],
+        ]);
+
+        $bot = $this->makeBotMock();
+        (new NovaHandler)($bot);
+
+        // NENHUMA mensagem é deletada (R2).
+        $deleted = $this->messenger->deletedMessages[self::CHAT_ID] ?? [];
+        $this->assertEmpty($deleted, 'Nenhuma mensagem deve ser deletada pelo /nova (R2)');
+
+        // Teclados removidos de X e Y (R1).
+        $markups = $this->messenger->editedMarkups[self::CHAT_ID] ?? [];
+        $editedIds = array_column($markups, 'message_id');
+        $this->assertContains(5001, $editedIds, 'X (confirm) deve ter keyboard removido');
+        $this->assertContains(6001, $editedIds, 'Y (picker) deve ter keyboard removido');
+        $this->assertNotContains(7001, $editedIds, 'Z (ask_edition) NÃO deve ter keyboard removido');
+        $this->assertCount(2, $markups, 'Apenas X e Y devem ter keyboard removido');
+    }
+
+    public function test_nova_with_no_active_session_is_noop_for_cleanup(): void
+    {
+        // Sem sessão → /nova inicia wizard, mas cleanup é no-op.
+        $this->assertNull($this->firestore->getSession(self::CHAT_ID), 'precondição: IDLE');
+
+        $bot = $this->makeBotMock();
+        (new NovaHandler)($bot);
+
+        $this->assertEmpty(
+            $this->messenger->deletedMessages[self::CHAT_ID] ?? [],
+            '/nova sem sessão ativa não deve chamar deleteMessage (R2)',
+        );
+        $this->assertEmpty(
+            $this->messenger->editedMarkups[self::CHAT_ID] ?? [],
+            '/nova sem sessão ativa não deve chamar editMessageReplyMarkup',
+        );
+    }
 }
