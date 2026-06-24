@@ -191,8 +191,8 @@ firestore
         ├── draft:              map | null
         ├── awaiting_field:     string | null
         ├── message_id_confirm: string | null
-        ├── message_id_edit_picker: int | null   ← NOVO (fix CT-047 — P7-A: permanece após edit:<field>)
-        ├── picker_consumed: bool | null         ← NOVO (P7-A fix: distingue 1º click de re-click em Y)
+        ├── message_id_edit_picker: int | null   ← efêmero — deletado ao concluir edição
+        ├── message_id_ask_edition: int | null  ← NOVO (P7-B: id do prompt "Digite o novo ...")
         ├── updated_at:         timestamp
         └── retry_count:        integer
 ```
