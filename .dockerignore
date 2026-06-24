@@ -25,10 +25,17 @@ public/hot
 .env.*
 !.env.example
 auth.json
+
+# Service Account JSONs (P0: vazamento em Artifact Registry impedido)
+wallet-track-*.json
+*-sa.json
+*-service-account.json
+google-credentials.json
 gcloud-credentials.json
 google-service-account.json
 service-account.json
 *-credentials.json
+
 *.p12
 *.pem
 storage/*.key

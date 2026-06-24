@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\HealthController;
 use App\Http\Controllers\TelegramWebhookController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 
@@ -20,27 +20,21 @@ Route::redirect('/', '/health');
 
 /*
 |--------------------------------------------------------------------------
-| Health Check (M0.8)
+| Health Check (M0.8 → M10 aprimorado)
 |--------------------------------------------------------------------------
-| Endpoint leve para uptime checks, Cloud Run health probes e diagnósticos.
-| Em M0 retorna apenas status "ok". Em M10 (deploy) será aprimorado para
-| verificar Firestore, Sheets e variáveis críticas. Stateless e sem serviços
-| externos (cold-start friendly).
-
+| Endpoint para uptime checks do Cloud Run e diagnóstico de infraestrutura.
+|
+| Modos (ver {@see \App\Http\Controllers\HealthController}):
+|  - GET /health           → verifica env vars críticas, sem tocar rede.
+|  - GET /health?verbose=1 → adicionalmente pinga o Firestore.
+|
 | Segurança (W1 da revisão M0): `version` e `app` só são expostos quando
-| APP_DEBUG=true. Em produção retorna null — evita info disclosure (CVE matching
-| por versão exata do framework) mesmo sendo um endpoint aberto para o probe.
+| APP_DEBUG=true. Em produção retornam null.
+|
+| Em M10 extraímos para controller invokable dedicado (em vez de closure)
+| para permitir testes unitários isolados e preparar para route:cache futuro.
 */
-Route::get('/health', function () {
-    $debug = App::hasDebugModeEnabled();
-
-    return response()->json([
-        'status' => 'ok',
-        'timestamp' => now()->toIso8601String(),
-        'version' => $debug ? App::version() : null,
-        'app' => $debug ? config('app.name') : null,
-    ]);
-});
+Route::get('/health', HealthController::class);
 
 /*
 |--------------------------------------------------------------------------

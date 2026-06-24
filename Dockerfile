@@ -75,6 +75,23 @@ FROM deps AS build
 COPY . .
 RUN composer dump-autoload --no-dev --optimize
 
+# Pré-compila templates Blade e descobre eventos/listeners em build-time.
+# Isso acelera o cold start no Cloud Run (templates já compilados; listeners
+# já mapeados em cache sem precisar escanear o filesystem a cada request).
+#
+# ⚠️ NÃO usamos `config:cache` — ele congela env() no momento do build, mas
+#    os secrets (APP_KEY, tokens, SA JSON) são injetados pelo Cloud Run via
+#    Secret Manager em RUNTIME. Rodar config:cache aqui quebraria a app em
+#    produção (APP_KEY null, tokens vazios, credenciais ausentes).
+#
+# ⚠️ NÃO usamos `route:cache` — o projeto usa closure na rota
+#    /cron/sync-pending (/health usa controller invokable desde M10)
+#    e route:cache serializa closures como null, quebrando-as.
+#    Mantemos as rotas interpretadas a cada request (custo
+#    negligenciável em concurrency=1 com opcache ativo).
+RUN php artisan view:cache && \
+    php artisan event:cache
+
 
 # ----------------------------------------------------------------------------
 # Estágio runtime — imagem final, enxuta

@@ -44,15 +44,15 @@ class FirestoreServiceProvider extends ServiceProvider
         $this->app->singleton(FirestoreClient::class, function ($app): FirestoreClient {
             $config = $app->make('config');
 
-            $keyFile = GoogleCredentials::fromConfig($config->get('google'))->resolveKeyFile();
-
-            // O construtor do FirestoreClient pode lançar exceções cujo stack
-            // trace incluiria o conteúdo de `$keyFile` (private_key, etc.).
-            // Em produção, esse trace vai para logs/bug tracker — expondo a
-            // chave. Wrap relança RuntimeException com mensagem genérica,
-            // mantendo a original como `previous` para debug local sem vazar
-            // segredo no output público (FIX-7).
+            // resolveKeyFile() e o construtor do FirestoreClient podem lançar
+            // exceções cujo stack trace incluiria o conteúdo de `$keyFile`
+            // (private_key, etc.). Em produção, esse trace vai para logs/bug
+            // tracker — expondo a chave. Wrap relança RuntimeException com
+            // mensagem genérica, mantendo a original como `previous` para
+            // debug local sem vazar segredo no output público (FIX-7).
             try {
+                $keyFile = GoogleCredentials::fromConfig($config->get('google'))->resolveKeyFile();
+
                 return new FirestoreClient([
                     'projectId' => $config->string('google.cloud.project_id'),
                     'database' => $config->string('google.firestore.database_id'),

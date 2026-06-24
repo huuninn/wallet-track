@@ -1,0 +1,135 @@
+# ============================================================================
+# Wallet Track — Cloud Build Pipeline (M10)
+# ----------------------------------------------------------------------------
+# Gatilho: push para branch `main`.
+# Pipeline: build → push → deploy → register webhook → update URLs.
+#
+# Deploy em Cloud Run, região southamerica-east1 (SP, Brasil).
+# Secrets injetados via Secret Manager (volume mount para SA JSON,
+# env vars para tokens/keys).
+#
+# ⚠️ NÃO usamos `php artisan config:cache` — congelaria env() vazios no build,
+#    quebrando os secrets injetados em runtime.
+# ⚠️ NÃO usamos `php artisan route:cache` — closures em rotas não serializam.
+# ============================================================================
+timeout: '1200s'
+
+substitutions:
+  _REGION: 'southamerica-east1'
+  _AR_REPO: 'wallet-track'
+  _SERVICE_NAME: 'wallet-track'
+  _RUN_SA: 'wallet-track-run@wallet-track-499719.iam.gserviceaccount.com'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # ---------------------------------------------------------------------------
+  # Step 1: Build Docker image (usa cache do Artifact Registry)
+  # ---------------------------------------------------------------------------
+  - id: 'build'
+    name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker build \
+          --target runtime \
+          --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${COMMIT_SHA} \
+          --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:latest \
+          .
+
+  # ---------------------------------------------------------------------------
+  # Step 2: Push all tags to Artifact Registry
+  # ---------------------------------------------------------------------------
+  - id: 'push'
+    name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app'
+
+  # ---------------------------------------------------------------------------
+  # Step 3: Deploy to Cloud Run
+  #
+  # Flags conforme especificação técnica §13.4:
+  #   - 512Mi RAM, 1 vCPU, concurrency=1 (bot single-user, evita race
+  #     conditions em estado compartilhado via Firestore).
+  #   - min-instances=0, max-instances=1 (uso pessoal, custo mínimo).
+  #   - no-cpu-throttling + cpu-boost para reduzir latência de cold start.
+  #   - --allow-unauthenticated: endpoint /health e /cron/sync-pending
+  #     públicos; segurança via tokens (webhook secret + cron token).
+  #   - Env vars fixas (build-time) + secrets (runtime via Secret Manager).
+  #   - Volume mount: /secrets/sa.json (SA JSON para Firestore/Sheets).
+  # ---------------------------------------------------------------------------
+  - id: 'deploy'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud run deploy ${_SERVICE_NAME} \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${COMMIT_SHA} \
+          --region=${_REGION} \
+          --platform=managed \
+          --memory=512Mi \
+          --cpu=1 \
+          --concurrency=1 \
+          --min-instances=0 \
+          --max-instances=1 \
+          --timeout=300 \
+          --no-cpu-throttling \
+          --cpu-boost \
+          --allow-unauthenticated \
+          --service-account=${_RUN_SA} \
+          --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_NAME=Wallet Track,LOG_CHANNEL=stderr,LOG_LEVEL=info,SESSION_DRIVER=array,CACHE_STORE=array,QUEUE_CONNECTION=sync,DB_CONNECTION=sqlite,FIRESTORE_DATABASE_ID=wallet-track-db,TELEGRAM_ALLOWED_CHAT_IDS=5672987197,TELESCOPE_ENABLED=false,GOOGLE_SERVICE_ACCOUNT_JSON_PATH=/secrets/sa.json,GOOGLE_CLOUD_PROJECT_ID=${PROJECT_ID},GOOGLE_SHEETS_SPREADSHEET_ID=1rGNN0XOOYwDvMYDpFwU1a2ozQXPhAk8P2l8Xjnk9a14,GOOGLE_SHEETS_SHEET_NAME=Transações,GOOGLE_SHEETS_CATEGORIES_SHEET_NAME=Categorias" \
+          --set-secrets="TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET_TOKEN=telegram-webhook-secret-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET_TOKEN=cron-secret-token:latest,APP_KEY=app-key:latest" \
+          --set-secrets="/secrets/sa.json=google-service-account-json:latest"
+
+  # ---------------------------------------------------------------------------
+  # Step 4: Register Telegram webhook + update Cloud Run env vars
+  #
+  # Segurança: `set +x` impede que tokens apareçam nos logs do Cloud Build.
+  # Usamos curl diretamente (não php artisan) para não bootar Laravel no
+  # ambiente de build, evitando dependências de runtime desnecessárias.
+  # ---------------------------------------------------------------------------
+  - id: 'register-webhook'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set +x  # ⚠️ Não ecoar comandos (tokens em variáveis)
+
+        SVC_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --region=${_REGION} --project=${PROJECT_ID} \
+          --format='value(status.url)')
+
+        echo "Cloud Run URL: ${SVC_URL}"
+
+        BOT_TOKEN=$(gcloud secrets versions access latest \
+          --secret=telegram-bot-token --project=${PROJECT_ID})
+        SECRET_TOKEN=$(gcloud secrets versions access latest \
+          --secret=telegram-webhook-secret-token --project=${PROJECT_ID})
+
+        echo "Registrando webhook no Telegram..."
+        curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+          -d "url=${SVC_URL}/webhook/telegram" \
+          -d "secret_token=${SECRET_TOKEN}" \
+          | tee /dev/stderr
+        echo ""
+
+        echo "Atualizando env vars APP_URL e TELEGRAM_WEBHOOK_URL..."
+        gcloud run services update ${_SERVICE_NAME} \
+          --region=${_REGION} --project=${PROJECT_ID} \
+          --update-env-vars="APP_URL=${SVC_URL},TELEGRAM_WEBHOOK_URL=${SVC_URL}/webhook/telegram" \
+          --quiet
+
+        echo "Webhook registrado e env vars atualizadas."
+
+# ---------------------------------------------------------------------------
+# Imagens a serem armazenadas no Artifact Registry após build
+# ---------------------------------------------------------------------------
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${COMMIT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:latest'

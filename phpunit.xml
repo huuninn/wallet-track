@@ -19,6 +19,7 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
@@ -43,11 +44,18 @@
         <env name="GEMINI_TIMEOUT" value="60"/>
         <!-- M5: credenciais Google. Em testes, o gateway real (CloudFirestoreGateway)
              nunca é instanciado — usamos InMemoryFirestoreGateway. Os valores abaixo
-             existem apenas para satisfazer config('google.*') sem Undefined index. -->
+             existem apenas para satisfazer config('google.*') sem Undefined index.
+             GOOGLE_SERVICE_ACCOUNT_JSON_PATH é não-vazio para que o HealthController
+             (M10) detecte a env var como presente; o FirestoreClient real nunca é
+             instanciado em testes porque o arquivo não existe. -->
         <env name="GOOGLE_CLOUD_PROJECT_ID" value="test-project"/>
         <env name="FIRESTORE_DATABASE_ID" value="test-db"/>
-        <env name="GOOGLE_SERVICE_ACCOUNT_JSON_PATH" value=""/>
+        <env name="GOOGLE_SERVICE_ACCOUNT_JSON_PATH" value="/fake/path/sa.json"/>
         <env name="GOOGLE_SERVICE_ACCOUNT_JSON" value=""/>
+        <!-- M10 (Health Check): TELEGRAM_BOT_TOKEN definido para que o health check
+             detecte a env var como presente. Testes que testam o token vazio usam
+             config(['telegram.bot_token' => null]), não esta env var. -->
+        <env name="TELEGRAM_BOT_TOKEN" value="0000000000:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"/>
         <!-- M6: config Sheets. O GoogleSheetsGateway real nunca é instanciado
              em testes — usamos InMemorySheetsGateway. Os valores abaixo só
              satisfazem config('google.sheets.*') sem Undefined index. -->
