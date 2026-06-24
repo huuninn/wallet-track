@@ -28,9 +28,11 @@ interface ExtractsImage
      * Baixa a imagem do Telegram e extrai a transação.
      *
      * @param  string  $fileId  Identificador do arquivo no Telegram.
+     * @param  list<string>  $labelCatalog  Top-N labels do catálogo do usuário
+     *                                      (display names), para injeção no prompt.
      * @return TransactionData Transação extraída (possivelmente incompleta).
      *
      * @throws ExtractionException Em falha estrutural (API/JSON/não-transação).
      */
-    public function handle(string $fileId): TransactionData;
+    public function handle(string $fileId, array $labelCatalog = []): TransactionData;
 }

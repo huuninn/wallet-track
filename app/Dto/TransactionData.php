@@ -284,7 +284,7 @@ final readonly class TransactionData
      * Labels e confidence NÃO são acessíveis (não são editáveis pelo picker).
      *
      * @param  string  $field  "amount"|"type"|"date"|"description"|"category"|"observations".
-     * @return mixed   Valor bruto (float, string, ou null).
+     * @return mixed Valor bruto (float, string, ou null).
      */
     public function getFieldValue(string $field): mixed
     {

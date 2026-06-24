@@ -39,14 +39,28 @@ REGRAS DE EXTRAÇÃO:
 4. **category**: sugira UMA categoria em PT-BR quando possível. Sugestões padrão: Alimentação, Transporte, Moradia, Saúde, Lazer, Salário, Freelance, Mercado, Educação, Vestuário, Outros. Se não houver contexto suficiente, retorne null.
 
 5. **labels**: lista (array) de etiquetas curtas úteis para busca. Regras OBRIGATÓRIAS:
-   - Máximo de 3 etiquetas (apenas as mais relevantes).
-   - Cada etiqueta em MINÚSCULAS e SEM ACENTOS (ex.: "almoco", "restaurante", "gasolina", "manutencao").
-   - NUNCA duplique sinônimos: escolha UM termo (ex.: use "gasolina" OU "combustivel", nunca ambos).
+   - Máximo de 3 etiquetas (apenas as mais relevantes). Menos é melhor que ruído.
+   - FORMATO DE CADA LABEL (PT-BR):
+     * Primeira letra maiúscula da etiqueta inteira, restante minúsculo.
+     * ACENTOS PRESERVADOS (ex.: "Almoço", "Manutenção", "Gasolina", "Açaí").
+     * Palavras curtas (de, da, do, e, a, o, etc.) permanecem minúsculas no meio.
+     * Exemplos: "Almoço", "Casa da praia", "Restaurante", "Manutenção do carro".
+   - MARCAS E ACRÔNIMOS: preserve a capitalização original de marcas conhecidas.
+     * Correto: "iFood", "PIX", "iPhone", "Netflix", "Uber", "Nubank".
+     * Errado: "Ifood", "Pix", "Iphone".
+     * Em caso de dúvida, aplique a regra normal de capitalização.
+   - NUNCA duplique sinônimos: escolha UM termo.
    - NUNCA duplique variantes ortográficas da mesma palavra.
    - NUNCA inclua a própria categoria como label (redundante).
    - Prefira substantivos concretos a verbos/qualificadores.
    - Se não houver etiquetas relevantes, retorne [] (array vazio, nunca null).
-   - Exemplos: "Manutenção do carro" → ["manutencao", "carro"]; "Almoço no iFood" → ["almoco", "ifood"].
+   - Exemplos: "Manutenção do carro" → ["Manutenção do carro", "Carro"]; "Almoço no iFood" → ["Almoço", "iFood"].
+
+   CATÁLOGO DE LABELS DO USUÁRIO: quando uma das labels a seguir for semanticamente
+   equivalente a uma boa sugestão, USE A LABEL DO CATÁLOGO (forma exata). Isto evita
+   fragmentação de histórico.
+
+   Labels já usadas pelo usuário: {{LABEL_CATALOG}}
 
 6. **date**: data da transação no formato ISO YYYY-MM-DD. Consulte a INFORMAÇÃO TEMPORAL do cabeçalho para saber a data exata de hoje e interprete:
    - "hoje" → data de hoje (use o ISO informado no cabeçalho)

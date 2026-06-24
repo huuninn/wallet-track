@@ -7,6 +7,7 @@ namespace Tests\Feature\Conversation;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
+use App\Actions\SuggestsLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Handlers\CancelarHandler;
 use App\Bot\Messaging\BotMessenger;
@@ -88,7 +89,7 @@ class ConversationRouterTest extends TestCase
 
             public int $callCount = 0;
 
-            public function handle(string $text): TransactionData
+            public function handle(string $text, array $labelCatalog = []): TransactionData
             {
                 $this->callCount++;
                 if ($this->toThrow !== null) {
@@ -110,7 +111,7 @@ class ConversationRouterTest extends TestCase
 
             public int $callCount = 0;
 
-            public function handle(string $fileId): TransactionData
+            public function handle(string $fileId, array $labelCatalog = []): TransactionData
             {
                 $this->callCount++;
                 if ($this->toThrow !== null) {
@@ -161,6 +162,16 @@ class ConversationRouterTest extends TestCase
         int $maxRetries = 3,
         ?StateMachine $stateMachine = null,
     ): ConversationRouter {
+        $suggestLabels = new class implements SuggestsLabels
+        {
+            public array $toReturn = [];
+
+            public function suggest(TransactionData $dto, array $labelCatalog = []): array
+            {
+                return $this->toReturn;
+            }
+        };
+
         return new ConversationRouter(
             stateMachine: $stateMachine ?? new StateMachine,
             messenger: $this->messenger,
@@ -170,6 +181,7 @@ class ConversationRouterTest extends TestCase
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
             suggestCategory: new SuggestCategory($this->firestore),
+            suggestLabels: $suggestLabels,
             sessionTimeoutMinutes: $timeout,
             maxDataRetries: $maxRetries,
         );
@@ -372,6 +384,40 @@ class ConversationRouterTest extends TestCase
         // retry_count incrementou para 4 > max=3 → desiste.
         $this->assertNull($this->currentSession());
         $this->assertCount(1, $this->messenger->errors[self::CHAT_ID] ?? []);
+    }
+
+    public function test_awaiting_data_photo_applies_label_limit(): void
+    {
+        // W1: se o LLM devolver >3 labels na re-extração por foto em
+        // AWAITING_DATA, applyLabelLimit deve ser chamado para truncar
+        // e avisar o usuário. Sem isso, labels excedentes passavam.
+        $partial = TransactionData::fromArray([
+            'description' => 'Compras no mercado',
+            'amount' => 150.00,
+            'type' => 'expense',
+            'date' => '2026-06-15',
+        ]);
+        $this->seedSession(ConversationState::AWAITING_DATA->value, $partial, [
+            'awaiting_field' => 'category',
+            'source' => 'text',
+        ]);
+
+        // LLM na re-extração devolve 5 labels (acima do limite de 3).
+        $this->extractImage->toReturn = TransactionData::fromArray([
+            'description' => 'Compras no mercado',
+            'amount' => 150.00,
+            'type' => 'expense',
+            'category' => 'Mercado',
+            'date' => '2026-06-15',
+            'labels' => ['Mercado', 'Alimentação', 'Compras', 'Extra1', 'Extra2'],
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::photo(self::CHAT_ID, 'photo-file-id'));
+
+        // Aviso "Limitei a 3 labels" deve ter sido enviado.
+        $sentTexts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $limitMessages = array_filter($sentTexts, fn (array $m) => str_contains($m['text'], 'Limitei a'));
+        $this->assertCount(1, $limitMessages, 'Mensagem de limite de labels deve ser enviada');
     }
 
     /*
@@ -1461,8 +1507,6 @@ class ConversationRouterTest extends TestCase
         $this->assertStringContainsString('alterado', $feedbackText);
     }
 
-
-
     public function test_callback_with_edit_picker_message_id_accepted_in_awaiting_confirmation(): void
     {
         // N6: P6 — em AWAITING_CONFIRMATION, callback vindo do picker (Y) é aceito.
@@ -1535,7 +1579,6 @@ class ConversationRouterTest extends TestCase
         $this->assertNull($this->currentSession());
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
     }
-
 
     public function test_double_edit_click_is_idempotent_and_keeps_original_picker(): void
     {
@@ -2252,7 +2295,7 @@ class ConversationRouterTest extends TestCase
     |  3. Botão de Observações no picker
     */
 
-    public function test_edit_removes_keyboard_from_confirmation_message_X(): void
+    public function test_edit_removes_keyboard_from_confirmation_message_x(): void
     {
         // Ao clicar "Editar", o markup do teclado de confirmação de X
         // deve ser removido (markup=null) ANTES de mostrar o picker Y.
@@ -2276,7 +2319,7 @@ class ConversationRouterTest extends TestCase
         $this->assertNull($markups[0]['markup'], 'Keyboard de X deve ser null (removido)');
     }
 
-    public function test_confirm_removes_keyboard_from_X_but_does_not_delete_Y_or_Z(): void
+    public function test_confirm_removes_keyboard_from_x_but_does_not_delete_y_or_z(): void
     {
         // R2: ao clicar "Confirmar": remove markup de X, mas NÃO deleta Y nem Z.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
@@ -2306,7 +2349,7 @@ class ConversationRouterTest extends TestCase
         );
     }
 
-    public function test_cancel_removes_keyboard_from_X_but_does_not_delete_Y_or_Z(): void
+    public function test_cancel_removes_keyboard_from_x_but_does_not_delete_y_or_z(): void
     {
         // R2: ao clicar "Cancelar": remove markup de X, mas NÃO deleta Y nem Z.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
@@ -2584,5 +2627,174 @@ class ConversationRouterTest extends TestCase
         $feedback = $this->messenger->sentTexts[self::CHAT_ID][0]['text'] ?? '';
         $this->assertStringContainsString('—', $feedback, 'Valor null deve exibir "—"');
         $this->assertStringContainsString('NovaCat', $feedback);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M3 — Labels Inteligentes (T3.6)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_extraction_passes_catalog_to_text_extractor(): void
+    {
+        // T3.1: a extração de texto deve receber o catálogo de labels
+        // do Firestore via fetchLabelCatalog().
+        // Seed uma label no Firestore e verifica que o extrator a recebe.
+        $this->firestore->incrementLabelUse('Almoço');
+
+        $capturedCatalog = null;
+        $this->extractText = new class implements ExtractsText
+        {
+            public ?array $capturedCatalog = null;
+
+            public function handle(string $text, array $labelCatalog = []): TransactionData
+            {
+                $this->capturedCatalog = $labelCatalog;
+
+                return TransactionData::fromArray([
+                    'description' => 'Almoço',
+                    'amount' => 50.00,
+                    'type' => 'expense',
+                    'date' => '2026-06-15',
+                ]);
+            }
+        };
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'Almoço 50 reais'));
+
+        $this->assertNotNull($this->extractText->capturedCatalog, 'Catálogo deve ser passado ao extrator');
+        $this->assertContains('Almoço', $this->extractText->capturedCatalog);
+    }
+
+    public function test_extraction_passes_catalog_to_image_extractor(): void
+    {
+        // T3.1: a extração de foto também deve passar o catálogo.
+        $this->firestore->incrementLabelUse('Restaurante');
+
+        $capturedCatalog = null;
+        $this->extractImage = new class implements ExtractsImage
+        {
+            public ?array $capturedCatalog = null;
+
+            public function handle(string $fileId, array $labelCatalog = []): TransactionData
+            {
+                $this->capturedCatalog = $labelCatalog;
+
+                return TransactionData::fromArray([
+                    'description' => 'Jantar',
+                    'amount' => 80.00,
+                    'type' => 'expense',
+                    'date' => '2026-06-15',
+                ]);
+            }
+        };
+
+        $this->makeRouter()->route(ConversationInput::photo(self::CHAT_ID, 'photo-123'));
+
+        $this->assertNotNull($this->extractImage->capturedCatalog, 'Catálogo deve ser passado ao extrator de imagem');
+        $this->assertContains('Restaurante', $this->extractImage->capturedCatalog);
+    }
+
+    public function test_dto_with_many_labels_truncates_to_max_and_notifies(): void
+    {
+        // T3.3: DTO extraído com 5 labels → trunca para 3 + envia aviso.
+        $this->extractText->toReturn = TransactionData::fromArray([
+            'description' => 'Compras variadas',
+            'amount' => 200.00,
+            'type' => 'expense',
+            'date' => '2026-06-15',
+            'labels' => ['Almoço', 'Restaurante', 'Trabalho', 'Viagem', 'Ifood'],
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'Compras 200'));
+
+        // Deve ter enviado aviso de truncamento.
+        $texts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $truncateMessages = array_filter(
+            $texts,
+            fn (array $t): bool => str_contains($t['text'], 'Limitei a'),
+        );
+        $this->assertCount(1, $truncateMessages, 'Deve enviar aviso de truncamento');
+        $this->assertStringContainsString('Limitei a 3 labels', $truncateMessages[0]['text'] ?? '');
+
+        // Confirmação deve ter apenas 3 labels — verifica via draft do DTO.
+        $confirmations = $this->messenger->confirmations[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $confirmations);
+        $dto = $confirmations[0]['draft'];
+        $this->assertCount(3, $dto->labels);
+        $this->assertContains('Almoço', $dto->labels);
+        $this->assertContains('Restaurante', $dto->labels);
+        $this->assertContains('Trabalho', $dto->labels);
+    }
+
+    public function test_validate_labels_with_catalog_corrects_fuzzy_spelling(): void
+    {
+        // T3.2: validateLabels com catálogo deve corrigir "almoco" → "Almoço"
+        // (fuzzy match acima do threshold).
+        // Seed uma label no Firestore para o catálogo.
+        $this->firestore->incrementLabelUse('Almoço');
+
+        $router = $this->makeRouter();
+
+        // Chama validateLabels com "almoco" (sem acento, lowercase).
+        // O catálogo contém "Almoço" — o fuzzy match deve substituir.
+        $result = $router->validateLabels('almoco');
+
+        $this->assertContains('Almoço', $result);
+        $this->assertCount(1, $result);
+    }
+
+    public function test_validate_labels_with_catalog_keeps_unmatched_tokens(): void
+    {
+        // T3.2: token que não tem match no catálogo deve ser mantido
+        // (após LabelFormatter::format).
+        $router = $this->makeRouter();
+
+        $result = $router->validateLabels('pizza, cinema');
+
+        $this->assertContains('Pizza', $result);
+        $this->assertContains('Cinema', $result);
+        $this->assertCount(2, $result);
+    }
+
+    public function test_validate_labels_truncates_to_max(): void
+    {
+        // T3.2: validateLabels deve truncar para max_labels (3) silenciosamente.
+        // Tokens precisam ter ≥ 2 caracteres para não serem filtrados.
+        $router = $this->makeRouter();
+
+        $result = $router->validateLabels('aa, bb, cc, dd, ee');
+
+        $this->assertCount(3, $result, 'Deve truncar para 3 labels');
+    }
+
+    public function test_confirmation_summary_includes_labels_line(): void
+    {
+        // T3.5 (D3=B): o resumo de confirmação deve incluir a linha de labels.
+        $dto = $this->completeDto()->withLabels(['Almoço', 'Restaurante']);
+        $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $dto, [
+            'message_id_confirm' => 5001,
+            'source' => 'text',
+        ]);
+
+        // Re-route via confirm para verificar que o resumo tem labels.
+        // Na verdade, o resumo é construído pelo presentConfirmation.
+        // Vamos verificar o summary diretamente via formatter.
+        $formatter = new TransactionSummaryFormatter;
+        $summary = $formatter->summary($dto);
+
+        $this->assertStringContainsString('🏷️ <b>Labels:</b>', $summary);
+        $this->assertStringContainsString('#Almoço', $summary);
+        $this->assertStringContainsString('#Restaurante', $summary);
+    }
+
+    public function test_confirmation_summary_omits_labels_when_empty(): void
+    {
+        // T3.5: sem labels → não mostra a linha de labels.
+        $dto = $this->completeDto();
+        $formatter = new TransactionSummaryFormatter;
+        $summary = $formatter->summary($dto);
+
+        $this->assertStringNotContainsString('Labels:', $summary);
     }
 }

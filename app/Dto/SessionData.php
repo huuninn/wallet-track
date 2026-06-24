@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Dto;
 
+use App\Enums\ConversationState;
+
 /**
  * DTO imutável representando a porção "mutável" da sessão conversacional
  * (`sessions/{chat_id}`) que o fluxo M7/M8/P7-A precisa persistir a cada
@@ -38,7 +40,7 @@ namespace App\Dto;
  *    isto, helpers que devolvem 0 quando a mensagem é null poluem o doc);
  *  - demais valores (`false`, `0` em `retry_count`, strings, arrays) → preservar.
  *
- * Não impõe validação de `state` contra o enum {@see \App\Enums\ConversationState}
+ * Não impõe validação de `state` contra o enum {@see ConversationState}
  * — o caller (Router/Handler) é responsável por passar valores válidos. Manter
  * o DTO agnóstico evita acoplamento com a máquina de estados e simplifica
  * testes (state pode ser uma string arbitrária em testes unitários do DTO).
@@ -48,18 +50,18 @@ final readonly class SessionData
     /**
      * @param  array<string, mixed>|null  $draft  Draft serializado (snake_case).
      * @param  int|null  $messageIdConfirm  ID da msg de confirmação enviada em
-     *                                       AWAITING_CONFIRMATION (com keyboard
-     *                                       Confirmar/Editar/Cancelar). Âncora
-     *                                       do CT-047: callbacks de keyboards
-     *                                       antigos são rejeitados por message_id
-     *                                       diferente. Veja semântica de `0`/
-     *                                       `null` em "Campos `message_id_*`".
+     *                                      AWAITING_CONFIRMATION (com keyboard
+     *                                      Confirmar/Editar/Cancelar). Âncora
+     *                                      do CT-047: callbacks de keyboards
+     *                                      antigos são rejeitados por message_id
+     *                                      diferente. Veja semântica de `0`/
+     *                                      `null` em "Campos `message_id_*`".
      * @param  int|null  $messageIdEditPicker  ID da msg do picker "✏️ Qual
-     *                                          campo você quer editar?" (P7-A).
-     *                                          Veja semântica de `0`/`null`
-     *                                          em "Campos `message_id_*`".
- * @param  int|null  $messageIdAskEdition  [DEPRECIADO após R2] — não usado para
- *                                          deleção. Mantido para compatibilidade.
+     *                                         campo você quer editar?" (P7-A).
+     *                                         Veja semântica de `0`/`null`
+     *                                         em "Campos `message_id_*`".
+     * @param  int|null  $messageIdAskEdition  [DEPRECIADO após R2] — não usado para
+     *                                         deleção. Mantido para compatibilidade.
      *
      * **Campos `message_id_*` — semântica unificada** (P7-B):
      *  - `null` (default) → omitido do merge via `filterSessionField()`. Use

@@ -258,6 +258,21 @@ class SheetsServiceTest extends TestCase
         $this->assertSame('#vip, promo', $this->gateway->rows()[1][5]);
     }
 
+    public function test_append_transaction_sanitizes_formula_injection_in_labels(): void
+    {
+        // Labels começando com =, +, -, @ devem ser prefixadas com apóstrofo
+        // (CWE-1236: prevenção de CSV/formula injection no Google Sheets).
+        $this->service->appendTransaction(
+            $this->dto(['labels' => ['=SUM(A1:A10)', '+malicious', '-drop', '@mention']]),
+            'fs-formula',
+        );
+
+        $this->assertSame(
+            "'=SUM(A1:A10), '+malicious, '-drop, '@mention",
+            $this->gateway->rows()[1][5],
+        );
+    }
+
     public function test_append_transaction_null_observations_render_as_empty_string(): void
     {
         $this->service->appendTransaction(

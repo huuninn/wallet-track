@@ -111,6 +111,13 @@ final class TransactionSummaryFormatter
 
         $category = $dto->category ?? '—';
         $lines[] = "{$E['category']} <b>{$L['category']}:</b> ".$this->escape($category);
+
+        // Labels (D3=B): exibe como "#Almoço #Restaurante" se houver.
+        $labelsStr = $this->formatLabels($dto->labels);
+        if ($labelsStr !== '') {
+            $lines[] = "🏷️ <b>Labels:</b> {$labelsStr}";
+        }
+
         $lines[] = "{$E['date']} <b>{$L['date']}:</b> ".$this->formatDate($dto->date);
 
         if ($dto->observations !== null && $dto->observations !== '') {
@@ -213,9 +220,9 @@ final class TransactionSummaryFormatter
      * com concordância de gênero PT-BR.
      *
      * @param  string  $field  Nome canônico ("amount"|"type"|...).
-     * @param  mixed   $oldRaw Valor antigo (do DTO antes do withField).
-     * @param  mixed   $newRaw Valor novo (normalizado pelo validador).
-     * @return string  Mensagem HTML (parse_mode=HTML).
+     * @param  mixed  $oldRaw  Valor antigo (do DTO antes do withField).
+     * @param  mixed  $newRaw  Valor novo (normalizado pelo validador).
+     * @return string Mensagem HTML (parse_mode=HTML).
      */
     public function fieldChangeMessage(string $field, mixed $oldRaw, mixed $newRaw): string
     {
@@ -294,7 +301,7 @@ final class TransactionSummaryFormatter
             if ($label === '') {
                 continue;
             }
-            $clean[] = '#'.ltrim($label, '#');
+            $clean[] = '#'.htmlspecialchars(ltrim($label, '#'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         }
 
         return implode(' ', $clean);
@@ -340,7 +347,7 @@ final class TransactionSummaryFormatter
      * Formata um valor bruto de campo para exibição na mensagem de alteração.
      *
      * @param  string  $field  Nome canônico do campo.
-     * @param  mixed   $value  Valor bruto (float, string, ou null).
+     * @param  mixed  $value  Valor bruto (float, string, ou null).
      */
     private function formatFieldValue(string $field, mixed $value): string
     {

@@ -114,7 +114,7 @@ final class SuggestCategory
                 continue;
             }
 
-            $score = $this->similarity($extractedFold, $nameFold);
+            $score = TextNormalizer::similarity($extractedFold, $nameFold);
 
             if ($score > $bestScore) {
                 $bestScore = $score;
@@ -194,7 +194,7 @@ final class SuggestCategory
                 } else {
                     // Considera fuzzy match: keyword próxima a algum token.
                     foreach ($catTokens as $token) {
-                        $bestKeywordScore = max($bestKeywordScore, $this->similarity($kw, $token));
+                        $bestKeywordScore = max($bestKeywordScore, TextNormalizer::similarity($kw, $token));
                     }
                 }
             }
@@ -259,24 +259,5 @@ final class SuggestCategory
             'display' => $display,
             'isNew' => $isNew,
         ];
-    }
-
-    /**
-     * Similaridade textual via Levenshtein normalizado.
-     *
-     * `1 - (distância / max(len_a, len_b))`. Resultado em [0, 1] onde
-     * 1 = strings idênticas (após fold). Edge case: ambas vazias = 1.0
-     * (trivially iguais — evita divisão por zero).
-     */
-    private function similarity(string $a, string $b): float
-    {
-        $maxLen = max(mb_strlen($a), mb_strlen($b));
-        if ($maxLen === 0) {
-            return 1.0;
-        }
-
-        $distance = levenshtein($a, $b);
-
-        return 1.0 - ($distance / $maxLen);
     }
 }

@@ -10,6 +10,8 @@ use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
 use App\Actions\SuggestLabels;
+use App\Actions\SuggestLabelsLLM;
+use App\Actions\SuggestsLabels;
 use App\Actions\SyncSheet;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
@@ -36,10 +38,10 @@ use Tests\Feature\Conversation\ConversationRouterTest;
  *    falharia (Laravel auto-resolveria as interfaces para `new Interface()`
  *    que é erro de classe abstrata).
  *
-     *  - **M8 — Heurística**: {@see SuggestCategory} (ativa no fluxo
-     *    principal) e {@see SuggestLabels} (deprecated — preservada para
-     *    reuso futuro) são singletons que dependem apenas do
-     *    {@see FirestoreService}.
+ *  - **M8 — Heurística**: {@see SuggestCategory} (ativa no fluxo
+ *    principal) e {@see SuggestLabels} (deprecated — preservada para
+ *    reuso futuro) são singletons que dependem apenas do
+ *    {@see FirestoreService}.
  *
  *  - **BotMessenger → NutgramBotMessenger**: a implementação concreta
  *    depende do singleton Nutgram, que por sua vez é registrado no
@@ -78,6 +80,9 @@ class ConversationServiceProvider extends ServiceProvider
         $this->app->singleton(SuggestCategory::class);
         $this->app->singleton(SuggestLabels::class);
 
+        // M4 — Sugestão de labels via LLM dedicado (SuggestsLabels → SuggestLabelsLLM).
+        $this->app->singleton(SuggestsLabels::class, SuggestLabelsLLM::class);
+
         // BotMessenger: depende do Nutgram (resolvido lazy via closure).
         $this->app->singleton(BotMessenger::class, function (Container $app): BotMessenger {
             return new NutgramBotMessenger(
@@ -111,6 +116,7 @@ class ConversationServiceProvider extends ServiceProvider
                 extractImage: $app->make(ExtractsImage::class),
                 syncSheet: $app->make(SyncsSheet::class),
                 suggestCategory: $app->make(SuggestCategory::class),
+                suggestLabels: $app->make(SuggestsLabels::class),
                 sessionTimeoutMinutes: (int) $app->make('config')->get('conversation.timeout_minutes', 15),
                 maxDataRetries: (int) $app->make('config')->get('conversation.max_data_retries', 3),
             );

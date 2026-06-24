@@ -112,7 +112,7 @@ class TextExtractionTest extends TestCase
         $this->assertSame(47.50, $dto->amount);
         $this->assertSame('expense', $dto->type);
         $this->assertSame('Alimentação', $dto->category);
-        $this->assertSame(['almoço', 'restaurante'], $dto->labels);
+        $this->assertSame(['Almoço', 'Restaurante'], $dto->labels);
         // "hoje" → 2025-06-15 (Data normalizada).
         $this->assertSame('2025-06-15', $dto->date);
     }
@@ -421,5 +421,120 @@ class TextExtractionTest extends TestCase
         $this->assertStringContainsString('2025-06-15', $prompt);
         $this->assertStringContainsString('15/06/2025', $prompt);
         $this->assertStringContainsString('INFORMAÇÃO TEMPORAL', $prompt);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M1 — Catálogo de labels no prompt
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * O catálogo de labels do usuário deve ser injetado no systemPrompt via
+     * o placeholder `{{LABEL_CATALOG}}`, para que o LLM prefira labels já
+     * usadas pelo usuário e evite fragmentação de histórico.
+     */
+    public function test_label_catalog_is_injected_into_system_prompt(): void
+    {
+        $fake = new FakeChatCompleter(response: $this->fixture([
+            'description' => 'Almoço',
+            'amount' => 30.00,
+            'type' => 'expense',
+        ]));
+        $this->app->bind(ChatCompleter::class, fn () => $fake);
+
+        $service = $this->app->make(DeepSeekService::class);
+        $service->extract('Paguei 30 reais no almoço', labelCatalog: ['iFood', 'Restaurante', 'Almoço']);
+
+        $prompt = $fake->systemPrompt;
+        $this->assertNotNull($prompt);
+        // O catálogo deve aparecer no prompt (após strtr).
+        $this->assertStringContainsString('iFood, Restaurante, Almoço', $prompt);
+        // Não deve conter a mensagem de catálogo vazio.
+        $this->assertStringNotContainsString('ainda não tem labels anteriores', $prompt);
+    }
+
+    /**
+     * Quando o catálogo está vazio, o prompt deve informar que o usuário
+     * ainda não tem labels anteriores.
+     */
+    public function test_empty_label_catalog_shows_informative_message(): void
+    {
+        $fake = new FakeChatCompleter(response: $this->fixture([
+            'description' => 'Almoço',
+            'amount' => 30.00,
+            'type' => 'expense',
+        ]));
+        $this->app->bind(ChatCompleter::class, fn () => $fake);
+
+        $service = $this->app->make(DeepSeekService::class);
+        $service->extract('Paguei 30 reais no almoço', labelCatalog: []);
+
+        $prompt = $fake->systemPrompt;
+        $this->assertStringContainsString('ainda não tem labels anteriores', $prompt);
+    }
+
+    /**
+     * Labels retornadas pelo LLM devem ser capitalizadas via LabelFormatter
+     * como defesa em profundidade. Ex.: o LLM devolve labels em lowercase,
+     * o LabelFormatter as capitaliza (P1) e preserva marcas (P7).
+     */
+    public function test_labels_are_capitalized_via_label_formatter(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Almoço no iFood',
+            'amount' => 32.00,
+            'type' => 'expense',
+            'labels' => ['almoco', 'ifood'],
+        ]));
+
+        $dto = $service->extract('Paguei 32,00 no almoço do iFood');
+
+        // "almoco" → "Almoco" (P1), "ifood" → "Ifood" (P1 — sem maiúsculas,
+        // não é tratado como marca; a marca "iFood" só seria preservada se o
+        // LLM devolver com capitalização mista).
+        $this->assertSame(['Almoco', 'Ifood'], $dto->labels);
+    }
+
+    /**
+     * O LabelFormatter preserva marcas com capitalização mista (P7).
+     * Se o LLM devolver "iFood" (com 'F' maiúsculo), deve ser preservado.
+     */
+    public function test_label_formatter_preserves_mixed_case_brands(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Almoço no iFood',
+            'amount' => 32.00,
+            'type' => 'expense',
+            'labels' => ['iFood', 'PIX'],
+        ]));
+
+        $dto = $service->extract('Paguei 32,00 no almoço do iFood via PIX');
+
+        // "iFood" tem capitalização mista → P7 preserva.
+        // "PIX" é all-caps com 3 caracteres → P7b preserva como acrônimo.
+        $this->assertSame(['iFood', 'PIX'], $dto->labels);
+    }
+
+    /**
+     * O LLM pode devolver labels visualmente diferentes mas com mesmo fold
+     * (ex.: "Almoço" e "almoco"). Após LabelFormatter ambas viram "Almoço" e
+     * "Almoco" — strings diferentes mas mesmo fold. A deduplicação fold-insensitive
+     * deve manter apenas a primeira ocorrência.
+     */
+    public function test_labels_are_deduplicated_by_fold(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Almoço no restaurante',
+            'amount' => 47.50,
+            'type' => 'expense',
+            'labels' => ['Almoço', 'almoco', 'Restaurante', 'restaurante'],
+        ]));
+
+        $dto = $service->extract('Almoço de 47,50 no restaurante');
+
+        // Após LabelFormatter: "Almoço", "Almoco", "Restaurante", "Restaurante"
+        // Após dedup por fold: "Almoço" e "Restaurante" (primeiros de cada grupo).
+        $this->assertSame(['Almoço', 'Restaurante'], $dto->labels);
     }
 }

@@ -30,9 +30,11 @@ interface ExtractsText
      * Extrai uma transação do texto livre.
      *
      * @param  string  $text  Texto enviado pelo usuário (já normalizado).
+     * @param  list<string>  $labelCatalog  Top-N labels do catálogo do usuário
+     *                                      (display names), para injeção no prompt.
      * @return TransactionData Transação extraída (possivelmente incompleta).
      *
      * @throws ExtractionException Em falha estrutural (API/JSON/campos críticos).
      */
-    public function handle(string $text): TransactionData;
+    public function handle(string $text, array $labelCatalog = []): TransactionData;
 }

@@ -54,7 +54,8 @@ class SuggestLabelsTest extends TestCase
 
     public function test_history_takes_priority_over_keywords(): void
     {
-        // Histórico: "ifood" (3x) e "restaurante" (2x).
+        // Histórico: "Ifood" (3x) e "Restaurante" (2x).
+        // incrementLabelUse agora grava com LabelFormatter::format() (P1 — Sentence Case).
         for ($i = 0; $i < 3; $i++) {
             $this->firestore->incrementLabelUse('ifood');
         }
@@ -66,15 +67,15 @@ class SuggestLabelsTest extends TestCase
         // (vem primeiro no array retornado).
         $result = $this->action->suggest('Comi pizza no iFood', 'Alimentação');
 
-        $this->assertSame(['ifood', 'restaurante'], array_slice($result, 0, 2));
-        $ifoodIdx = array_search('ifood', $result, true);
+        $this->assertSame(['Ifood', 'Restaurante'], array_slice($result, 0, 2));
+        $ifoodIdx = array_search('Ifood', $result, true);
         $pizzaIdx = array_search('pizza', $result, true);
         $this->assertIsInt($ifoodIdx);
         $this->assertIsInt($pizzaIdx);
         $this->assertLessThan(
             $pizzaIdx,
             $ifoodIdx,
-            'ifood (histórico) deve vir antes de pizza (keyword)',
+            'Ifood (histórico) deve vir antes de pizza (keyword)',
         );
     }
 
@@ -98,6 +99,7 @@ class SuggestLabelsTest extends TestCase
     public function test_keywords_added_after_history_when_slots_available(): void
     {
         // Histórico: 2 labels (cobra 2 vagas).
+        // incrementLabelUse agora grava com LabelFormatter::format() (P1 — Sentence Case).
         $this->firestore->incrementLabelUse('ifood');
         $this->firestore->incrementLabelUse('restaurante');
 
@@ -108,9 +110,9 @@ class SuggestLabelsTest extends TestCase
         );
 
         $this->assertCount(5, $result);
-        // Primeiros 2: do histórico.
-        $this->assertSame('ifood', $result[0]);
-        $this->assertSame('restaurante', $result[1]);
+        // Primeiros 2: do histórico (capitalizados pelo LabelFormatter).
+        $this->assertSame('Ifood', $result[0]);
+        $this->assertSame('Restaurante', $result[1]);
         // Demais: das keywords (em ordem FIFO).
         $this->assertContains('comi', $result);
         $this->assertContains('pizza', $result);
@@ -121,19 +123,19 @@ class SuggestLabelsTest extends TestCase
 
     public function test_dedupes_against_existing_labels(): void
     {
-        // Histórico: ifood.
+        // Histórico: Ifood, Restaurante (capitalizados pelo LabelFormatter).
         $this->firestore->incrementLabelUse('ifood');
         $this->firestore->incrementLabelUse('restaurante');
 
-        // existingLabels já contém "ifood" — não deve ser sugerido de novo.
+        // existingLabels já contém "Ifood" — não deve ser sugerido de novo.
         $result = $this->action->suggest(
             'Comi pizza no ifood',
             'Alimentação',
-            existingLabels: ['ifood'],
+            existingLabels: ['Ifood'],
         );
 
-        $this->assertNotContains('ifood', $result);
-        $this->assertContains('restaurante', $result);
+        $this->assertNotContains('Ifood', $result);
+        $this->assertContains('Restaurante', $result);
     }
 
     public function test_dedupes_against_existing_labels_case_insensitive(): void
@@ -154,6 +156,7 @@ class SuggestLabelsTest extends TestCase
     {
         // CT-021a: existingLabels: ['almoco'] (já folded),
         // descrição com "Almoço" → não duplica.
+        // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood".
         $this->firestore->incrementLabelUse('ifood');
 
         $result = $this->action->suggest(
@@ -164,8 +167,8 @@ class SuggestLabelsTest extends TestCase
 
         // "almoco" já existe como label → não deve ser sugerido.
         $this->assertNotContains('almoco', $result);
-        // "ifood" do histórico deve aparecer.
-        $this->assertContains('ifood', $result);
+        // "Ifood" do histórico deve aparecer (capitalizado pelo LabelFormatter).
+        $this->assertContains('Ifood', $result);
     }
 
     public function test_dedupes_keyword_against_existing_label(): void
@@ -195,12 +198,13 @@ class SuggestLabelsTest extends TestCase
 
     public function test_does_not_invent_labels_with_empty_description(): void
     {
+        // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood".
         $this->firestore->incrementLabelUse('ifood');
 
         // description vazia → sem keywords.
         $result = $this->action->suggest('', 'Alimentação');
 
-        $this->assertSame(['ifood'], $result);
+        $this->assertSame(['Ifood'], $result);
     }
 
     public function test_min_token_length_3_filters_short_keywords(): void
@@ -222,6 +226,7 @@ class SuggestLabelsTest extends TestCase
     {
         // CT-019: histórico "Alimentação" contém #ifood e #restaurante.
         // Nova transação "Paguei R$ 32,00 na pizza do iFood" → sugere os 2 primeiros.
+        // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood", "Restaurante".
         for ($i = 0; $i < 3; $i++) {
             $this->firestore->incrementLabelUse('ifood');
         }
@@ -231,9 +236,9 @@ class SuggestLabelsTest extends TestCase
 
         $result = $this->action->suggest('Paguei 32,00 na pizza do iFood', 'Alimentação');
 
-        // iFood (3) e restaurante (2) têm prioridade do histórico.
-        $this->assertSame('ifood', $result[0]);
-        $this->assertSame('restaurante', $result[1]);
+        // Ifood (3) e Restaurante (2) têm prioridade do histórico.
+        $this->assertSame('Ifood', $result[0]);
+        $this->assertSame('Restaurante', $result[1]);
     }
 
     public function test_ct_020_scenario(): void
@@ -258,6 +263,7 @@ class SuggestLabelsTest extends TestCase
         // tem poder de edição. Aqui verificamos que as sugestões iniciais NÃO
         // bloqueiam edição futura: o que SuggestLabels devolve é o que
         // entra no draft, e o ConversationRouter permite ao usuário editar.
+        // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood".
         $this->firestore->incrementLabelUse('ifood');
 
         $suggested = $this->action->suggest(
@@ -265,14 +271,14 @@ class SuggestLabelsTest extends TestCase
             'Alimentação',
         );
 
-        $this->assertContains('ifood', $suggested);
+        $this->assertContains('Ifood', $suggested);
         // japonês e domingo também aparecem das keywords.
         $this->assertContains('japones', $suggested);
         $this->assertContains('domingo', $suggested);
 
         // Simulação da edição: usuário mantém só #japones e #domingo.
         $finalLabels = ['japones', 'domingo'];
-        $this->assertNotContains('ifood', $finalLabels, 'Edição removeu ifood');
+        $this->assertNotContains('Ifood', $finalLabels, 'Edição removeu Ifood');
     }
 
     public function test_history_limit_10_applied(): void

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Conversation;
 
+use App\Actions\SuggestsLabels;
 use App\Bot\Handlers\NovaHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
@@ -14,6 +15,7 @@ use App\Enums\WizardStep;
 use App\Services\Google\FirestoreService;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Orquestrador do wizard `/nova` (M9.3 / T-017).
@@ -97,7 +99,7 @@ final class WizardHandler
             ."\n\nTipo: %type%\nValor: %amount%\nDescrição: %description%\nCategoria: %category%\n\n"
             .'Adicione <b>labels separadas por vírgula</b> (opcional):'
             ."\nex: <i>almoco, trabalho, viagem</i>\n\n"
-            .'Envie <code>-</code> ou <code>pular</code> para continuar sem labels.',
+            .'Envie <code>-</code> ou <code>pular</code> e eu sugiro labels automaticamente.',
     ];
 
     public function __construct(
@@ -105,6 +107,7 @@ final class WizardHandler
         private readonly FirestoreService $firestore,
         private readonly BotMessenger $messenger,
         private readonly TransactionSummaryFormatter $formatter,
+        private readonly SuggestsLabels $suggestLabels,
     ) {}
 
     /**
@@ -173,6 +176,30 @@ final class WizardHandler
             $this->handleInvalidWizardResponse($chatId, $session, $step, $draft, $field, $raw);
 
             return;
+        }
+
+        // M4 — LABELS com skip → sugere via LLM.
+        // Se o usuário pulou a etapa de labels (input foi "pular"/"-"/etc.),
+        // validateLabels retorna []. Nesse caso, chamamos o LLM para sugerir
+        // labels automaticamente baseadas no contexto da transação.
+        if ($step === WizardStep::LABELS && $normalized === [] && $this->isSkipIntent($raw)) {
+            $catalog = $this->router->fetchLabelCatalog();
+            $this->messenger->sendText($chatId, (string) config('labels.wizard_loading_message'));
+
+            try {
+                $suggested = $this->suggestLabels->suggest($draft, $catalog);
+            } catch (Throwable $e) {
+                Log::warning('WizardHandler: suggestLabels falhou — seguindo sem labels', [
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+                $suggested = [];
+            }
+
+            if ($suggested !== []) {
+                $normalized = $suggested;
+            }
+            // Se $suggested é vazio, mantemos $normalized = [] (sem labels).
         }
 
         // Aplica ao draft (DTO).
@@ -404,10 +431,34 @@ final class WizardHandler
             'amount' => 'Use o formato <code>47,50</code> ou <code>R$ 47,50</code> (valor precisa ser maior que zero).',
             'description' => 'Descreva brevemente a transação (mín. 2 caracteres).',
             'category' => 'Informe o nome da categoria (ex.: <b>Alimentação</b>).',
-            'labels' => 'Separe as labels por vírgula, ou envie <code>-</code> / <code>pular</code> para nenhuma.',
+            'labels' => 'Separe as labels por vírgula, ou envie <code>-</code> / <code>pular</code> para sugestão automática.',
             default => 'Verifique o valor informado e tente de novo.',
         };
 
         return "⚠️ Valor inválido. {$hint}\n\n(Tentativa {$attempt} de {$max}.)";
+    }
+
+    /**
+     * Indica se o input do usuário é uma intenção de "pular" a etapa de labels.
+     *
+     * O input já passou por validateLabels (que retornou [] para keywords de skip),
+     * mas precisamos distinguir entre "o usuário digitou algo que foi filtrado
+     * para vazio" vs. "o usuário explicitamente pediu para pular".
+     *
+     * Keywords reconhecidas (case-insensitive, trimmed):
+     *  - "pular", "skip", "-", "nenhum", "nenhuma" (já normalizadas pelo validador)
+     *  - string vazia após trim (usuário enviou só espaços)
+     */
+    private function isSkipIntent(string $raw): bool
+    {
+        $cleaned = trim($raw);
+
+        if ($cleaned === '') {
+            return true;
+        }
+
+        $keyword = mb_strtolower($cleaned);
+
+        return in_array($keyword, ['pular', 'skip', 'nenhuma', 'nenhum', '-'], true);
     }
 }

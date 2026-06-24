@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Console;
 
+use App\Console\Commands\RemoveOriginColumn;
 use App\Services\Google\InMemorySheetsGateway;
 use App\Services\Google\SheetsGateway;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -18,7 +19,7 @@ use Tests\TestCase;
  *
  * Roda isolado: vendor/bin/phpunit --filter RemoveOriginColumnTest
  */
-#[CoversClass(\App\Console\Commands\RemoveOriginColumn::class)]
+#[CoversClass(RemoveOriginColumn::class)]
 class RemoveOriginColumnTest extends TestCase
 {
     private InMemorySheetsGateway $gateway;

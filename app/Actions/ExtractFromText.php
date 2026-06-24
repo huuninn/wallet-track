@@ -36,8 +36,8 @@ final class ExtractFromText implements ExtractsText
      *
      * @throws ExtractionException Em falha estrutural (API/JSON/campos críticos).
      */
-    public function handle(string $text): TransactionData
+    public function handle(string $text, array $labelCatalog = []): TransactionData
     {
-        return $this->service->extract($text);
+        return $this->service->extract($text, $labelCatalog);
     }
 }

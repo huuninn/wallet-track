@@ -7,6 +7,7 @@ namespace App\Conversation;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
+use App\Actions\SuggestsLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
@@ -15,6 +16,7 @@ use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Exceptions\ExtractionException;
 use App\Services\Google\FirestoreService;
+use App\Support\LabelFormatter;
 use App\Support\TextNormalizer;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
@@ -138,6 +140,20 @@ final class ConversationRouter
      */
     private ?WizardHandler $wizardHandler = null;
 
+    /**
+     * Cache em memória do catálogo de labels (top-N do usuário).
+     *
+     * Populado na primeira chamada de {@see fetchLabelCatalog()} e
+     * reutilizado em chamadas subsequentes dentro do mesmo request HTTP.
+     * O catálogo não muda durante um request (labels são criadas apenas
+     * no confirm, que encerra este Router).
+     *
+     * `null` = ainda não carregado (não tentou Fetch).
+     *
+     * @var list<string>|null
+     */
+    private ?array $cachedLabelCatalog = null;
+
     public function __construct(
         private readonly StateMachine $stateMachine,
         private readonly BotMessenger $messenger,
@@ -147,6 +163,7 @@ final class ConversationRouter
         private readonly ExtractsImage $extractImage,
         private readonly SyncsSheet $syncSheet,
         private readonly SuggestCategory $suggestCategory,
+        private readonly SuggestsLabels $suggestLabels,
         int $sessionTimeoutMinutes,
         int $maxDataRetries,
     ) {
@@ -170,6 +187,7 @@ final class ConversationRouter
             firestore: $this->firestore,
             messenger: $this->messenger,
             formatter: $this->formatter,
+            suggestLabels: $this->suggestLabels,
         );
     }
 
@@ -286,8 +304,9 @@ final class ConversationRouter
 
         if ($input->kind === InputKind::Photo) {
             // Foto pode trazer campos que faltavam — extrai e mescla.
+            $catalog = $this->fetchLabelCatalog();
             try {
-                $extracted = $this->extractImage->handle((string) $input->photoFileId);
+                $extracted = $this->extractImage->handle((string) $input->photoFileId, $catalog);
             } catch (ExtractionException $e) {
                 $this->messenger->notifyError(
                     $chatId,
@@ -298,6 +317,7 @@ final class ConversationRouter
             }
 
             $merged = $this->mergeDrafts($draft, $extracted);
+            $merged = $this->applyLabelLimit($chatId, $merged);
 
             if ($merged->isComplete()) {
                 $this->presentConfirmation($chatId, $merged, $session['source'] ?? 'image');
@@ -963,8 +983,10 @@ final class ConversationRouter
      */
     private function handleTextExtraction(string $chatId, string $text, string $source): void
     {
+        $catalog = $this->fetchLabelCatalog();
+
         try {
-            $dto = $this->extractText->handle($text);
+            $dto = $this->extractText->handle($text, $catalog);
         } catch (ExtractionException $e) {
             $this->messenger->notifyError(
                 $chatId,
@@ -974,6 +996,8 @@ final class ConversationRouter
             return;
         }
 
+        $dto = $this->applyLabelLimit($chatId, $dto);
+
         $this->routeAfterExtraction($chatId, $dto, $source);
     }
 
@@ -982,8 +1006,10 @@ final class ConversationRouter
      */
     private function handlePhotoExtraction(string $chatId, string $fileId, string $source): void
     {
+        $catalog = $this->fetchLabelCatalog();
+
         try {
-            $dto = $this->extractImage->handle($fileId);
+            $dto = $this->extractImage->handle($fileId, $catalog);
         } catch (ExtractionException $e) {
             $reason = $e->reason;
             $message = $reason === ExtractionException::NOT_A_TRANSACTION
@@ -993,6 +1019,8 @@ final class ConversationRouter
 
             return;
         }
+
+        $dto = $this->applyLabelLimit($chatId, $dto);
 
         $this->routeAfterExtraction($chatId, $dto, $source);
     }
@@ -1009,6 +1037,37 @@ final class ConversationRouter
         }
 
         $this->enterAwaitingData($chatId, $dto, $source);
+    }
+
+    /**
+     * Se o DTO tem mais de max_labels labels, trunca e avisa o usuário.
+     *
+     * Chamado logo após a extração (antes de routeAfterExtraction) para
+     * garantir que o fluxo de confirmação nunca receba mais labels do que
+     * o limite configurado. Labels extras são descartadas e o usuário é
+     * avisado com uma mensagem amigável.
+     */
+    private function applyLabelLimit(string $chatId, TransactionData $dto): TransactionData
+    {
+        $max = (int) config('labels.max_labels', 3);
+        if (count($dto->labels) <= $max) {
+            return $dto;
+        }
+
+        $kept = array_slice($dto->labels, 0, $max);
+        $dto = $dto->withLabels($kept);
+
+        $escaped = array_map(
+            fn (string $l): string => htmlspecialchars($l, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+            $kept,
+        );
+        $keptStr = implode(', ', $escaped);
+        $this->messenger->sendText(
+            $chatId,
+            "ℹ️ Limitei a {$max} labels: {$keptStr}",
+        );
+
+        return $dto;
     }
 
     /*
@@ -1495,7 +1554,7 @@ final class ConversationRouter
     }
 
     /**
-     * Valida labels do wizard `/nova` (M9.3 / T-016).
+     * Valida labels do wizard `/nova` (M9.3 / T-016) e do fluxo conversacional (M3).
      *
      * Aceita string com labels separadas por vírgula (ex.: `almoço, trabalho,
      * #fds`). Regras:
@@ -1503,17 +1562,22 @@ final class ConversationRouter
      *  - "pular" / "skip" / "-" / string vazia → array vazio (rótulo sem labels);
      *  - cada token: trim, remove prefixo `#`, filtra < 2 caracteres (mínimo
      *    útil para uma label);
+     *  - fuzzy match contra catálogo (se fornecido): substitui tokens por versões
+     *    canônicas do catálogo quando a similaridade é >= threshold;
+     *  - aplica {@see LabelFormatter::format()} (P1 + P7) em todas as labels;
      *  - deduplica (case-insensitive) preservando a primeira ocorrência;
+     *  - trunca para o máximo configurado (ex.: 3) silenciosamente;
      *  - reindexa com `array_values` para manter a invariante `list<string>`.
      *
      * Retorna SEMPRE um array (nunca null) porque labels são opcionais — o
      * "pular" é uma resposta válida. O caller (WizardHandler) distingue
-     * `[]` (sem labels) de `null` apenas para inputs realmente malformados
-     * (que aqui nunca acontecem — qualquer string produz um array filtrado).
+     * `[]` (sem labels) de erro.
      *
+     * @param  list<string>  $labelCatalog  Catálogo top-N do usuário (opcional).
+     *                                      Se vazio, busca internamente via fetchLabelCatalog().
      * @return list<string>
      */
-    private function validateLabels(string $raw): array
+    public function validateLabels(string $raw, array $labelCatalog = []): array
     {
         $cleaned = trim($raw);
         $keyword = mb_strtolower($cleaned);
@@ -1521,6 +1585,11 @@ final class ConversationRouter
         // Atalhos PT-BR para "não quero labels" — sempre array vazio.
         if ($keyword === '' || in_array($keyword, ['pular', 'skip', 'nenhuma', 'nenhum', '-'], true)) {
             return [];
+        }
+
+        // Se não recebeu catálogo, busca internamente.
+        if ($labelCatalog === []) {
+            $labelCatalog = $this->fetchLabelCatalog();
         }
 
         $tokens = explode(',', $cleaned);
@@ -1536,6 +1605,18 @@ final class ConversationRouter
                 continue;
             }
 
+            // Fuzzy match contra catálogo: se o token tem similaridade
+            // >= threshold com uma label do catálogo, usa a versão canônica.
+            $matched = $this->matchCatalog($token, $labelCatalog);
+            $token = $matched ?? $token;
+
+            // Aplica formatação canônica (P1 + P7).
+            $token = LabelFormatter::format($token);
+
+            if ($token === '') {
+                continue;
+            }
+
             $key = TextNormalizer::fold($token);
             if (isset($seen[$key])) {
                 continue;
@@ -1545,7 +1626,99 @@ final class ConversationRouter
             $labels[] = $token;
         }
 
+        // Trunca para o máximo configurado (P8/D1=B).
+        $max = (int) config('labels.max_labels', 3);
+        if (count($labels) > $max) {
+            $labels = array_slice($labels, 0, $max);
+        }
+
         return array_values($labels);
+    }
+
+    /**
+     * Busca o catálogo top-N de labels do usuário via Firestore.
+     *
+     * O resultado é cacheado em memória (propriedade `$cachedLabelCatalog`)
+     * para evitar múltiplos queries ao Firestore dentro do mesmo request HTTP.
+     * O catálogo é imutável durante a vida de um request (labels são criadas
+     * apenas no confirm, que encerra este Router).
+     *
+     * **Tornado público (M4)** para reuso pelo {@see WizardHandler}, que
+     * também precisa do catálogo para sugestão LLM quando o usuário pula a
+     * etapa de labels. Evita duplicar o método em duas classes.
+     *
+     * Best-effort: se o Firestore estiver indisponível, loga o warning
+     * e retorna array vazio — a extração e validação continuam sem
+     * catálogo (apenas sem benefício do fuzzy match).
+     *
+     * @return list<string> Display names das top-N labels do usuário.
+     */
+    public function fetchLabelCatalog(): array
+    {
+        if ($this->cachedLabelCatalog !== null) {
+            return $this->cachedLabelCatalog;
+        }
+
+        try {
+            $n = (int) config('labels.catalog_top_n', 15);
+            $docs = $this->firestore->getTopLabels($n);
+        } catch (Throwable $e) {
+            Log::warning('ConversationRouter: getTopLabels falhou — extraindo sem catálogo', [
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+            $this->cachedLabelCatalog = [];
+
+            return [];
+        }
+
+        $catalog = [];
+        foreach ($docs as $row) {
+            $name = (string) ($row['data']['name'] ?? $row['id']);
+            if ($name !== '') {
+                $catalog[] = $name;
+            }
+        }
+
+        $this->cachedLabelCatalog = $catalog;
+
+        return $catalog;
+    }
+
+    /**
+     * Tenta encontrar a label do catálogo mais similar ao token (fuzzy match).
+     *
+     * Usa similaridade de Levenshtein normalizada (idêntica à do
+     * {@see SuggestCategory}) com threshold configurável. Se a melhor
+     * similaridade for >= threshold, devolve o nome canônico do catálogo;
+     * caso contrário, devolve null (o token é tratado como label nova).
+     *
+     * @param  string  $token  Token digitado pelo usuário.
+     * @param  list<string>  $catalog  Catálogo de labels existentes.
+     * @return string|null Nome canônico do catálogo, ou null se nenhum match.
+     */
+    private function matchCatalog(string $token, array $catalog): ?string
+    {
+        if ($catalog === []) {
+            return null;
+        }
+
+        $threshold = (float) config('labels.fuzzy_threshold', 0.85);
+        $tokenFold = TextNormalizer::fold($token);
+
+        $best = null;
+        $bestScore = 0.0;
+
+        foreach ($catalog as $candidate) {
+            $candidateFold = TextNormalizer::fold($candidate);
+            $score = TextNormalizer::similarity($tokenFold, $candidateFold);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $candidate;
+            }
+        }
+
+        return ($best !== null && $bestScore >= $threshold) ? $best : null;
     }
 
     /*

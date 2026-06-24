@@ -127,7 +127,6 @@ interface BotMessenger
      * caso de falha (a sessão/UX não pode quebrar por causa de um erro
      * de rede).
      *
-     * @param  int|string  $chatId
      * @param  int  $messageId  ID da mensagem original
      * @param  array<mixed>|null  $markup  Keyboard de substituição, ou null para remover
      */

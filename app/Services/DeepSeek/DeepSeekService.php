@@ -9,6 +9,7 @@ use App\Exceptions\ExtractionException;
 use App\Services\Parsing\AmountParser;
 use App\Services\Parsing\DateNormalizer;
 use App\Services\Parsing\TypeClassifier;
+use App\Support\LabelFormatter;
 use Throwable;
 
 /**
@@ -30,8 +31,6 @@ use Throwable;
  */
 final class DeepSeekService
 {
-    private ?string $systemPrompt = null;
-
     public function __construct(
         private readonly ChatCompleter $completer,
         private readonly AmountParser $amountParser,
@@ -42,7 +41,7 @@ final class DeepSeekService
     /**
      * @throws ExtractionException Quando a extração é estruturalmente inviável.
      */
-    public function extract(string $text): TransactionData
+    public function extract(string $text, array $labelCatalog = []): TransactionData
     {
         if (trim($text) === '') {
             throw new ExtractionException(
@@ -51,7 +50,7 @@ final class DeepSeekService
             );
         }
 
-        $content = $this->callCompleter($text);
+        $content = $this->callCompleter($text, $labelCatalog);
 
         $data = $this->decodeJson($content);
 
@@ -61,6 +60,16 @@ final class DeepSeekService
         $data['type'] = $this->typeClassifier->classify($data['type'] ?? null, $text);
 
         $dto = TransactionData::fromArray($data);
+
+        // Defesa em profundidade: o prompt pede capitalização, mas o LLM pode ignorar.
+        $capitalizedLabels = array_map(
+            fn (string $l): string => LabelFormatter::format($l),
+            $dto->labels,
+        );
+
+        // Deduplica por fold — ex.: o LLM pode devolver ["Almoço", "almoco"].
+        $deduped = LabelFormatter::deduplicate($capitalizedLabels);
+        $dto = $dto->withLabels($deduped);
 
         $this->validate($dto);
 
@@ -75,11 +84,11 @@ final class DeepSeekService
      *
      * @throws ExtractionException
      */
-    private function callCompleter(string $text): string
+    private function callCompleter(string $text, array $labelCatalog = []): string
     {
         try {
             return $this->completer->complete(
-                systemPrompt: $this->systemPrompt(),
+                systemPrompt: $this->systemPrompt($labelCatalog),
                 userMessages: [['role' => 'user', 'content' => $text]],
             );
         } catch (ExtractionException $e) {
@@ -147,30 +156,42 @@ final class DeepSeekService
     }
 
     /**
-     * Carrega (uma única vez) o prompt do sistema de resources/prompts/,
-     * prefixando um cabeçalho temporal com a data de hoje.
+     * Carrega o prompt do sistema de resources/prompts/ prefixando um
+     * cabeçalho temporal com a data de hoje e interpolando o catálogo de
+     * labels do usuário no placeholder `{{LABEL_CATALOG}}`.
      *
      * O cabeçalho temporal é essencial para que o LLM interprete corretamente
      * expressões relativas ("hoje", "ontem", "anteontem") sem alucinar datas.
      * É defesa em profundidade: o DateNormalizer também trata esses literais,
      * mas informar o LLM evita erros na própria extração.
+     *
+     * O catálogo de labels é injetado via `strtr()` no placeholder literal
+     * `{{LABEL_CATALOG}}` presente no prompt base (nowdoc, sem interpolação
+     * PHP). Labels vazias (catálogo vazio) são substituídas por uma mensagem
+     * informativa "(o usuário ainda não tem labels anteriores)".
+     *
+     * @param  list<string>  $labelCatalog  Top-N labels do usuário (display names).
      */
-    private function systemPrompt(): string
+    private function systemPrompt(array $labelCatalog): string
     {
-        return $this->systemPrompt ??= (function (): string {
-            $now = now();
-            $todayPtBr = $now->format('d/m/Y');
-            $todayIso = $now->toDateString();
+        $now = now();
+        $todayPtBr = $now->format('d/m/Y');
+        $todayIso = $now->toDateString();
 
-            $header = <<<HEADER
+        $header = <<<HEADER
 INFORMAÇÃO TEMPORAL: Hoje é {$todayPtBr} (formato ISO: {$todayIso}).
 Use esta data como referência para interpretar expressões temporais relativas ("hoje" = {$todayIso}, "ontem" = dia anterior, "anteontem" = dois dias antes).
 HEADER;
 
-            // @phpstan-ignore-next-line (require de arquivo que retorna string)
-            $base = (string) require resource_path('prompts/text-extraction.php');
+        // @phpstan-ignore-next-line (require de arquivo que retorna string)
+        $base = (string) require resource_path('prompts/text-extraction.php');
 
-            return $header."\n\n".$base;
-        })();
+        $catalogStr = $labelCatalog === []
+            ? '(o usuário ainda não tem labels anteriores)'
+            : implode(', ', $labelCatalog);
+
+        $body = strtr($base, ['{{LABEL_CATALOG}}' => $catalogStr]);
+
+        return $header."\n\n".$body;
     }
 }

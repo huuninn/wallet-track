@@ -6,6 +6,7 @@ namespace App\Services\Google;
 
 use App\Dto\SessionData;
 use App\Dto\TransactionData;
+use App\Support\LabelFormatter;
 use App\Support\TextNormalizer;
 
 /**
@@ -696,14 +697,17 @@ final class FirestoreService
      */
     public function incrementLabelUse(string $name): void
     {
-        $id = $this->normalizeLabelName($name);
+        // P6 — Backfill lazy: sempre grava o `name` no formato canônico capitalizado.
+        $formattedName = LabelFormatter::format($name);
+
+        $id = $this->normalizeLabelName($formattedName);
         $now = $this->nowIso();
 
-        $this->gateway->transaction(function (FirestoreGateway $gw) use ($id, $name, $now): void {
+        $this->gateway->transaction(function (FirestoreGateway $gw) use ($id, $formattedName, $now): void {
             $current = $gw->getDocument(FirestoreService::COLLECTION_LABELS, $id) ?? [];
 
             $gw->mergeDocument(FirestoreService::COLLECTION_LABELS, $id, [
-                'name' => $name,
+                'name' => $formattedName,
                 'use_count' => (int) ($current['use_count'] ?? 0) + 1,
                 'last_used_at' => $now,
             ]);

@@ -6,6 +6,7 @@
 /vendor
 /node_modules
 .env
+.env.bak
 .env.backup
 .env.local
 .env.production

@@ -114,7 +114,7 @@ class ImageExtractionTest extends TestCase
         $this->assertSame(27.10, $dto->amount);
         $this->assertSame('expense', $dto->type);
         $this->assertSame('Mercado', $dto->category);
-        $this->assertSame(['supermercado', 'alimentação'], $dto->labels);
+        $this->assertSame(['Supermercado', 'Alimentação'], $dto->labels);
         // "hoje" → 2025-06-15 (data normalizada).
         $this->assertSame('2025-06-15', $dto->date);
         $this->assertStringContainsString('CNPJ', (string) $dto->observations);
@@ -425,5 +425,108 @@ class ImageExtractionTest extends TestCase
         $dto = $service->extractFromImage('iVBORw0KGgo=', 'image/webp');
 
         $this->assertSame('Nota WebP', $dto->description);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M1 — Catálogo de labels no prompt (espelho dos testes do DeepSeek)
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * O catálogo de labels do usuário deve ser injetado no systemPrompt do
+     * Gemini, para que o LLM multimodal prefira labels já usadas pelo usuário.
+     */
+    public function test_label_catalog_is_injected_into_system_prompt(): void
+    {
+        $fake = new FakeImageCompleter(response: $this->fixture([
+            'description' => 'Mercado',
+            'amount' => 50.00,
+            'type' => 'expense',
+        ]));
+        $this->app->bind(ImageCompleter::class, fn () => $fake);
+
+        $service = $this->app->make(GeminiService::class);
+        $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg', labelCatalog: ['Mercado', 'Supermercado']);
+
+        $prompt = $fake->systemPrompt;
+        $this->assertNotNull($prompt);
+        $this->assertStringContainsString('Mercado, Supermercado', $prompt);
+        $this->assertStringNotContainsString('ainda não tem labels anteriores', $prompt);
+    }
+
+    /**
+     * Catálogo vazio → o prompt informa que o usuário ainda não tem labels.
+     */
+    public function test_empty_label_catalog_shows_informative_message(): void
+    {
+        $fake = new FakeImageCompleter(response: $this->fixture([
+            'description' => 'Mercado',
+            'amount' => 50.00,
+            'type' => 'expense',
+        ]));
+        $this->app->bind(ImageCompleter::class, fn () => $fake);
+
+        $service = $this->app->make(GeminiService::class);
+        $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg', labelCatalog: []);
+
+        $prompt = $fake->systemPrompt;
+        $this->assertStringContainsString('ainda não tem labels anteriores', $prompt);
+    }
+
+    /**
+     * Labels retornadas pelo Gemini devem ser capitalizadas via LabelFormatter
+     * como defesa em profundidade.
+     */
+    public function test_labels_are_capitalized_via_label_formatter(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Posto Shell',
+            'amount' => 150.00,
+            'type' => 'expense',
+            'labels' => ['gasolina', 'combustivel'],
+        ]));
+
+        $dto = $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg');
+
+        // "gasolina" → "Gasolina" (P1), "combustivel" → "Combustivel" (P1).
+        $this->assertSame(['Gasolina', 'Combustivel'], $dto->labels);
+    }
+
+    /**
+     * Marcas com capitalização mista são preservadas pelo LabelFormatter (P7).
+     */
+    public function test_label_formatter_preserves_mixed_case_brands(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Almoço no iFood',
+            'amount' => 32.00,
+            'type' => 'expense',
+            'labels' => ['iFood', 'PIX'],
+        ]));
+
+        $dto = $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg');
+
+        $this->assertSame(['iFood', 'PIX'], $dto->labels);
+    }
+
+    /**
+     * O Gemini pode devolver labels visualmente diferentes mas com mesmo
+     * fold. A deduplicação fold-insensitive deve manter apenas a primeira.
+     */
+    public function test_labels_are_deduplicated_by_fold(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Supermercado Extra',
+            'amount' => 250.00,
+            'type' => 'expense',
+            'labels' => ['Supermercado', 'supermercado', 'Compras', 'compras'],
+        ]));
+
+        $dto = $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg');
+
+        // Após LabelFormatter: "Supermercado", "Supermercado", "Compras", "Compras"
+        // Após dedup por fold: "Supermercado" e "Compras" (primeiros de cada grupo).
+        $this->assertSame(['Supermercado', 'Compras'], $dto->labels);
     }
 }

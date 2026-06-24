@@ -84,4 +84,38 @@ final class TextNormalizer
 
         return mb_strtolower(trim($folded));
     }
+
+    /**
+     * Similaridade textual via distância de Levenshtein normalizada.
+     *
+     * Fórmula: `1 - (distância / max(len_a, len_b))`.
+     *
+     * Resultado em [0, 1] onde:
+     *  - 1.0 = strings idênticas (após fold).
+     *  - 0.0 = strings sem nenhum caractere em comum.
+     *  - Edge case: ambas vazias = 1.0 (evita divisão por zero).
+     *
+     * Usa `levenshtein()` nativa do PHP — que é O(m*n) mas adequada para
+     * strings curtas (labels/categorias típicas de ≤30 caracteres). Para o
+     * volume de uso (1 usuário, ~50 categorias), é mais que suficiente.
+     *
+     * Exemplos:
+     *  - `similarity('almoco', 'almoco')` → 1.0
+     *  - `similarity('almoco', 'almocar')` → ~0.85
+     *  - `similarity('casa', 'casarao')` → ~0.57
+     *
+     * @param  string  $a  Primeira string (já normalizada via {@see fold()}).
+     * @param  string  $b  Segunda string (idem).
+     * @return float Similaridade normalizada entre 0.0 e 1.0.
+     */
+    public static function similarity(string $a, string $b): float
+    {
+        $maxLen = max(mb_strlen($a), mb_strlen($b));
+
+        if ($maxLen === 0) {
+            return 1.0;
+        }
+
+        return 1.0 - (levenshtein($a, $b) / $maxLen);
+    }
 }

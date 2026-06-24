@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Console;
 
+use App\Console\Commands\DeduplicateLabels;
 use App\Services\Google\FirestoreService;
 use App\Services\Google\InMemoryFirestoreGateway;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -21,7 +22,7 @@ use Tests\TestCase;
  *
  * Roda isolado: vendor/bin/phpunit --filter DeduplicateLabelsTest
  */
-#[CoversClass(\App\Console\Commands\DeduplicateLabels::class)]
+#[CoversClass(DeduplicateLabels::class)]
 class DeduplicateLabelsTest extends TestCase
 {
     private InMemoryFirestoreGateway $gateway;

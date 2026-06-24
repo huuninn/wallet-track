@@ -441,4 +441,109 @@ class TransactionSummaryFormatterTest extends TestCase
             $this->formatter->fieldChangeMessage('observations', 'A', 'B'),
         );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M3 — Labels no resumo de confirmação (T3.7 / D3=B)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_summary_includes_labels_when_present(): void
+    {
+        $dto = new TransactionData(
+            description: 'Almoço no restaurante',
+            amount: 47.50,
+            type: 'expense',
+            category: 'Alimentação',
+            date: '2026-06-15',
+            labels: ['Almoço', 'Restaurante'],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('🏷️ <b>Labels:</b>', $out);
+        $this->assertStringContainsString('#Almoço', $out);
+        $this->assertStringContainsString('#Restaurante', $out);
+        // Labels devem aparecer entre Categoria e Data.
+        $this->assertStringContainsString("🏷 <b>Categoria:</b> Alimentação\n🏷️ <b>Labels:</b>", $out);
+        $this->assertStringContainsString("\n📅 <b>Data:</b> 15/06/2026", $out);
+    }
+
+    public function test_summary_omits_labels_when_empty(): void
+    {
+        $dto = new TransactionData(
+            description: 'Uber',
+            amount: 23.90,
+            type: 'expense',
+            category: 'Transporte',
+            date: '2026-06-15',
+            labels: [],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringNotContainsString('Labels:', $out);
+    }
+
+    public function test_summary_formats_labels_with_hash_prefix(): void
+    {
+        // Labels formatadas com prefixo #, mesmo que já tenham # no input.
+        $dto = new TransactionData(
+            description: 'Compras',
+            amount: 100.0,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            labels: ['Mercado', '#feira'],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('#Mercado', $out);
+        $this->assertStringContainsString('#feira', $out, 'Hash duplicado deve ser evitado');
+    }
+
+    public function test_summary_escapes_html_in_labels(): void
+    {
+        // Label com & (ex.: "C&A" — loja brasileira real) deve ser escapada
+        // como #C&amp;A, não #C&A. O & não-escapado quebra o parse_mode=HTML.
+        $dto = new TransactionData(
+            description: 'Compra na C&A',
+            amount: 199.90,
+            type: 'expense',
+            category: 'Vestuário',
+            date: '2026-06-15',
+            labels: ['C&A', '<script>'],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        // A label "C&A" vira #C&amp;A (escapada), não #C&A.
+        $this->assertStringNotContainsString('#C&A', $out, '& não escapado quebraria parse_mode=HTML');
+        $this->assertStringContainsString('#C&amp;A', $out, '& deve ser escapado como &amp;');
+
+        // Label com <script> também deve ser escapada.
+        $this->assertStringNotContainsString('#<script>', $out);
+        $this->assertStringContainsString('#&lt;script&gt;', $out);
+    }
+
+    public function test_list_summary_escapes_html_in_labels(): void
+    {
+        // Mesma proteção de HTML-escaping deve valer para listSummary.
+        $transactions = $this->makeTransactions([
+            [
+                'description' => 'Compra na C&A',
+                'amount' => 199.90,
+                'type' => 'expense',
+                'category' => 'Vestuário',
+                'date' => '2026-06-15',
+                'labels' => ['C&A'],
+            ],
+        ]);
+
+        $out = $this->formatter->listSummary($transactions, 1);
+
+        $this->assertStringNotContainsString('#C&A', $out);
+        $this->assertStringContainsString('#C&amp;A', $out);
+    }
 }

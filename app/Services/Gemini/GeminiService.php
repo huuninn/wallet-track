@@ -10,6 +10,7 @@ use App\Services\DeepSeek\DeepSeekService;
 use App\Services\Parsing\AmountParser;
 use App\Services\Parsing\DateNormalizer;
 use App\Services\Parsing\TypeClassifier;
+use App\Support\LabelFormatter;
 use Throwable;
 
 /**
@@ -47,8 +48,6 @@ final class GeminiService
         'image/heif',
     ];
 
-    private ?string $systemPrompt = null;
-
     public function __construct(
         private readonly ImageCompleter $completer,
         private readonly AmountParser $amountParser,
@@ -59,11 +58,11 @@ final class GeminiService
     /**
      * @throws ExtractionException Quando a extração é estruturalmente inviável.
      */
-    public function extractFromImage(string $base64Image, string $mimeType): TransactionData
+    public function extractFromImage(string $base64Image, string $mimeType, array $labelCatalog = []): TransactionData
     {
         $this->validateInput($base64Image, $mimeType);
 
-        $content = $this->callCompleter($base64Image, $mimeType);
+        $content = $this->callCompleter($base64Image, $mimeType, $labelCatalog);
 
         $data = $this->decodeJson($content);
 
@@ -79,6 +78,16 @@ final class GeminiService
         $data['type'] = $this->typeClassifier->classify($data['type'] ?? null, $hintText);
 
         $dto = TransactionData::fromArray($data);
+
+        // Defesa em profundidade: o prompt pede capitalização, mas o LLM pode ignorar.
+        $capitalizedLabels = array_map(
+            fn (string $l): string => LabelFormatter::format($l),
+            $dto->labels,
+        );
+
+        // Deduplica por fold — ex.: o LLM pode devolver ["Almoço", "almoco"].
+        $deduped = LabelFormatter::deduplicate($capitalizedLabels);
+        $dto = $dto->withLabels($deduped);
 
         $this->detectNotATransaction($dto);
 
@@ -115,11 +124,11 @@ final class GeminiService
      *
      * @throws ExtractionException
      */
-    private function callCompleter(string $base64Image, string $mimeType): string
+    private function callCompleter(string $base64Image, string $mimeType, array $labelCatalog = []): string
     {
         try {
             return $this->completer->complete(
-                systemPrompt: $this->systemPrompt(),
+                systemPrompt: $this->systemPrompt($labelCatalog),
                 base64Image: $base64Image,
                 mimeType: $mimeType,
             );
@@ -211,29 +220,36 @@ final class GeminiService
     }
 
     /**
-     * Carrega (uma única vez) o prompt do sistema de resources/prompts/,
-     * prefixando um cabeçalho temporal com a data de hoje.
+     * Carrega o prompt do sistema de resources/prompts/ prefixando um
+     * cabeçalho temporal com a data de hoje e interpolando o catálogo de
+     * labels do usuário no placeholder `{{LABEL_CATALOG}}`.
      *
-     * Mesma abordagem do fix CRITICAL do M3 (DeepSeekService): o cabeçalho
-     * temporal é essencial para que o Gemini interprete datas relativas e
-     * use "hoje" como default quando a nota não tem data legível.
+     * Mesma abordagem do DeepSeekService: o cabeçalho temporal é essencial
+     * para que o Gemini interprete datas relativas e use "hoje" como default
+     * quando a nota não tem data legível. O catálogo é injetado via `strtr()`.
+     *
+     * @param  list<string>  $labelCatalog  Top-N labels do usuário (display names).
      */
-    private function systemPrompt(): string
+    private function systemPrompt(array $labelCatalog): string
     {
-        return $this->systemPrompt ??= (function (): string {
-            $now = now();
-            $todayPtBr = $now->format('d/m/Y');
-            $todayIso = $now->toDateString();
+        $now = now();
+        $todayPtBr = $now->format('d/m/Y');
+        $todayIso = $now->toDateString();
 
-            $header = <<<HEADER
+        $header = <<<HEADER
 INFORMAÇÃO TEMPORAL: Hoje é {$todayPtBr} (formato ISO: {$todayIso}).
 Use esta data como referência para interpretar datas impressas na nota e como default quando a nota não tiver data legível ("hoje" = {$todayIso}).
 HEADER;
 
-            // @phpstan-ignore-next-line (require de arquivo que retorna string)
-            $base = (string) require resource_path('prompts/image-ocr.php');
+        // @phpstan-ignore-next-line (require de arquivo que retorna string)
+        $base = (string) require resource_path('prompts/image-ocr.php');
 
-            return $header."\n\n".$base;
-        })();
+        $catalogStr = $labelCatalog === []
+            ? '(o usuário ainda não tem labels anteriores)'
+            : implode(', ', $labelCatalog);
+
+        $body = strtr($base, ['{{LABEL_CATALOG}}' => $catalogStr]);
+
+        return $header."\n\n".$body;
     }
 }

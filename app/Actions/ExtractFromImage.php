@@ -36,15 +36,16 @@ final class ExtractFromImage implements ExtractsImage
      * Baixa a imagem do Telegram e extrai a transação via Gemini.
      *
      * @param  string  $fileId  Identificador do arquivo no Telegram.
+     * @param  list<string>  $labelCatalog  Top-N labels do catálogo do usuário (display names).
      * @return TransactionData Transação extraída e validada.
      *
      * @throws ExtractionException Em falha estrutural (API/JSON/não-transação).
      * @throws \RuntimeException Em falha de download do arquivo Telegram.
      */
-    public function handle(string $fileId): TransactionData
+    public function handle(string $fileId, array $labelCatalog = []): TransactionData
     {
         $file = $this->downloader->download($fileId);
 
-        return $this->service->extractFromImage($file->base64, $file->mimeType);
+        return $this->service->extractFromImage($file->base64, $file->mimeType, $labelCatalog);
     }
 }

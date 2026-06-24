@@ -642,10 +642,11 @@ class FirestoreServiceTest extends TestCase
 
     public function test_increment_label_use_starts_from_one(): void
     {
+        // incrementLabelUse agora aplica LabelFormatter::format() (P6 — backfill lazy).
         $this->service->incrementLabelUse('almoço');
 
         $raw = $this->gateway->raw()['labels']['almoco'];
-        $this->assertSame('almoço', $raw['name']);
+        $this->assertSame('Almoço', $raw['name']);
         $this->assertSame(1, $raw['use_count']);
         $this->assertNotEmpty($raw['last_used_at']);
     }

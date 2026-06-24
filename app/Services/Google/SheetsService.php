@@ -234,6 +234,11 @@ final class SheetsService
             if ($label === '') {
                 continue;
             }
+            // Previne injeção de fórmula no Google Sheets (CWE-1236):
+            // labels começando com =, +, -, @ são interpretadas como fórmulas.
+            if (preg_match('/^[=+\-@]/', $label)) {
+                $label = "'".$label;
+            }
             $tags[] = $label;
         }
 

@@ -7,6 +7,7 @@ namespace Tests\Feature\Conversation;
 use App\Actions\ExtractsImage;
 use App\Actions\ExtractsText;
 use App\Actions\SuggestCategory;
+use App\Actions\SuggestsLabels;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\InMemoryBotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
@@ -94,14 +95,14 @@ class WizardHandlerTest extends TestCase
         // Stubs nunca invocados no wizard, mas o Router exige no construtor.
         $this->extractText = new class implements ExtractsText
         {
-            public function handle(string $text): TransactionData
+            public function handle(string $text, array $labelCatalog = []): TransactionData
             {
                 throw new \LogicException('extractText não deve ser chamado durante o wizard.');
             }
         };
         $this->extractImage = new class implements ExtractsImage
         {
-            public function handle(string $fileId): TransactionData
+            public function handle(string $fileId, array $labelCatalog = []): TransactionData
             {
                 throw new \LogicException('extractImage não deve ser chamado durante o wizard.');
             }
@@ -115,6 +116,8 @@ class WizardHandlerTest extends TestCase
         };
     }
 
+    private object $suggestLabels;
+
     private function makeRouter(): ConversationRouter
     {
         // Usa as classes REAIS do M8 (não mockáveis por serem `final`).
@@ -123,6 +126,16 @@ class WizardHandlerTest extends TestCase
         //   $expected = $userLabels + $suggestedFromDescription
         // Para testes sensíveis (CT-025h/i/j), usamos descrições com
         // keywords MÍNIMAS para reduzir ruído.
+        $this->suggestLabels = new class implements SuggestsLabels
+        {
+            public array $toReturn = [];
+
+            public function suggest(TransactionData $dto, array $labelCatalog = []): array
+            {
+                return $this->toReturn;
+            }
+        };
+
         return new ConversationRouter(
             stateMachine: new StateMachine,
             messenger: $this->messenger,
@@ -132,6 +145,7 @@ class WizardHandlerTest extends TestCase
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
             suggestCategory: new SuggestCategory($this->firestore),
+            suggestLabels: $this->suggestLabels,
             sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );
@@ -286,11 +300,8 @@ class WizardHandlerTest extends TestCase
 
     public function test_wizard_step5_labels_comma_separated_yields_array(): void
     {
-        // CT-025h: "almoço, italiano, #restaurante" → ["almoço", "italiano", "restaurante"].
-        // Após enriquecimento M8 (SuggestLabels), keywords da descrição
-        // "Almoço no restaurante italiano" são mergeadas — validamos
-        // que os labels do usuário estão presentes (podem haver extras
-        // sugeridos pelo M8).
+        // CT-025h: "almoço, italiano, #restaurante" → ["Almoço", "Italiano", "Restaurante"].
+        // validateLabels agora aplica LabelFormatter::format() (P1 — Sentence Case).
         $this->startWizard();
         $this->routeText('despesa');
         $this->routeText('47,50');
@@ -302,14 +313,15 @@ class WizardHandlerTest extends TestCase
 
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertContains('almoço', $session['draft']['labels']);
-        $this->assertContains('italiano', $session['draft']['labels']);
-        $this->assertContains('restaurante', $session['draft']['labels']);
+        $this->assertContains('Almoço', $session['draft']['labels']);
+        $this->assertContains('Italiano', $session['draft']['labels']);
+        $this->assertContains('Restaurante', $session['draft']['labels']);
     }
 
     public function test_wizard_step5_labels_dedup_and_strip_hash(): void
     {
         // CT-025j: "#ok, #ok" deduplicado; "a" (1 char) filtrado.
+        // validateLabels agora aplica LabelFormatter::format() (P1 — Sentence Case).
         $this->startWizard();
         $this->routeText('despesa');
         $this->routeText('47,50');
@@ -320,17 +332,20 @@ class WizardHandlerTest extends TestCase
         $this->routeText('a, #ok, #ok, #trabalho');
 
         $session = $this->currentSession();
-        // "a" é filtrado (1 char). "#ok" aparece 1x (dedup). "#trabalho" preservado.
-        $this->assertContains('ok', $session['draft']['labels']);
-        $this->assertContains('trabalho', $session['draft']['labels']);
+        // "a" é filtrado (1 char). "#ok" → "Ok" (format), aparece 1x (dedup). "#trabalho" → "Trabalho".
+        $this->assertContains('Ok', $session['draft']['labels']);
+        $this->assertContains('Trabalho', $session['draft']['labels']);
         // "a" NÃO está presente.
         $this->assertNotContains('a', $session['draft']['labels']);
+        // "ok" lowercase também não (já foi formatado).
+        $this->assertNotContains('ok', $session['draft']['labels']);
     }
 
     #[Group('smoke')]
     public function test_wizard_complete_flow_reaches_confirmation(): void
     {
         // CT-025 (happy path completo): tipo → valor → descrição → categoria → labels.
+        // validateLabels agora aplica LabelFormatter::format() (P1 — Sentence Case).
         $this->startWizard();
 
         $this->routeText('despesa');
@@ -346,11 +361,9 @@ class WizardHandlerTest extends TestCase
         $this->assertSame(149.90, $session['draft']['amount']);
         $this->assertSame('Material de escritório', $session['draft']['description']);
         $this->assertSame('Alimentação', $session['draft']['category']);
-        // Labels do wizard (escritorio, material) — M8 pode adicionar
-        // sugestões baseadas em "Material de escritório" (ex.: "escritório"),
-        // mas os labels do usuário estão garantidos.
-        $this->assertContains('escritorio', $session['draft']['labels']);
-        $this->assertContains('material', $session['draft']['labels']);
+        // Labels formatados: "Escritorio", "Material" (Sentence Case pelo LabelFormatter).
+        $this->assertContains('Escritorio', $session['draft']['labels']);
+        $this->assertContains('Material', $session['draft']['labels']);
         $this->assertArrayHasKey('message_id_confirm', $session);
 
         // Confirmação enviada.
@@ -506,5 +519,215 @@ class WizardHandlerTest extends TestCase
         $this->assertCount(1, $fieldAsks);
         $this->assertSame('category', $fieldAsks[0]['field']);
         $this->assertStringContainsString('Sugestão', $fieldAsks[0]['prompt']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M4 — Wizard: skip labels → LLM sugestão (T4.5)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_wizard_step5_skip_calls_llm_and_uses_suggested_labels(): void
+    {
+        // M4: ao pular labels, o wizard chama SuggestsLabels e usa as labels
+        // sugeridas pelo LLM. O stub retorna ['Almoço'].
+        $this->startWizard();
+        $this->routeText('despesa');
+        $this->routeText('47,50');
+        $this->routeText('Almoço no restaurante');
+        $this->routeText('Alimentação');
+        $this->messenger->sentTexts = [];
+
+        // Configura o stub ANTES de chamar makeRouter (que cria o stub).
+        // Criamos o router manualmente com um stub pré-configurado.
+        $suggestLabels = new class implements SuggestsLabels
+        {
+            public function suggest(TransactionData $dto, array $labelCatalog = []): array
+            {
+                return ['Almoço'];
+            }
+        };
+
+        $router = new ConversationRouter(
+            stateMachine: new StateMachine,
+            messenger: $this->messenger,
+            formatter: new TransactionSummaryFormatter,
+            firestore: $this->firestore,
+            extractText: $this->extractText,
+            extractImage: $this->extractImage,
+            syncSheet: $this->syncSheet,
+            suggestCategory: new SuggestCategory($this->firestore),
+            suggestLabels: $suggestLabels,
+            sessionTimeoutMinutes: 15,
+            maxDataRetries: 3,
+        );
+
+        $router->route(ConversationInput::text(self::CHAT_ID, 'pular'));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        // Labels sugeridas pelo LLM devem estar no draft.
+        $this->assertArrayHasKey('labels', $session['draft'], 'Labels devem estar presentes no draft');
+        $this->assertContains('Almoço', $session['draft']['labels']);
+    }
+
+    public function test_wizard_step5_skip_with_llm_empty_follows_without_labels(): void
+    {
+        // M4: stub do LLM retorna [] → wizard segue sem labels (sem erro).
+        $this->startWizard();
+        $this->routeText('despesa');
+        $this->routeText('47,50');
+        $this->routeText('X1');
+        $this->routeText('Alimentação');
+        $this->messenger->sentTexts = [];
+
+        // Stub que retorna vazio (sem sugestões).
+        $suggestLabels = new class implements SuggestsLabels
+        {
+            public function suggest(TransactionData $dto, array $labelCatalog = []): array
+            {
+                return [];
+            }
+        };
+
+        $router = new ConversationRouter(
+            stateMachine: new StateMachine,
+            messenger: $this->messenger,
+            formatter: new TransactionSummaryFormatter,
+            firestore: $this->firestore,
+            extractText: $this->extractText,
+            extractImage: $this->extractImage,
+            syncSheet: $this->syncSheet,
+            suggestCategory: new SuggestCategory($this->firestore),
+            suggestLabels: $suggestLabels,
+            sessionTimeoutMinutes: 15,
+            maxDataRetries: 3,
+        );
+
+        $router->route(ConversationInput::text(self::CHAT_ID, 'pular'));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        // labels=[] é omitido pelo toDraftArray (filter $v !== []).
+        $this->assertArrayNotHasKey('labels', $session['draft']);
+    }
+
+    public function test_wizard_step5_skip_sends_loading_message(): void
+    {
+        // M4: ao pular labels, uma mensagem de loading é enviada antes
+        // da chamada ao LLM.
+        $this->startWizard();
+        $this->routeText('despesa');
+        $this->routeText('47,50');
+        $this->routeText('Almoço');
+        $this->routeText('Alimentação');
+        $this->messenger->sentTexts = [];
+
+        $suggestLabels = new class implements SuggestsLabels
+        {
+            public function suggest(TransactionData $dto, array $labelCatalog = []): array
+            {
+                return ['Almoço'];
+            }
+        };
+
+        $router = new ConversationRouter(
+            stateMachine: new StateMachine,
+            messenger: $this->messenger,
+            formatter: new TransactionSummaryFormatter,
+            firestore: $this->firestore,
+            extractText: $this->extractText,
+            extractImage: $this->extractImage,
+            syncSheet: $this->syncSheet,
+            suggestCategory: new SuggestCategory($this->firestore),
+            suggestLabels: $suggestLabels,
+            sessionTimeoutMinutes: 15,
+            maxDataRetries: 3,
+        );
+
+        $router->route(ConversationInput::text(self::CHAT_ID, 'pular'));
+
+        // Deve ter enviado a mensagem de loading.
+        $texts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $loadingMessages = array_filter(
+            $texts,
+            fn (array $t): bool => str_contains($t['text'], 'Sugerindo labels'),
+        );
+        $this->assertCount(1, $loadingMessages, 'Deve enviar mensagem de loading ao pular labels');
+    }
+
+    public function test_wizard_step5_explicit_labels_not_skip_bypass_llm(): void
+    {
+        // M4: se o usuário digita labels explicitamente (ex.: "almoco, trabalho"),
+        // o LLM NÃO é chamado — validateLabels retorna array não-vazio.
+        $this->startWizard();
+        $this->routeText('despesa');
+        $this->routeText('47,50');
+        $this->routeText('X1');
+        $this->routeText('Alimentação');
+        $this->messenger->sentTexts = [];
+
+        // Configura stub que NÃO deve ser chamado (explodiria se fosse).
+        $suggestLabels = new class implements SuggestsLabels
+        {
+            public function suggest(TransactionData $dto, array $labelCatalog = []): array
+            {
+                throw new \LogicException('LLM não deve ser chamado quando labels são explícitas.');
+            }
+        };
+
+        $router = new ConversationRouter(
+            stateMachine: new StateMachine,
+            messenger: $this->messenger,
+            formatter: new TransactionSummaryFormatter,
+            firestore: $this->firestore,
+            extractText: $this->extractText,
+            extractImage: $this->extractImage,
+            syncSheet: $this->syncSheet,
+            suggestCategory: new SuggestCategory($this->firestore),
+            suggestLabels: $suggestLabels,
+            sessionTimeoutMinutes: 15,
+            maxDataRetries: 3,
+        );
+
+        $router->route(ConversationInput::text(self::CHAT_ID, 'almoco, trabalho'));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        // Labels formatadas pelo LabelFormatter (Sentence Case).
+        $this->assertContains('Almoco', $session['draft']['labels']);
+        $this->assertContains('Trabalho', $session['draft']['labels']);
+
+        // NÃO deve ter enviado mensagem de loading.
+        $texts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $loadingMessages = array_filter(
+            $texts,
+            fn (array $t): bool => str_contains($t['text'], 'Sugerindo labels'),
+        );
+        $this->assertCount(0, $loadingMessages, 'Não deve enviar loading para labels explícitas');
+    }
+
+    public function test_wizard_step5_prompt_reflects_auto_suggestion(): void
+    {
+        // T4.4: o prompt da etapa 5 deve mencionar que o bot sugere labels
+        // automaticamente quando o usuário pula.
+        $this->startWizard();
+        $this->routeText('despesa');
+        $this->routeText('47,50');
+        $this->routeText('Almoço');
+
+        // Após responder "Almoço" (step 3), o wizard avança para step 4 (category).
+        // Limpa fieldAsks para capturar apenas o prompt da transição 3→4 e 4→5.
+        $this->messenger->fieldAsks = [];
+
+        // Responde a categoria (step 4 → step 5).
+        $this->routeText('Alimentação');
+
+        // Agora fieldAsks contém o prompt da etapa 5 (labels),
+        // que foi enviado na transição 4→5.
+        $fieldAsks = $this->messenger->fieldAsks[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $fieldAsks);
+        $this->assertSame('labels', $fieldAsks[0]['field']);
+        $this->assertStringContainsString('sugiro labels automaticamente', $fieldAsks[0]['prompt']);
     }
 }

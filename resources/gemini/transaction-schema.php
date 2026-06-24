@@ -48,7 +48,7 @@ return new Schema(
         ),
         'labels' => new Schema(
             type: DataType::ARRAY,
-            description: 'Etiquetas curtas para busca. Array vazio se não houver.',
+            description: 'Etiquetas curtas para busca, em PT-BR capitalizadas (primeira letra maiúscula, acentos preservados, marcas conhecidas preservadas como iFood, PIX). Máximo 3 labels. Ex.: ["Almoço", "iFood"]. Array vazio se não houver.',
             items: new Schema(type: DataType::STRING),
         ),
         'date' => new Schema(
