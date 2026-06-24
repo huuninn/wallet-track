@@ -1,0 +1,86 @@
+# ============================================================================
+# Wallet Track — Docker Compose para desenvolvimento local
+# ----------------------------------------------------------------------------
+# Uso:
+#   docker compose up -d --build        # Sobe a aplicação
+#   docker compose logs -f app          # Acompanha logs
+#   docker compose exec app php artisan tinker
+#   docker compose exec app composer require vendor/package
+#   docker compose down                 # Para containers (preserva volumes)
+#   docker compose down -v              # ⚠️  Limpa vendor/storage/node_modules
+#
+# Aplicação disponível em http://localhost:8000
+#
+# Para subir também o Vite dev server (HMR de assets frontend):
+#   docker compose --profile frontend up
+#   Frontend dev em http://localhost:5173
+# ============================================================================
+
+services:
+  # Imagem base com extensões PHP compiladas (gRPC/protobuf).
+  # Build isolado: só reconstrói quando docker/Dockerfile.base mudar.
+  base:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.base
+    image: wallet-track-base:latest
+    command: ["echo", "Base image ready"]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+      args:
+        BASE_IMAGE: wallet-track-base:latest
+    image: wallet-track:dev
+    container_name: wallet-track
+    restart: unless-stopped
+    depends_on:
+      base:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    volumes:
+      # Código-fonte (host → container). Alterações refletem via revalidação
+      # de opcache (configurado no estágio `dev` do Dockerfile).
+      - ./:/app
+      # vendor em volume nomeado: mantém platform Linux dentro do container
+      # (host pode ter vendor/ de plataforma diferente) e evita shadow.
+      - vendor:/app/vendor
+      # Storage persistente (logs e cache file-based; sessions são in-memory array).
+      - storage:/app/storage
+    env_file:
+      - .env
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      LOG_CHANNEL: stderr
+      LOG_LEVEL: debug
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 8000) ? 0 : 1);'"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # Vite dev server (HMR). Opt-in via profile para não pesar o start padrão.
+  vite:
+    image: node:22-alpine
+    container_name: wallet-track-vite
+    working_dir: /app
+    profiles: ["frontend"]
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./:/app
+      - node_modules:/app/node_modules
+    command:
+      - sh
+      - -c
+      - "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  vendor:
+  storage:
+  node_modules:

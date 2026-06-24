@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1.7
+# ============================================================================
+# Wallet Track — Imagem base com extensões PHP compiladas
+# ----------------------------------------------------------------------------
+# Build isolado e reaproveitável: compila gRPC + protobuf (extensões C pesadas)
+# uma única vez. A imagem principal (Dockerfile) referencia esta via build arg.
+#
+# Rebuild necessário apenas quando:
+#   - A versão do PHP mudar (ex.: 8.4 → 8.5)
+#   - A versão da imagem FrankenPHP mudar
+#   - Adicionar/remover extensões PHP
+# ============================================================================
+
+FROM dunglas/frankenphp:1.4-php8.4-bookworm
+
+RUN apt-get update \
+    && install-php-extensions \
+        gmp \
+        bcmath \
+        intl \
+        opcache \
+        grpc \
+        protobuf \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV APP_DIR=/app
+WORKDIR ${APP_DIR}
