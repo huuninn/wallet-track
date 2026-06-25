@@ -43,6 +43,6 @@ do
     [ -d "$dir" ] || mkdir -p "$dir"
 done
 
-echo "==> Wallet Track pronto em http://localhost:8000"
+echo "==> Wallet Track pronto em http://localhost:8000 (container :8080)"
 
-exec frankenphp run --config /etc/frankenphp/Caddyfile --adapter caddyfile
+exec frankenphp run --config /etc/caddy/Caddyfile --adapter caddyfile

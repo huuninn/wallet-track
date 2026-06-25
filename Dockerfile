@@ -125,6 +125,13 @@ LABEL org.opencontainers.image.title="wallet-track" \
 # Copia aplicação + vendor otimizado do estágio de build.
 COPY --from=build --chown=www-data:www-data ${APP_DIR} ${APP_DIR}
 
+# Descarta caches de bootstrap (services.php, packages.php, config.php etc.)
+# gerados no build com --no-dev, que podem referenciar providers ausentes em
+# produção (ex.: Telescope). Laravel os regenera em runtime sob demanda.
+# NÃO fazemos config:cache no build — ele congela env() e quebra secrets
+# injetados em runtime pelo Cloud Run (ver docs/decisions.md).
+RUN rm -f bootstrap/cache/*.php
+
 # Garante estrutura de diretórios gravável pelo worker (roda como www-data).
 RUN mkdir -p \
         storage/framework/cache/data \
@@ -153,25 +160,30 @@ ENV PHP_OPCACHE_ENABLE=1 \
 # Caddyfile para FrankenPHP servir a aplicação Laravel.
 # O bloco global `frankenphp` INICIA o runtime PHP embutido (necessário para
 # `php_server`). Sem ele, Caddy responde "FrankenPHP is not running" (500).
-# A porta 8000 atende ao critério de aceitação do M0 (`docker run -p 8000:8000`).
+# A porta 8080 atende ao critério de aceitação do M0 e paridade com o
+# PORT=8080 que o Cloud Run injeta. Em dev, docker-compose mapeia
+# host:8000 → container:8080.
 # Arquivo separado (não heredoc) para compatibilidade com o Docker daemon do
 # Cloud Build (não suporta a sintaxe COPY << do BuildKit).
+# Substitui o Caddyfile default da imagem FrankenPHP (que habilita HTTPS
+# em :443 — não queremos em Cloud Run, que já faz TLS termination).
 # ---------------------------------------------------------------------------
-COPY docker/Caddyfile /etc/frankenphp/Caddyfile
+COPY docker/Caddyfile /etc/caddy/Caddyfile
 
 # Variáveis de runtime (sobrescritas pelo Cloud Run / .env em produção).
 ENV APP_ENV=production \
     APP_DEBUG=false \
+    SESSION_DRIVER=file \
     LOG_CHANNEL=stderr \
     LOG_LEVEL=info \
-    SERVER_NAME=:8000 \
+    SERVER_NAME=:8080 \
     OCTANE_SERVER=frankenphp
 
-EXPOSE 8000
+EXPOSE 8080
 
 # ---------------------------------------------------------------------------
 # Startup: o binário frankenphp sobe Caddy (HTTP/TLS) + runtime PHP embutido,
-# servindo a aplicação Laravel a partir de /app/public na porta 8000.
+# servindo a aplicação Laravel a partir de /app/public na porta 8080.
 #
 # Nota arquitetural: o plano original previa `php artisan octane:start
 # --server=frankenphp` como processo principal. Em M0 detectamos que o driver
@@ -183,4 +195,4 @@ EXPOSE 8000
 # Executa como usuário não-privilegiado www-data (hardening: superfície de RCE
 # reduzida caso uma dependência seja vulnerável).
 USER www-data
-CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile", "--adapter", "caddyfile"]
+CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

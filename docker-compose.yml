@@ -10,6 +10,7 @@
 #   docker compose down -v              # ⚠️  Limpa vendor/storage/node_modules
 #
 # Aplicação disponível em http://localhost:8000
+# (Container escuta em :8080 para paridade com Cloud Run PORT=8080.)
 #
 # Para subir também o Vite dev server (HMR de assets frontend):
 #   docker compose --profile frontend up
@@ -40,7 +41,7 @@ services:
       base:
         condition: service_completed_successfully
     ports:
-      - "8000:8000"
+      - "8000:8080"   # host 8000 → container 8080 (paridade Cloud Run PORT=8080)
     volumes:
       # Código-fonte (host → container). Alterações refletem via revalidação
       # de opcache (configurado no estágio `dev` do Dockerfile).
@@ -57,8 +58,9 @@ services:
       APP_DEBUG: "true"
       LOG_CHANNEL: stderr
       LOG_LEVEL: debug
+      PORT: "8080"    # paridade com Cloud Run (Caddyfile usa {$PORT:8080})
     healthcheck:
-      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 8000) ? 0 : 1);'"]
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 8080) ? 0 : 1);'"]
       interval: 15s
       timeout: 3s
       retries: 5
