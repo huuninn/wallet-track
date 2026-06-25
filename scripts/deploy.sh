@@ -73,91 +73,56 @@ check_gcloud() {
 # Subcomando: secrets
 # ---------------------------------------------------------------------------
 cmd_secrets() {
-    log "Provisionando secrets no Secret Manager..."
+    log "Provisionando secret consolidado no Secret Manager..."
 
-    # Mapa de secrets: nome → método de obtenção do valor
-    # Cada entrada é: "nome_do_secret" "descricao_amigavel" "variavel_env"
-    local -a secrets=(
-        "google-service-account-json:SA JSON:GOOGLE_SERVICE_ACCOUNT_JSON_PATH"
-        "telegram-bot-token:Telegram Bot Token:TELEGRAM_BOT_TOKEN"
-        "telegram-webhook-secret-token:Webhook Secret Token:TELEGRAM_WEBHOOK_SECRET_TOKEN"
-        "deepseek-api-key:DeepSeek API Key:DEEPSEEK_API_KEY"
-        "gemini-api-key:Gemini API Key:GEMINI_API_KEY"
-        "cron-secret-token:Cron Secret Token:CRON_SECRET_TOKEN"
-        "app-key:App Key (Laravel):APP_KEY"
-    )
+    local secret_name="wallet-track-env"
 
-    for entry in "${secrets[@]}"; do
-        IFS=':' read -r secret_name desc env_var <<< "$entry"
+    if gcloud secrets describe "$secret_name" --project="$PROJECT_ID" &>/dev/null; then
+        ok "Secret '$secret_name' já existe — pulando."
+    else
+        log "Criando secret consolidado '$secret_name'..."
+        
+        # Lê valores do .env local (dev) ou usa defaults para CI/CD
+        local app_key="${APP_KEY:-$(grep -E '^APP_KEY=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
+        local bot_token="${TELEGRAM_BOT_TOKEN:-$(grep -E '^TELEGRAM_BOT_TOKEN=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
+        local webhook_secret="${TELEGRAM_WEBHOOK_SECRET_TOKEN:-$(grep -E '^TELEGRAM_WEBHOOK_SECRET_TOKEN=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
+        local deepseek="${DEEPSEEK_API_KEY:-$(grep -E '^DEEPSEEK_API_KEY=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
+        local gemini="${GEMINI_API_KEY:-$(grep -E '^GEMINI_API_KEY=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
+        local cron="${CRON_SECRET_TOKEN:-$(grep -E '^CRON_SECRET_TOKEN=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
+        local sa_json="${GOOGLE_SERVICE_ACCOUNT_JSON:-$(cat wallet-track-*.json 2>/dev/null || echo '')}"
 
-        # Verifica se o secret já existe
-        if gcloud secrets describe "$secret_name" --project="$PROJECT_ID" &>/dev/null; then
-            ok "Secret '$secret_name' já existe — pulando."
-            continue
-        fi
+        jq -n --arg app_key "$app_key" \
+              --arg bot_token "$bot_token" \
+              --arg webhook_secret "$webhook_secret" \
+              --arg deepseek "$deepseek" \
+              --arg gemini "$gemini" \
+              --arg cron "$cron" \
+              --arg sa_json "$sa_json" \
+        '{
+          APP_KEY: $app_key,
+          TELEGRAM_BOT_TOKEN: $bot_token,
+          TELEGRAM_WEBHOOK_SECRET_TOKEN: $webhook_secret,
+          DEEPSEEK_API_KEY: $deepseek,
+          GEMINI_API_KEY: $gemini,
+          CRON_SECRET_TOKEN: $cron,
+          GOOGLE_SERVICE_ACCOUNT_JSON: $sa_json,
+          GOOGLE_CLOUD_PROJECT_ID: "wallet-track-499719",
+          FIRESTORE_DATABASE_ID: "wallet-track-db",
+          GOOGLE_SHEETS_SPREADSHEET_ID: "1rGNN0XOOYwDvMYDpFwU1a2ozQXPhAk8P2l8Xjnk9a14",
+          GOOGLE_SHEETS_SHEET_NAME: "Transações",
+          GOOGLE_SHEETS_CATEGORIES_SHEET_NAME: "Categorias"
+        }' | gcloud secrets create "$secret_name" \
+          --project="$PROJECT_ID" \
+          --replication-policy=automatic \
+          --data-file=-
 
-        log "Criando secret '$secret_name' ($desc)..."
-
-        local value=""
-        local source_desc=""
-
-        # Tenta ler do arquivo .env local primeiro (não interativo em CI/CD)
-        if [[ -f ".env" ]]; then
-            value=$(grep -E "^${env_var}=" .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//' || true)
-            if [[ -n "$value" ]]; then
-                source_desc=".env local"
-            fi
+        ok "Secret '$secret_name' criado com sucesso (12 chaves)."
+    fi
+}
         fi
 
         # Caso especial: SA JSON é lido de arquivo, não de string inline
-        if [[ "$secret_name" == "google-service-account-json" ]]; then
-            if [[ -z "$value" ]] || [[ ! -f "$value" ]]; then
-                # Prompt interativo para o caminho do arquivo
-                echo ""
-                log "Arquivo JSON da Service Account necessário."
-                log "Se ele estiver na raiz do projeto (ex.: wallet-track-*.json),"
-                log "informe o caminho completo."
-                read -r -p "  Caminho do arquivo SA JSON: " value
-                if [[ ! -f "$value" ]]; then
-                    err "Arquivo não encontrado: $value"
-                fi
-                source_desc="arquivo $value"
-            fi
-
-            # Lê o conteúdo do arquivo para criar o secret
-            log "Criando secret a partir do arquivo: $value"
-            gcloud secrets create "$secret_name" \
-                --project="$PROJECT_ID" \
-                --data-file="$value" \
-                --replication-policy="automatic"
-
-            ok "Secret '$secret_name' criado (fonte: $source_desc)."
-            continue
-        fi
-
-        # Para os demais secrets: prompt interativo se não encontrado no .env
-        if [[ -z "$value" ]]; then
-            echo ""
-            log "Valor para '$secret_name' ($desc) não encontrado no .env."
-            read -r -s -p "  Digite o valor (não será exibido): " value
-            echo ""
-            if [[ -z "$value" ]]; then
-                warn "Valor vazio — pulando criação do secret '$secret_name'."
-                continue
-            fi
-            source_desc="entrada interativa"
-        fi
-
-        # Cria o secret com o valor
-        echo -n "$value" | gcloud secrets create "$secret_name" \
-            --project="$PROJECT_ID" \
-            --data-file=- \
-            --replication-policy="automatic"
-
-        ok "Secret '$secret_name' criado (fonte: $source_desc)."
-    done
-
-    log "Secrets provisionados com sucesso."
+    log "Secret consolidado provisionado."
 }
 
 # ---------------------------------------------------------------------------
@@ -177,15 +142,9 @@ cmd_iam() {
         ok "Service account '$RUN_SA' criada."
     fi
 
-    # Lista de secrets para os quais a SA precisa de acesso
+    # Secret consolidado que a SA precisa acessar
     local -a secret_names=(
-        "google-service-account-json"
-        "telegram-bot-token"
-        "telegram-webhook-secret-token"
-        "deepseek-api-key"
-        "gemini-api-key"
-        "cron-secret-token"
-        "app-key"
+        "wallet-track-env"
     )
 
     log "Concedendo acesso ao Secret Manager..."
@@ -289,13 +248,13 @@ cmd_scheduler() {
 
     local cron_url="${svc_url}/cron/sync-pending"
 
-    # Obtém o cron token do Secret Manager
+    # Obtém o cron token do secret consolidado
     local cron_token
     cron_token=$(gcloud secrets versions access latest \
-        --secret="cron-secret-token" --project="$PROJECT_ID" 2>/dev/null || true)
+        --secret="wallet-track-env" --project="$PROJECT_ID" 2>/dev/null | jq -r '.CRON_SECRET_TOKEN' || true)
 
-    if [[ -z "$cron_token" ]]; then
-        err "Secret 'cron-secret-token' não encontrado ou vazio. Execute 'secrets' primeiro."
+    if [[ -z "$cron_token" || "$cron_token" == "null" ]]; then
+        err "Secret 'wallet-track-env' sem CRON_SECRET_TOKEN. Execute 'secrets' primeiro."
     fi
 
     if gcloud scheduler jobs describe "$job_name" \

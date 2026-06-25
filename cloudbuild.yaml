@@ -60,7 +60,7 @@ steps:
   #   - --allow-unauthenticated: endpoint /health e /cron/sync-pending
   #     públicos; segurança via tokens (webhook secret + cron token).
   #   - Env vars fixas (build-time) + secrets (runtime via Secret Manager).
-  #   - Volume mount: /secrets/sa.json (SA JSON para Firestore/Sheets).
+  #   - Volume mount: /secrets/env.json (JSON único com todos os secrets).
   # ---------------------------------------------------------------------------
   - id: 'deploy'
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -82,9 +82,8 @@ steps:
           --cpu-boost \
           --allow-unauthenticated \
           --service-account=${_RUN_SA} \
-          --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_NAME=Wallet Track,LOG_CHANNEL=stderr,LOG_LEVEL=info,SESSION_DRIVER=array,CACHE_STORE=array,QUEUE_CONNECTION=sync,DB_CONNECTION=sqlite,FIRESTORE_DATABASE_ID=wallet-track-db,TELEGRAM_ALLOWED_CHAT_IDS=5672987197,TELESCOPE_ENABLED=false,GOOGLE_SERVICE_ACCOUNT_JSON_PATH=/secrets/sa.json,GOOGLE_CLOUD_PROJECT_ID=${PROJECT_ID},GOOGLE_SHEETS_SPREADSHEET_ID=1rGNN0XOOYwDvMYDpFwU1a2ozQXPhAk8P2l8Xjnk9a14,GOOGLE_SHEETS_SHEET_NAME=Transações,GOOGLE_SHEETS_CATEGORIES_SHEET_NAME=Categorias" \
-          --set-secrets="TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_WEBHOOK_SECRET_TOKEN=telegram-webhook-secret-token:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET_TOKEN=cron-secret-token:latest,APP_KEY=app-key:latest" \
-          --set-secrets="/secrets/sa.json=google-service-account-json:latest"
+          --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_NAME=Wallet Track,LOG_CHANNEL=stderr,LOG_LEVEL=info,SESSION_DRIVER=file,CACHE_STORE=array,QUEUE_CONNECTION=sync,DB_CONNECTION=sqlite,TELESCOPE_ENABLED=false,TELEGRAM_ALLOWED_CHAT_IDS=5672987197" \
+          --set-secrets="/secrets/env.json=wallet-track-env:latest"
 
   # ---------------------------------------------------------------------------
   # Step 4: Register Telegram webhook + update Cloud Run env vars
@@ -108,9 +107,9 @@ steps:
         echo "Cloud Run URL: $${SVC_URL}"
 
         BOT_TOKEN=$$(gcloud secrets versions access latest \
-          --secret=telegram-bot-token --project=${PROJECT_ID})
+          --secret=wallet-track-env --project=${PROJECT_ID} | jq -r '.TELEGRAM_BOT_TOKEN')
         SECRET_TOKEN=$$(gcloud secrets versions access latest \
-          --secret=telegram-webhook-secret-token --project=${PROJECT_ID})
+          --secret=wallet-track-env --project=${PROJECT_ID} | jq -r '.TELEGRAM_WEBHOOK_SECRET_TOKEN')
 
         echo "Registrando webhook no Telegram..."
         curl -fsS -X POST "https://api.telegram.org/bot$${BOT_TOKEN}/setWebhook" \

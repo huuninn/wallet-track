@@ -37,6 +37,7 @@ COPY --from=ghcr.io/bsn4/grpc-php-rs:latest-php8.4-zts /usr/local/ /usr/local/
 # Atualizamos índices apt explicitamente para evitar listas obsoletas no cache
 # da imagem base (que pode estar defasado no momento do pull).
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends jq \
     && install-php-extensions \
         gmp \
         bcmath \
@@ -182,17 +183,15 @@ ENV APP_ENV=production \
 EXPOSE 8080
 
 # ---------------------------------------------------------------------------
-# Startup: o binário frankenphp sobe Caddy (HTTP/TLS) + runtime PHP embutido,
+# Startup: entrypoint lê /secrets/env.json (Secret Manager via volume mount),
+# exporta env vars e executa FrankenPHP (Caddy + runtime PHP embutido),
 # servindo a aplicação Laravel a partir de /app/public na porta 8080.
 #
-# Nota arquitetural: o plano original previa `php artisan octane:start
-# --server=frankenphp` como processo principal. Em M0 detectamos que o driver
-# Octane exige a extensão `pcntl` (compilação lenta da fonte) para tratamento
-# de sinais. Optamos pelo servidor FrankenPHP nativo (`php_server`), que é o
-# modo de produção documentado pela imagem oficial e dispensa pcntl. O Octane
-# permanece instalado (satisfaz o GATE de viabilidade) e pode ser reavaliado em
-# M10 (produção) se o benefício do worker-mode justificar o custo de pcntl.
+# Fallback: se /secrets/env.json não existir (dev local), assume que as
+# env vars já foram injetadas pelo docker-compose ou manualmente.
+#
 # Executa como usuário não-privilegiado www-data (hardening: superfície de RCE
 # reduzida caso uma dependência seja vulnerável).
 USER www-data
-CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
