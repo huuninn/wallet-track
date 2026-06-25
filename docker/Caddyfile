@@ -1,0 +1,22 @@
+{
+	frankenphp
+	admin off
+}
+
+:8000 {
+	root * /app/public
+	encode zstd gzip
+
+	# Servir arquivos estáticos existentes diretamente (ex.: css/js do Vite).
+	@static {
+		file {
+			try_files {path}
+		}
+	}
+	route @static {
+		file_server
+	}
+
+	# Todas as demais requisições vão para o runtime PHP (FrankenPHP).
+	php_server
+}

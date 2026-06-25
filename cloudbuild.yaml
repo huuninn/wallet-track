@@ -101,28 +101,28 @@ steps:
       - |
         set +x  # ⚠️ Não ecoar comandos (tokens em variáveis)
 
-        SVC_URL=$(gcloud run services describe ${_SERVICE_NAME} \
+        SVC_URL=$$(gcloud run services describe ${_SERVICE_NAME} \
           --region=${_REGION} --project=${PROJECT_ID} \
           --format='value(status.url)')
 
-        echo "Cloud Run URL: ${SVC_URL}"
+        echo "Cloud Run URL: $${SVC_URL}"
 
-        BOT_TOKEN=$(gcloud secrets versions access latest \
+        BOT_TOKEN=$$(gcloud secrets versions access latest \
           --secret=telegram-bot-token --project=${PROJECT_ID})
-        SECRET_TOKEN=$(gcloud secrets versions access latest \
+        SECRET_TOKEN=$$(gcloud secrets versions access latest \
           --secret=telegram-webhook-secret-token --project=${PROJECT_ID})
 
         echo "Registrando webhook no Telegram..."
-        curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-          -d "url=${SVC_URL}/webhook/telegram" \
-          -d "secret_token=${SECRET_TOKEN}" \
+        curl -fsS -X POST "https://api.telegram.org/bot$${BOT_TOKEN}/setWebhook" \
+          -d "url=$${SVC_URL}/webhook/telegram" \
+          -d "secret_token=$${SECRET_TOKEN}" \
           | tee /dev/stderr
         echo ""
 
         echo "Atualizando env vars APP_URL e TELEGRAM_WEBHOOK_URL..."
         gcloud run services update ${_SERVICE_NAME} \
           --region=${_REGION} --project=${PROJECT_ID} \
-          --update-env-vars="APP_URL=${SVC_URL},TELEGRAM_WEBHOOK_URL=${SVC_URL}/webhook/telegram" \
+          --update-env-vars="APP_URL=$${SVC_URL},TELEGRAM_WEBHOOK_URL=$${SVC_URL}/webhook/telegram" \
           --quiet
 
         echo "Webhook registrado e env vars atualizadas."
