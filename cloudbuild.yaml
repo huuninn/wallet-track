@@ -35,7 +35,7 @@ steps:
       - |
         docker build \
           --target runtime \
-          --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${COMMIT_SHA} \
+          --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${BUILD_ID} \
           --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:latest \
           .
 
@@ -69,7 +69,7 @@ steps:
       - '-c'
       - |
         gcloud run deploy ${_SERVICE_NAME} \
-          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${COMMIT_SHA} \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${BUILD_ID} \
           --region=${_REGION} \
           --platform=managed \
           --memory=512Mi \
@@ -131,5 +131,5 @@ steps:
 # Imagens a serem armazenadas no Artifact Registry após build
 # ---------------------------------------------------------------------------
 images:
-  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${COMMIT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${BUILD_ID}'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:latest'
