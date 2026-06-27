@@ -279,4 +279,215 @@ class TransactionDataTest extends TestCase
         $this->assertNull($dto->getFieldValue('category'));
         $this->assertNull($dto->getFieldValue('observations'));
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M-ITENS-1 — Items
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_constructor_defaults_items_to_empty_array(): void
+    {
+        $dto = new TransactionData(description: 'Teste');
+        $this->assertSame([], $dto->items);
+    }
+
+    public function test_from_array_with_items_null_returns_empty_array(): void
+    {
+        // CT-102/AC-003: items:null → []
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => null,
+        ]);
+
+        $this->assertSame([], $dto->items);
+    }
+
+    public function test_from_array_with_item_empty_name_discarded(): void
+    {
+        // CT-103/AC-004: item com name vazio é descartado.
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => '', 'qty' => 2],
+                ['name' => 'Coca', 'qty' => 1],
+            ],
+        ]);
+
+        $this->assertCount(1, $dto->items);
+        $this->assertSame('Coca', $dto->items[0]['name']);
+    }
+
+    public function test_from_array_with_250_items_truncates_to_200(): void
+    {
+        // CT-140/AC-033: trunca em ITEMS_MAX_STORED=200.
+        $items = [];
+        for ($i = 1; $i <= 250; $i++) {
+            $items[] = ['name' => "Item {$i}", 'qty' => $i];
+        }
+
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => $items,
+        ]);
+
+        $this->assertCount(200, $dto->items);
+        $this->assertSame('Item 1', $dto->items[0]['name']);
+        $this->assertSame('Item 200', $dto->items[199]['name']);
+    }
+
+    public function test_from_array_with_items_as_string_returns_empty(): void
+    {
+        // CT-153/AC-055: items como string → [] (defesa LLM).
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => 'não-é-array',
+        ]);
+
+        $this->assertSame([], $dto->items);
+    }
+
+    public function test_from_array_with_qty_as_non_numeric_string_returns_null(): void
+    {
+        // CT-154/AC-056: qty:"dois" → null.
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => 'Coca', 'qty' => 'dois', 'unitPrice' => 5.00],
+            ],
+        ]);
+
+        $this->assertCount(1, $dto->items);
+        $this->assertNull($dto->items[0]['qty']);
+        $this->assertSame(5.00, $dto->items[0]['unitPrice']);
+    }
+
+    public function test_negative_unit_price_preserved(): void
+    {
+        // CT-106/Decisão Portão 2: negativos preservados (descontos de cupom).
+        $dto = TransactionData::fromArray([
+            'description' => 'Supermercado',
+            'items' => [
+                ['name' => 'Desconto fidelidade', 'qty' => 1, 'unitPrice' => -8.10, 'subtotal' => -8.10],
+            ],
+        ]);
+
+        $this->assertCount(1, $dto->items);
+        $this->assertSame(-8.10, $dto->items[0]['unitPrice']);
+        $this->assertSame(-8.10, $dto->items[0]['subtotal']);
+    }
+
+    public function test_with_items_normalizes(): void
+    {
+        // withItems normaliza via normalizeItems.
+        $dto = new TransactionData(description: 'Teste', amount: 100.0);
+        $updated = $dto->withItems([
+            ['name' => '  Arroz  ', 'qty' => 'invalid'],
+            ['name' => '', 'qty' => 5],       // descartado (name vazio)
+            'não-array',                       // descartado
+            ['name' => 'Feijão'],
+        ]);
+
+        $this->assertCount(2, $updated->items);
+        $this->assertSame('Arroz', $updated->items[0]['name']);
+        $this->assertNull($updated->items[0]['qty']);
+        $this->assertSame('Feijão', $updated->items[1]['name']);
+
+        // Imutável: original intacto.
+        $this->assertSame([], $dto->items);
+        $this->assertSame(100.0, $updated->amount);
+    }
+
+    public function test_with_field_items_works(): void
+    {
+        $dto = new TransactionData(description: 'Teste');
+        $updated = $dto->withField('items', [
+            ['name' => 'Arroz', 'qty' => 2, 'unitPrice' => 32.90],
+        ]);
+
+        $this->assertCount(1, $updated->items);
+        $this->assertSame('Arroz', $updated->items[0]['name']);
+        $this->assertSame([], $dto->items);
+    }
+
+    public function test_with_field_other_fields_preserves_items(): void
+    {
+        // CRÍTICO: withField('amount') preserva items existentes.
+        $original = TransactionData::fromArray([
+            'description' => 'Teste',
+            'amount' => 50.0,
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 2],
+            ],
+        ]);
+
+        $this->assertCount(1, $original->items);
+
+        $updated = $original->withField('amount', 100.0);
+
+        $this->assertSame(100.0, $updated->amount);
+        $this->assertCount(1, $updated->items);
+        $this->assertSame('Arroz', $updated->items[0]['name']);
+    }
+
+    public function test_get_field_value_items(): void
+    {
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => 'Coca', 'qty' => 2],
+            ],
+        ]);
+
+        $items = $dto->getFieldValue('items');
+        $this->assertIsArray($items);
+        $this->assertCount(1, $items);
+        $this->assertSame('Coca', $items[0]['name']);
+    }
+
+    public function test_to_draft_array_omits_empty_items(): void
+    {
+        // items=[] → omitido do draft (consistente com labels).
+        $dto = new TransactionData(description: 'Teste', amount: 50.0);
+        $draft = $dto->toDraftArray();
+
+        $this->assertArrayNotHasKey('items', $draft);
+    }
+
+    public function test_to_draft_array_includes_items_when_non_empty(): void
+    {
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => 'Coca'],
+            ],
+        ]);
+
+        $draft = $dto->toDraftArray();
+        $this->assertArrayHasKey('items', $draft);
+        $this->assertCount(1, $draft['items']);
+        $this->assertSame('Coca', $draft['items'][0]['name']);
+    }
+
+    public function test_round_trip_draft_preserves_items(): void
+    {
+        // toDraftArray → fromDraftArray → items idênticos.
+        $original = TransactionData::fromArray([
+            'description' => 'Teste',
+            'amount' => 87.30,
+            'type' => 'expense',
+            'date' => '2026-06-15',
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 2, 'unitPrice' => 32.90, 'subtotal' => 65.80],
+                ['name' => 'Feijão', 'qty' => 1, 'unitPrice' => 8.50, 'subtotal' => 8.50],
+            ],
+        ]);
+
+        $draft = $original->toDraftArray();
+        $restored = TransactionData::fromDraftArray($draft);
+
+        $this->assertSame(87.30, $restored->amount);
+        $this->assertCount(2, $restored->items);
+        $this->assertSame($original->items, $restored->items);
+    }
 }

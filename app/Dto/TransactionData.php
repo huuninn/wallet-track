@@ -25,7 +25,25 @@ final readonly class TransactionData
     public const int DESCRIPTION_MAX_LENGTH = 500;
 
     /**
-     * @param  array<int, string>  $labels  Lista de etiquetas (default vazio).
+     * Limite de segurança para armazenamento Firestore (defesa contra LLM
+     * descontrolado ou usuário colando lista gigante). Acima disso, trunca
+     * preservando os primeiros N itens.
+     *
+     * Decisão P6=a: sem limite de armazenamento no Firestore. O teto aqui é
+     * puramente sanitização — 200 itens é um valor pragmático que cobre
+     * qualquer cupom fiscal real sem explodir o documento.
+     */
+    public const int ITEMS_MAX_STORED = 200;
+
+    /**
+     * Truncamento visual no Telegram (resumo de confirmação, edição).
+     * Decisão P6=a: "~10 itens + '... e mais N itens'".
+     */
+    public const int ITEMS_MAX_DISPLAY = 10;
+
+    /**
+     * @param  array<int, string>                                                  $labels  Lista de etiquetas (default vazio).
+     * @param  list<array{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}>  $items   Lista de itens descritivos (default vazio).
      */
     public function __construct(
         public ?string $description,
@@ -36,6 +54,7 @@ final readonly class TransactionData
         public ?string $date = null,
         public ?string $observations = null,
         public ?float $confidence = null,
+        public array $items = [],
     ) {}
 
     /**
@@ -67,6 +86,7 @@ final readonly class TransactionData
             date: self::stringOrNull($data['date'] ?? null),
             observations: self::stringOrNull($data['observations'] ?? null),
             confidence: self::floatOrNull($data['confidence'] ?? null),
+            items: self::normalizeItems($data['items'] ?? []),
         );
     }
 
@@ -85,6 +105,7 @@ final readonly class TransactionData
             date: $this->date,
             observations: $this->observations,
             confidence: $this->confidence,
+            items: $this->items,
         );
     }
 
@@ -105,6 +126,7 @@ final readonly class TransactionData
             date: $this->date,
             observations: $this->observations,
             confidence: $this->confidence,
+            items: $this->items,
         );
     }
 
@@ -136,6 +158,32 @@ final readonly class TransactionData
             date: $this->date,
             observations: $this->observations,
             confidence: $this->confidence,
+            items: $this->items,
+        );
+    }
+
+    /**
+     * Retorna uma nova instância com a lista de items substituída.
+     *
+     * O array fornecido é normalizado via {@see normalizeItems()} para
+     * garantir invariantes (name não-vazio, tipos corretos, truncamento).
+     * Imutável.
+     *
+     * @param  array  $items  Lista bruta de items a normalizar.
+     * @return self  Nova instância com items normalizados.
+     */
+    public function withItems(array $items): self
+    {
+        return new self(
+            description: $this->description,
+            amount: $this->amount,
+            type: $this->type,
+            category: $this->category,
+            labels: $this->labels,
+            date: $this->date,
+            observations: $this->observations,
+            confidence: $this->confidence,
+            items: self::normalizeItems($items),
         );
     }
 
@@ -187,6 +235,7 @@ final readonly class TransactionData
             'date' => $this->date,
             'observations' => $this->observations,
             'confidence' => $this->confidence,
+            'items' => $this->items,
         ], fn (mixed $v): bool => $v !== null && $v !== []);
     }
 
@@ -226,6 +275,7 @@ final readonly class TransactionData
                 date: $this->date,
                 observations: $this->observations,
                 confidence: $this->confidence,
+                items: $this->items,
             ),
             'type' => new self(
                 description: $this->description,
@@ -236,6 +286,7 @@ final readonly class TransactionData
                 date: $this->date,
                 observations: $this->observations,
                 confidence: $this->confidence,
+                items: $this->items,
             ),
             'date' => new self(
                 description: $this->description,
@@ -246,6 +297,7 @@ final readonly class TransactionData
                 date: $value,
                 observations: $this->observations,
                 confidence: $this->confidence,
+                items: $this->items,
             ),
             'description' => $this->withDescription((string) $value),
             'category' => new self(
@@ -257,6 +309,7 @@ final readonly class TransactionData
                 date: $this->date,
                 observations: $this->observations,
                 confidence: $this->confidence,
+                items: $this->items,
             ),
             'observations' => new self(
                 description: $this->description,
@@ -267,8 +320,10 @@ final readonly class TransactionData
                 date: $this->date,
                 observations: $value,
                 confidence: $this->confidence,
+                items: $this->items,
             ),
             'labels' => $this->withLabels(is_array($value) ? $value : []),
+            'items' => $this->withItems(is_array($value) ? $value : []),
             default => throw new \InvalidArgumentException(
                 "Campo não editável no DTO: {$field}.",
             ),
@@ -295,6 +350,7 @@ final readonly class TransactionData
             'description' => $this->description,
             'category' => $this->category,
             'observations' => $this->observations,
+            'items' => $this->items,
             default => throw new \InvalidArgumentException(
                 "Campo não acessível no DTO: {$field}.",
             ),
@@ -360,5 +416,61 @@ final readonly class TransactionData
         }
 
         return null;
+    }
+
+    /**
+     * Normaliza a lista de items vinda do JSON do LLM ou do ItemsParser.
+     *
+     * Para cada item:
+     *  - `name`: trim, string não-vazia (item descartado se name vazio);
+     *  - `qty`: coerce para float; null se ausente/não-numérico;
+     *  - `unitPrice`: coerce para float; null se ausente/não-numérico;
+     *  - `subtotal`: coerce para float; null se ausente/não-numérico.
+     *
+     * Não calcula subtotal (responsabilidade do ItemsParser quando há dados
+     * suficientes; LLM pode enviar subtotal pré-calculado).
+     *
+     * Não clampar negativos (Decisão Portão 2: aceitar descontos de cupom).
+     *
+     * Trunca para ITEMS_MAX_STORED como defesa sanitária.
+     *
+     * @param  mixed  $items  Esperado list<array>; defensivo contra LLM.
+     * @return list<array{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}>
+     */
+    private static function normalizeItems(mixed $items): array
+    {
+        if (! is_array($items)) {
+            return [];
+        }
+
+        $clean = [];
+        foreach ($items as $raw) {
+            if (! is_array($raw)) {
+                continue;
+            }
+
+            $name = self::stringOrNull($raw['name'] ?? null);
+            if ($name === null) {
+                // Item sem name é descartado (log warning via caller, não aqui).
+                continue;
+            }
+
+            if (mb_strlen($name) > self::DESCRIPTION_MAX_LENGTH) {
+                $name = mb_substr($name, 0, self::DESCRIPTION_MAX_LENGTH - 3).'...';
+            }
+
+            $clean[] = [
+                'name' => $name,
+                'qty' => self::floatOrNull($raw['qty'] ?? null),
+                'unitPrice' => self::floatOrNull($raw['unitPrice'] ?? null),
+                'subtotal' => self::floatOrNull($raw['subtotal'] ?? null),
+            ];
+
+            if (count($clean) >= self::ITEMS_MAX_STORED) {
+                break;
+            }
+        }
+
+        return array_values($clean);
     }
 }
