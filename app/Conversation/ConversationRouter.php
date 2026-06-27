@@ -181,6 +181,18 @@ final class ConversationRouter
     }
 
     /**
+     * Expõe o limite de retentativas configurado (W-C — M-ITENS-7).
+     *
+     * Usado pelo {@see WizardHandler} que precisa compartilhar o mesmo
+     * limite de retry que o Router (ex.: maxDataRetries=3 configurado
+     * externamente deve ser respeitado em todos os branches de validação).
+     */
+    public function maxDataRetries(): int
+    {
+        return $this->maxDataRetries;
+    }
+
+    /**
      * Factory lazy do {@see WizardHandler} (M9.3 / T-016).
      *
      * Cria o handler sob demanda na primeira invocação de `route()` que
@@ -705,11 +717,10 @@ final class ConversationRouter
                 source: $source,
                 retryCount: 0,
             ),
-            // M9.3 (T-016): limpa campos stale do wizard. Garante que
-            // `_wizard_step` e `_wizard_active` não persistam em
-            // AWAITING_CONFIRMATION — no-op se não existirem (caso do
-            // fluxo de linguagem natural).
-            clearFields: ['awaiting_field', '_wizard_step', '_wizard_active', '_wizard_items_asked', '_wizard_message_id_items_choice'], // W-3: limpa campos stale do wizard
+            // M9.3 (T-016): limpa campos stale. `_wizard_*` são limpos
+            // implicitamente pelo overwrite do draft em toDraftArray() —
+            // não precisam de deleteField explícito (W-NB-1).
+            clearFields: ['awaiting_field'], // W-3: limpa campos stale do wizard
         );
     }
 

@@ -87,7 +87,10 @@ M0 → M2 → M1 → M3 → M4 → [M5 ∥ M6 ∥ M7 ∥ M8] → M9 ✅ → M10
 | M7 | State machine + Conversation Router | ✅ |
 | M8 | Sugestão heurística de labels e categoria | ✅ |
 | **M9** | **Comandos auxiliares (`/nova`, `/ultimos`, `/categorias`, `/sync` + cron)** | ✅ |
+| **M-ITENS** | **Feature Items — granularidade item-nível em transações (Wizard sub-fluxo, ItemsParser, coluna I Sheets, edição inline)** | ✅ 26/06/2026 |
 | M10 | Deploy produção (Cloud Run + Cloud Scheduler) | ⏸️ |
+
+**Feature Items (M-ITENS-1 a M-ITENS-7):** detalhamento de itens descritivos por transação (cupons fiscais). Documentação: [Decisões Portão 3](./04-clarificacoes.md#decisões-portão-3--feature-items-granularidade-item-nível), [Especificação Técnica §4/§5/§8.5](./02-especificacao-tecnica.md), [Checklist Staging](./testes/items-checklist-staging.md).
 
 ---
 

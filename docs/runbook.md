@@ -397,3 +397,17 @@ planilha durante a sincronizacao.
 
 A SA do Cloud Run (`wallet-track-run`) acessa Firestore, mas nao precisa de
 permissao no Sheets (a sincronizacao usa a SA dedicada de Sheets).
+
+### 9.6 Coluna de Itens na planilha (feature items)
+
+A partir de jun/2026, a planilha possui 9 colunas (A-I), sendo a coluna I
+dedicada aos **itens** da transacao (detalhamento item-nivel de cupons fiscais).
+
+Para visualizar os itens na coluna I em uma planilha **existente** (criada antes
+da feature), adicione o cabecalho `Itens` na celula I1 manualmente. O codigo e
+idempotente — `ensureHeaders` nao sobrescreve cabecalhos existentes, apenas
+preenche a linha 1 se estiver vazia. Os dados dos itens sao escritos na coluna I
+independentemente da presenca do cabecalho.
+
+Em uma planilha **nova** (linha 1 vazia), o `ensureHeaders` escreve todas as 9
+colunas de cabecalho automaticamente, incluindo `Itens` em I1.

@@ -337,9 +337,10 @@ final class WizardHandler
         $items = $this->router->validateField('items', $raw);
 
         if ($items === null) {
-            // Input inválido — re-pergunta com retry compartilhado (maxDataRetries=3).
+            // Input inválido — re-pergunta com retry compartilhado (W-C: usa
+            // maxDataRetries do Router em vez de hardcoded 3).
             $newCount = $this->firestore->incrementSessionRetry($chatId);
-            $maxRetries = 3;
+            $maxRetries = $this->router->maxDataRetries();
 
             if ($newCount > $maxRetries) {
                 $this->firestore->clearSession($chatId);
@@ -437,7 +438,7 @@ final class WizardHandler
         string $raw,
     ): void {
         $newCount = $this->firestore->incrementSessionRetry($chatId);
-        $maxRetries = 3;
+        $maxRetries = $this->router->maxDataRetries();
 
         if ($newCount > $maxRetries) {
             $this->firestore->clearSession($chatId);

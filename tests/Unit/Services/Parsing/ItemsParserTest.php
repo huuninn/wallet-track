@@ -196,11 +196,12 @@ class ItemsParserTest extends TestCase
     |--------------------------------------------------------------------------
     */
 
-    public function test_parse_clamps_negative_qty_to_null(): void
+    public function test_parse_does_not_clamp_negative_qty_that_is_dto_responsibility(): void
     {
-        // W3: qty negativo → null (não tem significado).
-        // Nota: "x-2" NÃO é capturado como qty (regex só aceita x<digitos>).
-        // Mas se o LLM/JSON enviar qty negativo, normalizeItems clampa.
+        // W-D: o parser NÃO clampa qty negativo — o regex só captura \d+,
+        // então qty nunca será negativo aqui. O clamp real (para dados do
+        // LLM) é responsabilidade do DTO normalizeItems().
+        // "x-2" NÃO é capturado como qty (regex só aceita x<digitos>).
         // Aqui testamos que "x2" normal seguido de preço ainda funciona.
         $result = $this->parser->parse('Produto x2 10.00');
 

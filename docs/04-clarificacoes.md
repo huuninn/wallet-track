@@ -216,3 +216,51 @@ Usa `editMessageText` na MESMA mensagem (mantém `message_id`). Máximo 4 ediç�
 | 8 | Progresso imagem | Edita mesma mensagem em 4 etapas |
 | 9 | Descrição longa | Máx 500 chars, trunca com "..." |
 | 10 | Emojis | Permitidos em todas as camadas |
+
+---
+
+## Decisões Portão 3 — Feature Items (Granularidade Item-Nível)
+
+> **Data:** 2026-06-26 &nbsp;|&nbsp; **Feature:** `feature/items-dimension` &nbsp;|&nbsp; **Especificação:** `docs/02-especificacao-tecnica.md` (atualizada M-ITENS-7)
+
+### Decisões de Modelagem (Portão 1)
+
+| # | Decisão | Justificativa |
+|---|---------|---------------|
+| P1 | Items estruturados no Firestore como `array<map{name,qty,unitPrice,subtotal}>` para agregação futura | Usuário quer filtrar por item no futuro; schema plano (não subcoleção) mantém simplicidade de leitura/escrita |
+| P2 | Modelo rico por item: `{name, qty, unitPrice, subtotal}` | Permite agregação quantitativa (total por categoria, item mais comprado, ticket médio); evita ter que re-parsear strings depois |
+| P3 | Soma dos subtotais NÃO validada contra `amount` | Recibos brasileiros têm descontos, acréscimos, taxas de serviço; items são descritivos, não contábeis; validação traria falsos positivos |
+| P4 | Ordenação por subtotal crescente (D-P4=c + D-PC1=a) na exibição | Escolha do usuário: itens mais baratos primeiro, mais caros por último; consistente entre Telegram e Sheets |
+| P5 | Coluna I (Itens) no Sheets: newline numerado dentro de uma única célula | Legível na planilha; evita colunas dinâmicas (quebraria fórmulas e exigiria migração); mantém layout fixo de 9 colunas |
+| P6 | Sem limite de armazenamento no Firestore (200 itens é sanitização); Telegram trunca em ~10 itens visuais | Firestore é barato (uso pessoal); chat gigante no Telegram é inutilizável; 10 itens cobre a maioria dos cupons visíveis |
+| P7 | Gemini extrai TODOS os itens do cupom fiscal, sem truncamento | Fidelidade dos dados > custo de token (uso pessoal, baixo volume); agregação futura precisa de todos os itens |
+| P8 | Wizard sub-fluxo opcional (intermezzo entre Description e Category) | Nem toda transação tem items (ex.: aluguel, salário); não adicionar WizardStep evita renumeração e mantém 5 etapas canônicas |
+| P9 | Usuário adiciona coluna I manualmente (`ensureHeaders` é idempotente) | Planilhas existentes com 8 colunas não são sobrescritas; o código funciona com ou sem cabeçalho em I1; evita migração forçada |
+| P10 | Items editáveis via botão "Editar campo" (consistente com outros campos) | Reusa o fluxo de edição existente (AWAITING_EDITION → AWAITING_CONFIRMATION); não introduz novo estado ou comando |
+
+### Decisões de Convenção (Portão 1)
+
+| # | Decisão | Justificativa |
+|---|---------|---------------|
+| PC1 | Ordenação por subtotal crescente (reforça P4) | Mesmo critério do Sheets aplicado ao Telegram via helper compartilhado `sortItemsForDisplay` |
+| PC2 | Sintaxe compacta wizard: `Nome [xN] [preço]` por linha | Equilíbrio entre UX (simples, sem JSON) e expressividade (qty e preço opcionais); regex estrito para evitar ambiguidade com nomes (ex.: "x-tudo" não é qty) |
+| PC3 | Só `name` é obrigatório; `qty` default 1 na exibição; preços opcionais | Flexibilidade: usuário pode registrar "Feijão" sem preço; exibição mostra `x1` apenas se qty foi informada; `null` no armazenamento distingue "não informado" de "informado como 1" |
+
+### Decisões Portão 2 (Ambiguidades Resolvidas)
+
+| # | Decisão | Justificativa |
+|---|---------|---------------|
+| CT-106 | Aceitar `unitPrice`/`subtotal` negativos (descontos de cupom) | Realidade do cupom fiscal brasileiro: linhas de "DESCONTO" com valor negativo; `normalizeItems` não clampa float negativo em unitPrice/subtotal; apenas `qty < 0` é clampado |
+| CT-156 | `maxDataRetries` compartilhado com wizard (W-C: usar `router->maxDataRetries()`) | Consistência: mesmo limite de retry para validação de items no wizard e no fluxo de linguagem natural; evita divergência se config externo mudar |
+| CT-158 | Feedback de edição = contagem simples ("3 itens → 5 itens") | Suficiente para o usuário confirmar que a edição foi aplicada; diff completo seria complexo (array) e pouco informativo no chat; o usuário vê a lista na nova confirmação |
+| CT-160 | Sheets mantém append-only (não atualiza linha existente) | Limitação conhecida e documentada: editar items pós-confirmação não atualiza a planilha; o Firestore é a fonte da verdade; a planilha é snapshot do momento da criação |
+
+### Lacunas Resolvidas
+
+| # | Decisão |
+|---|---------|
+| L1 | Items permitidos em transações de receita (`income`) — não há restrição de tipo; um salário pode ter items descritivos ("Projeto A", "Consultoria B") |
+| L2 | `/ultimos` NÃO exibe items — mantém formato compacto atual (só descrição, valor, tipo, data); items visíveis apenas na confirmação e na planilha |
+| L3 | Labels + items coexistem sem conflito — são campos independentes no DTO e no Firestore; regressão validada |
+| L4 | Múltiplas edições em sequência funcionam — cada edição gera nova confirmação com os items atualizados; regressão validada |
+| L5 | Round-trip draft items validado — `toDraftArray()` inclui items; `fromDraftArray()` reconstrói via `normalizeItems`; items sobrevivem a serialização/desserialização da sessão |

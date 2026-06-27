@@ -135,9 +135,26 @@ Para 1 único usuário, volume baixo:
 | D | **Tipo** | `Despesa` / `Receita` | `Despesa` | ✅ |
 | E | **Categoria** | Texto | `Alimentação` | ✅ |
 | F | **Labels** | Hashtags separadas por espaço | `#almoço #japonês` | ❌ |
-| G | **Origem** | `texto` / `imagem` | `texto` | ✅ |
-| H | **ID Firestore** | UUID | `abc123-def456` | ✅ |
-| I | **Observações** | Texto | `Pago com cartão` | ❌ |
+| G | **ID Firestore** | UUID | `abc123-def456` | ✅ |
+| H | **Observações** | Texto | `Pago com cartão` | ❌ |
+| I | **Itens** | Texto (multiline, numerado) | `1. Feijão (x2 — R$ 8,50 = R$ 17,00)\n2. Arroz 5kg (x1 — R$ 32,90 = R$ 32,90)` | ❌ |
+
+> **Correção M-ITENS-7:** a documentação anterior estava divergente do código (colunas G/H/I trocadas). A tabela acima reflete a implementação real: G=ID Firestore, H=Observações, I=Itens. A coluna "Origem" (`source`) não é exposta na planilha (rastreada internamente no Firestore).
+
+**Coluna I — Itens (detalhamento item-nível):**
+- Cada transação pode ter 0 ou mais itens descritivos (produtos de um cupom fiscal, por exemplo).
+- Itens são numerados e separados por quebra de linha (`\n`) dentro da célula.
+- Ordenação por subtotal crescente; itens sem preço ao final, na ordem de entrada.
+- Formato por linha: `N. Nome (xQtd — R$ Unit = R$ Sub)` — exibe qty e preço apenas quando informados.
+- Exemplo com 3 itens:
+  ```
+  1. Bolsa plástica (x1 — R$ 0,50 = R$ 0,50)
+  2. Detergente (x3 — R$ 4,50 = R$ 13,50)
+  3. Arroz 5kg (x1 — R$ 32,90 = R$ 32,90)
+  ```
+- Exemplo com item só-nome: `1. Feijão` (sem parênteses quando qty/preço não informados).
+
+**Idempotência do `ensureHeaders`:** o método só escreve cabeçalhos se a linha 1 estiver vazia. Para planilhas existentes (8 colunas), a coluna I é preenchida com dados mas o cabeçalho I1 permanece vazio até o usuário adicionar "Itens" manualmente. O código funciona com ou sem o cabeçalho em I1. Ver [Decisões Portão 3 — P9](./04-clarificacoes.md#decisões-portão-3--feature-items-granularidade-item-nível).
 
 ### Formatos
 - **Data**: ISO `YYYY-MM-DD` via API; Sheets formata para `DD/MM/AAAA`
@@ -162,6 +179,7 @@ firestore
 │       ├── type:               "expense" | "income"
 │       ├── category:           string
 │       ├── labels:             array<string>
+│       ├── items:               array<map{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}>
 │       ├── source:             "text" | "image"
 │       ├── observations:       string | null
 │       ├── sync_status:        "pending" | "synced" | "failed"
@@ -196,6 +214,8 @@ firestore
         ├── updated_at:         timestamp
         └── retry_count:        integer
 ```
+
+> **Retrocompatibilidade (items):** documentos `transactions/{id}` criados antes da feature items (jun/2026) não têm o campo `items`. Todo código que lê items deve usar `$doc['items'] ?? []` (null-coalescing para array vazio). O campo é **sempre presente** em novos documentos (array vazio `[]` quando não há items — nunca null, nunca omitido). Ver [Decisões Portão 3 — P1](./04-clarificacoes.md#decisões-portão-3--feature-items-granularidade-item-nível).
 
 ### Índices compostos necessários
 | Collection | Índice | Propósito |
@@ -364,6 +384,33 @@ Regras: nunca inventar dados; campos ilegíveis → `null`; `temperature: 0.1` p
 Ver detalhes do algoritmo em [Clarificações](./04-clarificacoes.md#4-algoritmo-exato-da-heurística-de-sugestão-de-labels-ct-020).
 
 Resumo: histórico (top labels da categoria, prioridade) + keywords da descrição (após remoção de stopwords PT-BR), merge com dedupe, máximo 5.
+
+---
+
+### 8.5 DTO `TransactionData` — Propriedade `items` (M-ITENS-7)
+
+O DTO imutável `TransactionData` (ver `app/Dto/TransactionData.php`) foi estendido com a dimensão items:
+
+| Elemento | Tipo | Descrição |
+|----------|------|-----------|
+| `public array $items` | `list<array{name:string,qty:float\|null,unitPrice:float\|null,subtotal:float\|null}>` | Lista de itens descritivos (default `[]`) |
+| `ITEMS_MAX_STORED` | `int = 200` | Limite de segurança para armazenamento Firestore (sanitização contra LLM descontrolado ou colagem de lista gigante) |
+| `ITEMS_MAX_DISPLAY` | `int = 10` | Truncamento visual no Telegram (resumo de confirmação) |
+
+**Helpers afetados:**
+- `fromArray($data)`: normaliza items via `normalizeItems($data['items'] ?? [])`
+- `withItems(array $items)`: nova instância com items normalizados
+- `withField('items', $value)`: reusa `withItems`
+- `getFieldValue('items')`: acesso para captura do valor antigo na edição
+- `toDraftArray()`: inclui `'items'` (omitido quando `[]` — consistente com `labels`)
+- `normalizeItems(mixed $items)`: sanitização privada (descarta não-arrays, coerce tipos, trunca name ≥ 500 chars, trunca para `ITEMS_MAX_STORED`)
+
+**Invariantes garantidas pelo DTO:**
+- `items` nunca é `null` — sempre `[]` ou array de maps
+- `name` é string não-vazia após `trim()`, ≤ 500 chars (truncado com `"..."`)
+- `qty` é `float|null`; `qty < 0` é clampado para `null`
+- `unitPrice`/`subtotal` aceitam qualquer float (inclusive negativo — descontos de cupom)
+- Ordem de entrada é preservada (`array_values`)
 
 ---
 

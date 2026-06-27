@@ -91,10 +91,9 @@ final class ItemsParser
             }
 
             $qty = isset($m['qty']) && $m['qty'] !== '' ? $this->parseNumber($m['qty']) : null;
-            // W3: qty negativo não tem significado — clampa para null.
-            if ($qty !== null && $qty < 0) {
-                $qty = null;
-            }
+            // Clamp de qty negativo é responsabilidade do DTO (normalizeItems)
+            // para dados vindos do LLM. Aqui o regex só captura \d+, então
+            // qty nunca será negativo — remover o clamp evita código morto (W-D).
             $unitPrice = isset($m['price']) && $m['price'] !== '' ? $this->parseNumber($m['price']) : null;
 
             // Subtotal calculado apenas quando ambos qty e unitPrice estão presentes.
