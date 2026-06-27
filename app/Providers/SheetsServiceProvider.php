@@ -11,6 +11,7 @@ use App\Services\Google\GoogleSheetsGateway;
 use App\Services\Google\InMemorySheetsGateway;
 use App\Services\Google\SheetsGateway;
 use App\Services\Google\SheetsService;
+use App\Support\ItemsSorter;
 use Google\Client;
 use Google\Service\Sheets;
 use Illuminate\Support\ServiceProvider;
@@ -84,6 +85,7 @@ class SheetsServiceProvider extends ServiceProvider
 
             return new SheetsService(
                 $app->make(SheetsGateway::class),
+                new ItemsSorter,
                 $config->string('google.sheets.sheet_name'),
                 $config->string('google.sheets.categories_sheet_name'),
             );

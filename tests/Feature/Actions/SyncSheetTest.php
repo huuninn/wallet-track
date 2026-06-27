@@ -11,6 +11,7 @@ use App\Services\Google\InMemoryFirestoreGateway;
 use App\Services\Google\InMemorySheetsGateway;
 use App\Services\Google\SheetsGateway;
 use App\Services\Google\SheetsService;
+use App\Support\ItemsSorter;
 use Google\Service\Exception as GoogleServiceException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Tests\TestCase;
@@ -49,7 +50,7 @@ class SyncSheetTest extends TestCase
         $this->sheetsGateway = new InMemorySheetsGateway;
         $this->firestoreGateway = new InMemoryFirestoreGateway;
 
-        $sheetsService = new SheetsService($this->sheetsGateway);
+        $sheetsService = new SheetsService($this->sheetsGateway, new ItemsSorter);
         $this->firestore = new FirestoreService($this->firestoreGateway);
 
         $this->action = new SyncSheet($sheetsService, $this->firestore);
@@ -135,7 +136,7 @@ class SyncSheetTest extends TestCase
             public function deleteColumn(int $sheetId, int $columnIndex): void {}
 
             public function writeAll(string $range, array $rows): void {}
-        });
+        }, new ItemsSorter);
         $action = new SyncSheet($failingSheets, $this->firestore);
 
         // Não deve relançar.
@@ -171,7 +172,7 @@ class SyncSheetTest extends TestCase
             public function deleteColumn(int $sheetId, int $columnIndex): void {}
 
             public function writeAll(string $range, array $rows): void {}
-        });
+        }, new ItemsSorter);
         $action = new SyncSheet($failingSheets, $this->firestore);
 
         $action->handle($dto, $firestoreId);
@@ -242,7 +243,7 @@ class SyncSheetTest extends TestCase
             public function deleteColumn(int $sheetId, int $columnIndex): void {}
 
             public function writeAll(string $range, array $rows): void {}
-        });
+        }, new ItemsSorter);
         $action = new SyncSheet($failingSheets, $this->firestore);
 
         $result = $action->handle($dto, $firestoreId);

@@ -97,6 +97,7 @@ final class FirestoreService
             'category' => $dto->category,
             'labels' => $dto->labels,
             'observations' => $dto->observations,
+            'items' => $dto->items,
 
             // Campos de sincronização com Sheets (consumidos pelo M6).
             'sync_status' => self::SYNC_PENDING,
@@ -116,6 +117,11 @@ final class FirestoreService
 
     /**
      * Recupera um lançamento pelo id. Devolve `data` ou null se não existe.
+     *
+     * **Retrocompatibilidade (Decisão D8):** documentos criados ANTES da
+     * feature items NÃO têm o campo `items`. Callers devem usar
+     * `$doc['items'] ?? []` para evitar `Undefined index`. O serviço não
+     * normaliza isso na leitura.
      *
      * @return array<string, mixed>|null
      */

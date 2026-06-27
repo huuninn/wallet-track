@@ -8,6 +8,7 @@ use App\Dto\TransactionData;
 use App\Services\Google\InMemorySheetsGateway;
 use App\Services\Google\SheetsGateway;
 use App\Services\Google\SheetsService;
+use App\Support\ItemsSorter;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -43,7 +44,7 @@ class SheetsServiceTest extends TestCase
         parent::setUp();
 
         $this->gateway = new InMemorySheetsGateway;
-        $this->service = new SheetsService($this->gateway);
+        $this->service = new SheetsService($this->gateway, new ItemsSorter);
     }
 
     /*
@@ -69,13 +70,13 @@ class SheetsServiceTest extends TestCase
     }
 
     /**
-     * O cabeçalho canônico de 8 colunas esperado na linha 1 (F4: sem Origem).
+     * O cabeçalho canônico de 9 colunas esperado na linha 1.
      */
     private function expectedHeaders(): array
     {
         return [
             'Data', 'Descrição', 'Valor', 'Tipo', 'Categoria',
-            'Labels', 'ID Firestore', 'Observações',
+            'Labels', 'ID Firestore', 'Observações', 'Itens',
         ];
     }
 
@@ -85,7 +86,7 @@ class SheetsServiceTest extends TestCase
     |--------------------------------------------------------------------------
     */
 
-    public function test_ensure_headers_writes_eight_headers_when_sheet_is_empty(): void
+    public function test_ensure_headers_writes_nine_headers_when_sheet_is_empty(): void
     {
         $this->assertNull($this->gateway->getHeaderRow());
 
@@ -111,7 +112,7 @@ class SheetsServiceTest extends TestCase
     |--------------------------------------------------------------------------
     */
 
-    public function test_append_transaction_builds_eight_column_row_in_correct_order(): void
+    public function test_append_transaction_builds_nine_column_row_in_correct_order(): void
     {
         $this->service->appendTransaction($this->dto(), 'fs-id-123');
 
@@ -132,6 +133,7 @@ class SheetsServiceTest extends TestCase
         $this->assertSame('almoço, restaurante', $row[5]);     // F — Labels (vírgula)
         $this->assertSame('fs-id-123', $row[6]);               // G — ID Firestore
         $this->assertSame('', $row[7]);                        // H — Observações null→vazio
+        $this->assertSame('', $row[8]);                        // I — Itens (vazio quando items=[])
     }
 
     public function test_append_transaction_preserves_iso_date(): void
@@ -425,7 +427,7 @@ class SheetsServiceTest extends TestCase
             }
         };
 
-        $service = new SheetsService($failingGateway);
+        $service = new SheetsService($failingGateway, new ItemsSorter);
 
         $service->syncCategories([
             ['display_name' => 'Teste', 'default_type' => 'expense'],
@@ -433,5 +435,211 @@ class SheetsServiceTest extends TestCase
 
         // Chegou aqui sem lançar.
         $this->addToAssertionCount(1);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Items — coluna I (M-ITENS-2)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_build_row_includes_items_column_i(): void
+    {
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 2, 'unitPrice' => 32.90, 'subtotal' => 65.80],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-items-1');
+
+        $row = $this->gateway->rows()[1];
+        $this->assertCount(9, $row);
+        $this->assertStringContainsString('Arroz', $row[8]);
+    }
+
+    public function test_format_items_empty_returns_empty_string(): void
+    {
+        $dto = $this->dto(['items' => []]);
+
+        $this->service->appendTransaction($dto, 'fs-empty-items');
+
+        $row = $this->gateway->rows()[1];
+        $this->assertSame('', $row[8]);
+    }
+
+    public function test_format_items_single_complete_item(): void
+    {
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 2, 'unitPrice' => 32.90, 'subtotal' => 65.80],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-complete');
+
+        $row = $this->gateway->rows()[1];
+        // Formato: "1. Arroz (x2 — R$ 32,90 = R$ 65,80)"
+        $this->assertSame(
+            "1. Arroz (x2 \u{2014} R\$ 32,90 = R\$ 65,80)",
+            $row[8],
+        );
+    }
+
+    public function test_format_items_single_name_only(): void
+    {
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'Detergente', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-name-only');
+
+        $row = $this->gateway->rows()[1];
+        $this->assertSame('1. Detergente', $row[8]);
+    }
+
+    public function test_format_items_decimal_qty_uses_comma(): void
+    {
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'Queijo', 'qty' => 1.5, 'unitPrice' => 10.00, 'subtotal' => 15.00],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-decimal-qty');
+
+        $row = $this->gateway->rows()[1];
+        // qty 1.5 → "x1,5" (vírgula PT-BR).
+        $this->assertStringContainsString('x1,5', $row[8]);
+    }
+
+    public function test_format_items_sorted_by_subtotal_ascending(): void
+    {
+        // CT-131/AC-023: ordenação crescente por subtotal.
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'A', 'qty' => 1, 'unitPrice' => 50.00, 'subtotal' => 50.0],
+                ['name' => 'B', 'qty' => 1, 'unitPrice' => 10.00, 'subtotal' => 10.0],
+                ['name' => 'C', 'qty' => 1, 'unitPrice' => 30.00, 'subtotal' => 30.0],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-sorted');
+
+        $row = $this->gateway->rows()[1];
+        $lines = explode("\n", $row[8]);
+
+        $this->assertCount(3, $lines);
+        // Ordem crescente: B (10), C (30), A (50).
+        $this->assertStringContainsString('B', $lines[0]);
+        $this->assertStringContainsString('R$ 10,00', $lines[0]);
+        $this->assertStringContainsString('C', $lines[1]);
+        $this->assertStringContainsString('R$ 30,00', $lines[1]);
+        $this->assertStringContainsString('A', $lines[2]);
+        $this->assertStringContainsString('R$ 50,00', $lines[2]);
+    }
+
+    public function test_format_items_without_subtotal_at_end_in_input_order(): void
+    {
+        // CT-132/AC-024: mixtos → com-subtotal primeiro, sem-subtotal ao final.
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'X', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => 'Y', 'qty' => 1, 'unitPrice' => 10.00, 'subtotal' => 10.0],
+                ['name' => 'Z', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-mixed');
+
+        $row = $this->gateway->rows()[1];
+        $lines = explode("\n", $row[8]);
+
+        $this->assertCount(3, $lines);
+        // 1. Y (com subtotal)
+        $this->assertStringContainsString('Y', $lines[0]);
+        $this->assertStringContainsString('R$ 10,00', $lines[0]);
+        // 2. X (sem subtotal, ordem original)
+        $this->assertStringContainsString('X', $lines[1]);
+        $this->assertStringNotContainsString('R$', $lines[1]);
+        // 3. Z (sem subtotal, ordem original)
+        $this->assertStringContainsString('Z', $lines[2]);
+        $this->assertStringNotContainsString('R$', $lines[2]);
+    }
+
+    public function test_format_items_pipe_in_name_preserved(): void
+    {
+        // CT-144/AC-037: pipe no nome é preservado.
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'Coca-Cola | 2L', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-pipe');
+
+        $row = $this->gateway->rows()[1];
+        $this->assertSame('1. Coca-Cola | 2L', $row[8]);
+    }
+
+    public function test_escape_formula_prefixes_dangerous_chars(): void
+    {
+        // CT-148/AC-041 a AC-044: names que começam com =, +, -, @ são
+        // prefixados com apóstrofo (CWE-1236).
+        $dto = $this->dto([
+            'items' => [
+                ['name' => '=HYPERLINK("https://evil.com","Clique")', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => '+SUM(A1:A10)', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => '-1+1', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => '@admin', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-formula-items');
+
+        $row = $this->gateway->rows()[1];
+        $lines = explode("\n", $row[8]);
+
+        $this->assertCount(4, $lines);
+        // Cada name deve começar com "'".
+        $this->assertStringStartsWith("1. '=HYPERLINK", $lines[0]);
+        $this->assertStringStartsWith("2. '+SUM", $lines[1]);
+        $this->assertStringStartsWith("3. '-1+1", $lines[2]);
+        $this->assertStringStartsWith("4. '@admin", $lines[3]);
+    }
+
+    public function test_escape_formula_per_item_handles_newline_in_name(): void
+    {
+        // CT-163/AC-045 relativo a Sheets: escape aplicado por item, não
+        // na string inteira. Se name tem '\n=evil', o escape é por item.
+        // Mock: name contendo newline + fórmula.
+        $dto = $this->dto([
+            'items' => [
+                ['name' => "\n=evil", 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-newline-formula');
+
+        $row = $this->gateway->rows()[1];
+        // O escape é aplicado por item — o name começa com \n, seguido de =.
+        // O escapeFormula detecta que NÃO começa com [=+\-@] (começa com \n),
+        // então o valor não é prefixado. Mas se o name contivesse \n=evil no
+        // meio (não no início), também não seria escapado — o contrato é
+        // que escapeFormula só escapa quando o valor COMEÇA com char perigoso.
+        // Aqui confirmamos que o sistema não quebra com \n em name.
+        $this->assertStringContainsString('=evil', $row[8]);
+    }
+
+    public function test_headers_include_itens_column(): void
+    {
+        // Constante HEADERS tem 9 elementos, último = "Itens".
+        $this->service->ensureHeaders();
+
+        $headers = $this->gateway->getHeaderRow();
+        $this->assertCount(9, $headers);
+        $this->assertSame('Itens', $headers[8]);
     }
 }

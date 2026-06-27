@@ -1007,4 +1007,84 @@ class FirestoreServiceTest extends TestCase
         $this->assertFalse($doc['processing']);
         $this->assertNull($doc['spreadsheet_row_id']);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Items — persistência (M-ITENS-2)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_save_transaction_includes_items_in_document(): void
+    {
+        $dto = $this->dto([
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 2, 'unitPrice' => 32.90, 'subtotal' => 65.80],
+                ['name' => 'Feijão', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $id = $this->service->saveTransaction('C1', $dto);
+
+        $stored = $this->service->getTransaction($id);
+        $this->assertNotNull($stored);
+        $this->assertArrayHasKey('items', $stored);
+        $this->assertIsArray($stored['items']);
+        $this->assertCount(2, $stored['items']);
+
+        // Primeiro item: completo.
+        $this->assertSame('Arroz', $stored['items'][0]['name']);
+        $this->assertSame(2.0, $stored['items'][0]['qty']);
+        $this->assertSame(32.90, $stored['items'][0]['unitPrice']);
+        $this->assertSame(65.80, $stored['items'][0]['subtotal']);
+
+        // Segundo item: só nome.
+        $this->assertSame('Feijão', $stored['items'][1]['name']);
+        $this->assertNull($stored['items'][1]['qty']);
+        $this->assertNull($stored['items'][1]['unitPrice']);
+        $this->assertNull($stored['items'][1]['subtotal']);
+    }
+
+    public function test_save_transaction_with_empty_items_persists_empty_array(): void
+    {
+        $dto = $this->dto(['items' => []]);
+
+        $id = $this->service->saveTransaction('C1', $dto);
+
+        $stored = $this->service->getTransaction($id);
+        $this->assertArrayHasKey('items', $stored);
+        $this->assertSame([], $stored['items']);
+    }
+
+    public function test_get_transaction_old_doc_without_items_returns_raw(): void
+    {
+        // Simula um documento antigo (pré-feature items) — sem campo items.
+        $id = 'old-tx-no-items';
+        $this->gateway->setDocument(FirestoreService::COLLECTION_TRANSACTIONS, $id, [
+            'chat_id' => 'C1',
+            'description' => 'Transação antiga',
+            'amount' => 50.0,
+            'type' => 'expense',
+            'date' => '2026-01-01',
+            'labels' => [],
+            'observations' => null,
+            'sync_status' => 'synced',
+            'sync_attempts' => 0,
+            'created_at' => '2026-01-01T00:00:00.000000Z',
+            'updated_at' => '2026-01-01T00:00:00.000000Z',
+            'processing' => false,
+            'notified_at' => null,
+            'spreadsheet_row_id' => null,
+            'category' => null,
+        ]);
+
+        $doc = $this->service->getTransaction($id);
+        $this->assertNotNull($doc);
+
+        // Caller usa ?? [] — NÃO lança Undefined index.
+        $items = $doc['items'] ?? [];
+        $this->assertSame([], $items);
+
+        // Confirma que o campo items NÃO existe no documento.
+        $this->assertArrayNotHasKey('items', $doc);
+    }
 }
