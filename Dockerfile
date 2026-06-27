@@ -79,13 +79,11 @@ RUN composer install \
 FROM deps AS build
 
 COPY . .
-# --no-scripts: skip post-autoload-dump (package:discover) que falha em
-# --no-dev mode (Telescope é dev-only mas o provider é registrado).
-# O `package:discover` roda em runtime quando o app boota.
+# --no-scripts: skip post-autoload-dump (package:discover) que falha sem
+# .env/APP_KEY. O `package:discover` roda em runtime quando o app boota.
 #
 # ⚠️ NÃO rodamos `view:cache` / `event:cache` no build stage: ambos
-# bootaam o Laravel e tentam carregar o TelescopeServiceProvider, que
-# só existe em dev. O cold start penalty sem eles é mínimo (~100ms)
+# bootaam o Laravel e o cold start penalty sem eles é mínimo (~100ms)
 # e pode ser compensado por Cloud Run CPU boost.
 RUN composer dump-autoload --no-dev --optimize --no-scripts
 
@@ -104,11 +102,6 @@ RUN composer dump-autoload --no-dev --optimize --no-scripts
 #    Mantemos as rotas interpretadas a cada request (custo
 #    negligenciável em concurrency=1 com opcache ativo).
 #
-# ⚠️ NÃO rodamos `view:cache` / `event:cache` aqui (eram planejados para
-#    reduzir cold start): eles falham no build --no-dev porque o
-#    TelescopeServiceProvider só existe em dev. O cold start penalty
-#    sem eles é mínimo (Laravel escaneia os diretórios em ~100ms com
-#    opcache ativo) e pode ser compensado pelo Cloud Run `--cpu-boost`.
 
 
 # ----------------------------------------------------------------------------
@@ -125,7 +118,7 @@ COPY --from=build --chown=www-data:www-data ${APP_DIR} ${APP_DIR}
 
 # Descarta caches de bootstrap (services.php, packages.php, config.php etc.)
 # gerados no build com --no-dev, que podem referenciar providers ausentes em
-# produção (ex.: Telescope). Laravel os regenera em runtime sob demanda.
+# produção. Laravel os regenera em runtime sob demanda.
 # NÃO fazemos config:cache no build — ele congela env() e quebra secrets
 # injetados em runtime pelo Cloud Run (ver docs/decisions.md).
 RUN rm -f bootstrap/cache/*.php
@@ -198,7 +191,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Estágio dev — desenvolvimento local com hot-reload
 # ----------------------------------------------------------------------------
 # Usado por docker-compose.yml (`target: dev`). Diferenças do estágio runtime:
-#  - Composer com dev-dependencies (phpunit, pint, telescope etc.)
+#  - Composer com dev-dependencies (phpunit, pint, etc.)
 #  - opcache com revalidação de timestamps (reflete alterações sem rebuild)
 #  - Usuário root (necessário para artisan commands, composer require etc.)
 #  - Xdebug NÃO é instalado (mantido fora para não penalizar performance;

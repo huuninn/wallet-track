@@ -82,7 +82,7 @@ steps:
           --cpu-boost \
           --allow-unauthenticated \
           --service-account=${_RUN_SA} \
-          --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_NAME=Wallet Track,LOG_CHANNEL=stderr,LOG_LEVEL=info,SESSION_DRIVER=file,CACHE_STORE=array,QUEUE_CONNECTION=sync,DB_CONNECTION=sqlite,TELESCOPE_ENABLED=false,TELEGRAM_ALLOWED_CHAT_IDS=5672987197" \
+          --set-env-vars="APP_ENV=production,APP_DEBUG=false,APP_NAME=Wallet Track,LOG_CHANNEL=stderr,LOG_LEVEL=info,SESSION_DRIVER=file,CACHE_STORE=array,QUEUE_CONNECTION=sync,DB_CONNECTION=sqlite,TELEGRAM_ALLOWED_CHAT_IDS=5672987197" \
           --set-secrets="/secrets/env.json=wallet-track-env:latest"
 
   # ---------------------------------------------------------------------------

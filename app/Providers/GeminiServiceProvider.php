@@ -13,17 +13,13 @@ use App\Services\Parsing\DateNormalizer;
 use App\Services\Parsing\TypeClassifier;
 use App\Services\Telegram\NutgramFileDownloader;
 use App\Services\Telegram\TelegramFileDownloader;
-use App\Support\Telescope\GeminiImageCompleterWatcherDecorator;
-use App\Support\Telescope\TelescopeHelper;
-use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 
 /**
  * Registra a camada de extração Gemini (imagem → JSON) no container (M4).
  *
- *  - {@see ImageCompleter} → {@see GeminiImageCompleter} ou
- *    {@see GeminiImageCompleterWatcherDecorator} (condicional).
+ *  - {@see ImageCompleter} → {@see GeminiImageCompleter}.
  *  - {@see GeminiService} → construído inline com DateNormalizer que loga
  *    avisos de data futura/irreconhecível via facade Log do Laravel (mesmo
  *    padrão do DeepSeekServiceProvider do M3).
@@ -38,25 +34,7 @@ class GeminiServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->app->singleton(ImageCompleter::class, function ($app): ImageCompleter {
-            // GeminiImageCompleter exige Config injetado no construtor
-            // (api_key, model, temperature). O container resolve via
-            // auto-wiring. Resolvemos via make() para garantir o DI
-            // explícito (mais legível que a sintaxe antiga
-            // `singleton(ImageCompleter::class, GeminiImageCompleter::class)`
-            // que delegava ao auto-resolution do container).
-            $completer = new GeminiImageCompleter($app->make(Config::class));
-
-            // M6-spec: quando Telescope está ativo, envolve o completer
-            // real com o decorator que registra cada chamada em
-            // /telescope/events. Em produção/tests/staging, o binding
-            // retorna o completer puro (zero overhead).
-            if (TelescopeHelper::isActive()) {
-                return new GeminiImageCompleterWatcherDecorator($completer);
-            }
-
-            return $completer;
-        });
+        $this->app->singleton(ImageCompleter::class, GeminiImageCompleter::class);
 
         $this->app->singleton(GeminiService::class, function ($app) {
             return new GeminiService(
