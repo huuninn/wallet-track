@@ -709,7 +709,7 @@ final class ConversationRouter
             // `_wizard_step` e `_wizard_active` não persistam em
             // AWAITING_CONFIRMATION — no-op se não existirem (caso do
             // fluxo de linguagem natural).
-            clearFields: ['awaiting_field', '_wizard_step', '_wizard_active'], // W-3: limpa campo stale
+            clearFields: ['awaiting_field', '_wizard_step', '_wizard_active', '_wizard_items_asked', '_wizard_message_id_items_choice'], // W-3: limpa campos stale do wizard
         );
     }
 
@@ -1781,6 +1781,7 @@ final class ConversationRouter
             date: $extracted->date ?? $base->date,
             observations: $extracted->observations ?? $base->observations,
             confidence: $extracted->confidence ?? $base->confidence,
+            items: $extracted->items !== [] ? $extracted->items : $base->items,
         );
     }
 

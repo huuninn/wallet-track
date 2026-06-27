@@ -163,6 +163,19 @@ interface BotMessenger
     public function restoreConfirmationKeyboard(int|string $chatId, int $messageId): void;
 
     /**
+     * Envia a pergunta "Detalhar itens?" com inline keyboard [Sim][Pular].
+     *
+     * Usado pelo WizardHandler após validar a etapa Descrição. Retorna o
+     * message_id da mensagem enviada (para posterior remoção do keyboard).
+     *
+     * Callbacks: 'wizard_items_yes' (Sim), 'wizard_items_no' (Pular).
+     *
+     * @param  int|string  $chatId  ID do chat do Telegram.
+     * @return int message_id da mensagem enviada.
+     */
+    public function sendItemsChoiceQuestion(int|string $chatId): int;
+
+    /**
      * Notifica o usuário que a transação foi registrada com sucesso.
      */
     public function notifySuccess(int|string $chatId, TransactionData $dto): void;

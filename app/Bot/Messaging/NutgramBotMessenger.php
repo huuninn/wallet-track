@@ -119,6 +119,24 @@ final class NutgramBotMessenger implements BotMessenger
         );
     }
 
+    public function sendItemsChoiceQuestion(int|string $chatId): int
+    {
+        $keyboard = InlineKeyboardMarkup::make()
+            ->addRow(
+                InlineKeyboardButton::make('✅ Sim', callback_data: 'wizard_items_yes'),
+                InlineKeyboardButton::make('⏭️ Pular', callback_data: 'wizard_items_no'),
+            );
+
+        return $this->messageId(
+            $this->bot->sendMessage(
+                text: '🛒 <b>Detalhar itens desta transação?</b>',
+                chat_id: $chatId,
+                parse_mode: ParseMode::HTML,
+                reply_markup: $keyboard,
+            ),
+        );
+    }
+
     public function answerCallback(string $callbackId, string $text): void
     {
         $this->bot->answerCallbackQuery(

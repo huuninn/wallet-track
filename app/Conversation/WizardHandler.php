@@ -279,10 +279,7 @@ final class WizardHandler
                 $draftArray['_wizard_active'] = true;
                 $draftArray['_wizard_items_asked'] = true;
 
-                $messageId = $this->messenger->sendText(
-                    $chatId,
-                    '🛒 <b>Detalhar itens desta transação?</b>',
-                );
+                $messageId = $this->messenger->sendItemsChoiceQuestion($chatId);
                 $draftArray['_wizard_message_id_items_choice'] = $messageId;
 
                 $this->firestore->setSession($chatId, new SessionData(

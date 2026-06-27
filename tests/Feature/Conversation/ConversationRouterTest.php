@@ -2965,4 +2965,89 @@ class ConversationRouterTest extends TestCase
         // items aceitos (3 itens, soma 150 > amount 50).
         $this->assertCount(3, $session['draft']['items']);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | W-A: mergeDrafts — preservação de items
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_merge_drafts_preserves_base_items_when_extracted_has_none(): void
+    {
+        // W-A: draft base tem 3 items; foto extraída sem items → items preservados.
+        $base = TransactionData::fromArray([
+            'description' => 'Compra no mercado',
+            'type' => 'expense',
+            'date' => '2026-06-15',
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 2.0, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => 'Feijão', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => 'Detergente', 'qty' => 1.0, 'unitPrice' => 4.5, 'subtotal' => null],
+            ],
+        ]);
+        // Base incompleta (sem amount) → AWAITING_DATA.
+        $this->seedSession(ConversationState::AWAITING_DATA->value, $base, [
+            'awaiting_field' => 'amount',
+            'source' => 'text',
+            'draft' => $base->toDraftArray(),
+        ]);
+
+        // Foto extraída: apenas amount, sem items.
+        $this->extractImage->toReturn = TransactionData::fromArray([
+            'amount' => 50.0,
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::photo(self::CHAT_ID, 'photo-id-a'));
+
+        // Merged é completo (description+type+date do base + amount da foto) → confirmation.
+        $session = $this->currentSession();
+        $this->assertNotNull($session);
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayHasKey('items', $session['draft'], 'Items do draft base devem ser preservados');
+        $this->assertCount(3, $session['draft']['items']);
+        $this->assertSame('Arroz', $session['draft']['items'][0]['name']);
+        $this->assertSame('Feijão', $session['draft']['items'][1]['name']);
+        $this->assertSame('Detergente', $session['draft']['items'][2]['name']);
+    }
+
+    public function test_merge_drafts_uses_extracted_items_when_present(): void
+    {
+        // W-A: draft base tem 2 items; foto extraída tem 5 items → 5 items no merged.
+        $base = TransactionData::fromArray([
+            'description' => 'Compra antiga',
+            'type' => 'expense',
+            'date' => '2026-06-15',
+            'items' => [
+                ['name' => 'Item Base A', 'qty' => 1.0, 'unitPrice' => null, 'subtotal' => null],
+                ['name' => 'Item Base B', 'qty' => 1.0, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+        $this->seedSession(ConversationState::AWAITING_DATA->value, $base, [
+            'awaiting_field' => 'amount',
+            'source' => 'text',
+            'draft' => $base->toDraftArray(),
+        ]);
+
+        // Foto extraída com amount + 5 items.
+        $this->extractImage->toReturn = TransactionData::fromArray([
+            'amount' => 100.0,
+            'items' => [
+                ['name' => 'Item Foto 1', 'qty' => 1.0, 'unitPrice' => 20.0, 'subtotal' => null],
+                ['name' => 'Item Foto 2', 'qty' => 2.0, 'unitPrice' => 15.0, 'subtotal' => null],
+                ['name' => 'Item Foto 3', 'qty' => 1.0, 'unitPrice' => 10.0, 'subtotal' => null],
+                ['name' => 'Item Foto 4', 'qty' => 3.0, 'unitPrice' => 5.0, 'subtotal' => null],
+                ['name' => 'Item Foto 5', 'qty' => 1.0, 'unitPrice' => 8.0, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->makeRouter()->route(ConversationInput::photo(self::CHAT_ID, 'photo-id-b'));
+
+        $session = $this->currentSession();
+        $this->assertNotNull($session);
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayHasKey('items', $session['draft'], 'Items da foto devem estar presentes');
+        $this->assertCount(5, $session['draft']['items']);
+        $this->assertSame('Item Foto 1', $session['draft']['items'][0]['name']);
+        $this->assertSame('Item Foto 5', $session['draft']['items'][4]['name']);
+    }
 }

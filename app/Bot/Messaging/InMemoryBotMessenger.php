@@ -61,6 +61,17 @@ final class InMemoryBotMessenger implements BotMessenger
      */
     public array $fieldPickerCallbacks = [];
 
+    /**
+     * Registro de callbacks enviados via {@see sendItemsChoiceQuestion()}.
+     *
+     * Key = chatId, value = lista de callback_data dos botões do keyboard.
+     * Permite asserções em testes de que o keyboard inline foi enviado com
+     * os callbacks 'wizard_items_yes' e 'wizard_items_no'.
+     *
+     * @var array<int|string, list<string>>
+     */
+    public array $itemsChoiceKeyboards = [];
+
     /** @var array<int|string, list<array{message_id: int, text: string}>> */
     public array $editedMessages = [];
 
@@ -164,6 +175,22 @@ final class InMemoryBotMessenger implements BotMessenger
             'edit:category',
             'edit:observations',
             'edit:items',
+        ];
+
+        return $id;
+    }
+
+    public function sendItemsChoiceQuestion(int|string $chatId): int
+    {
+        $id = $this->nextMessageId++;
+        $text = '🛒 <b>Detalhar itens desta transação?</b>';
+
+        $this->sentTexts[$chatId][] = ['message_id' => $id, 'text' => $text];
+
+        // Registra o keyboard com os callbacks para asserção em testes.
+        $this->itemsChoiceKeyboards[$chatId] = [
+            'wizard_items_yes',
+            'wizard_items_no',
         ];
 
         return $id;

@@ -784,6 +784,27 @@ class WizardHandlerTest extends TestCase
         $this->assertCount(1, $itemsMsg);
     }
 
+    public function test_items_choice_question_sends_keyboard_with_yes_no_callbacks(): void
+    {
+        // C-1 (CRITICAL): após validar DESCRIPTION, a pergunta "Detalhar itens?"
+        // deve ser enviada COM inline keyboard (Sim/Pular), não como texto puro.
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // O keyboard deve ter sido registrado no InMemoryBotMessenger.
+        $callbacks = $this->messenger->itemsChoiceKeyboards[self::CHAT_ID] ?? [];
+        $this->assertContains('wizard_items_yes', $callbacks, 'Keyboard deve ter callback wizard_items_yes');
+        $this->assertContains('wizard_items_no', $callbacks, 'Keyboard deve ter callback wizard_items_no');
+        $this->assertCount(2, $callbacks);
+
+        // O message_id deve estar armazenado no draft.
+        $session = $this->currentSession();
+        $this->assertArrayHasKey('_wizard_message_id_items_choice', $session['draft']);
+        $this->assertGreaterThan(0, $session['draft']['_wizard_message_id_items_choice']);
+    }
+
     public function test_callback_yes_enters_items_collection(): void
     {
         // CT-110/AC-010: clica "Sim" → prompt ITEMS_PROMPT + awaiting_field='items'.
@@ -1009,5 +1030,54 @@ class WizardHandlerTest extends TestCase
         // Nenhum novo fieldAsk (callback cai no branch silencioso).
         $fieldAsksAfter = count($this->messenger->fieldAsks[self::CHAT_ID] ?? []);
         $this->assertSame($fieldAsksBefore, $fieldAsksAfter);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | W-B: presentConfirmation limpa flags stale _wizard_*
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_present_confirmation_clears_wizard_items_flags(): void
+    {
+        // W-B: ao finalizar wizard, _wizard_items_asked e
+        // _wizard_message_id_items_choice são removidos do draft.
+        // Simulamos uma sessão que passou pelo sub-fluxo de items
+        // (portanto tem ambos os flags) e está na etapa LABELS.
+        $this->firestore->setSession(
+            self::CHAT_ID,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: [
+                    'type' => 'expense',
+                    'amount' => 50.0,
+                    'description' => 'Compra no mercado',
+                    'category' => 'Alimentação',
+                    '_wizard_step' => WizardStep::LABELS->value,
+                    '_wizard_active' => true,
+                    '_wizard_items_asked' => true,
+                    '_wizard_message_id_items_choice' => 9999,
+                ],
+                awaitingField: 'labels',
+                source: 'wizard',
+                retryCount: 0,
+            ),
+        );
+
+        // Responde "pular" → wizard completo → presentConfirmation.
+        $this->routeText('pular');
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+
+        // W-B: flags _wizard_* devem ser removidos do draft.
+        $this->assertArrayNotHasKey('_wizard_step', $session['draft'],
+            'W-B: _wizard_step deve ser limpo no presentConfirmation');
+        $this->assertArrayNotHasKey('_wizard_active', $session['draft'],
+            'W-B: _wizard_active deve ser limpo no presentConfirmation');
+        $this->assertArrayNotHasKey('_wizard_items_asked', $session['draft'],
+            'W-B: _wizard_items_asked deve ser limpo no presentConfirmation');
+        $this->assertArrayNotHasKey('_wizard_message_id_items_choice', $session['draft'],
+            'W-B: _wizard_message_id_items_choice deve ser limpo no presentConfirmation');
     }
 }
