@@ -370,15 +370,19 @@ final class SheetsService
     /**
      * Previne injeção de fórmula no Google Sheets (CWE-1236).
      *
-     * Aplica escape **por linha** dentro do valor: cada `\n` pode iniciar
-     * novo conteúdo no Sheets. Escapar por linha garante cobertura total
-     * mesmo se houver `\n=fórmula` no meio do name (R5/CT-163).
+     * Aplica escape **por linha** dentro do valor: cada quebra de linha
+     * pode iniciar novo conteúdo no Sheets. Escapar por linha garante
+     * cobertura total mesmo se houver `\n=fórmula` no meio do name (R5/CT-163).
+     *
+     * Normaliza `\r\n` e `\r` para `\n` antes do split — `explode("\n")`
+     * sozinho deixaria `\r` residual que anularia a detecção de prefixo
+     * de fórmula (edge case O1).
      *
      * Prefixa com "'" (apóstrofo) quando a linha começa com =, +, -, @.
      */
     private function escapeFormula(string $value): string
     {
-        $lines = explode("\n", $value);
+        $lines = preg_split('/\r\n|\r|\n/', $value) ?: [$value];
         $escaped = array_map(static function (string $line): string {
             return preg_match('/^[=+\-@]/', $line) ? "'".$line : $line;
         }, $lines);

@@ -169,7 +169,7 @@ final class WizardHandler
                 $data = (string) ($input->callbackData ?? '');
 
                 // Remove keyboard da pergunta "Detalhar itens?".
-                $itemsChoiceMsgId = (int) ($session['draft']['_message_id_items_choice'] ?? 0);
+                $itemsChoiceMsgId = (int) ($session['draft']['_wizard_message_id_items_choice'] ?? 0);
                 if ($itemsChoiceMsgId > 0) {
                     $this->messenger->editMessageReplyMarkup($chatId, $itemsChoiceMsgId, null);
                 }
@@ -227,37 +227,7 @@ final class WizardHandler
         // M-ITENS-6: coleta de items (texto) quando awaiting_field='items'.
         $awaitingField = (string) ($session['awaiting_field'] ?? '');
         if ($input->kind === InputKind::Text && $awaitingField === 'items') {
-            $raw = (string) $input->text;
-            $items = $this->router->validateField('items', $raw);
-
-            if ($items === null) {
-                // Input inválido — re-pergunta com retry compartilhado (maxDataRetries=3).
-                $newCount = $this->firestore->incrementSessionRetry($chatId);
-                $maxRetries = 3;
-
-                if ($newCount > $maxRetries) {
-                    $this->firestore->clearSession($chatId);
-                    $this->messenger->notifyError(
-                        $chatId,
-                        '⚠️ Não consegui entender suas respostas. O cadastro foi cancelado — use /nova para tentar de novo.',
-                    );
-
-                    return;
-                }
-
-                $this->messenger->askForField(
-                    $chatId,
-                    'items',
-                    $this->invalidWizardMessage('items', $newCount, $maxRetries)
-                        ."\n\n".self::ITEMS_PROMPT,
-                );
-
-                return;
-            }
-
-            // Items válidos (ou [] se pulou) → avança para CATEGORY.
-            $newDraft = $draft->withField('items', $items);
-            $this->advanceToStep($chatId, $session, $newDraft, WizardStep::CATEGORY);
+            $this->handleItemsCollection($chatId, $session, (string) $input->text, $draft);
 
             return;
         }
@@ -313,7 +283,7 @@ final class WizardHandler
                     $chatId,
                     '🛒 <b>Detalhar itens desta transação?</b>',
                 );
-                $draftArray['_message_id_items_choice'] = $messageId;
+                $draftArray['_wizard_message_id_items_choice'] = $messageId;
 
                 $this->firestore->setSession($chatId, new SessionData(
                     state: ConversationState::AWAITING_DATA->value,
@@ -350,6 +320,53 @@ final class WizardHandler
 
         // Persiste o draft + avança o wizard.
         $this->advanceToStep($chatId, $session, $newDraft, $nextStep);
+    }
+
+    /**
+     * Sub-fluxo de coleta de items (M-ITENS-6 / D-PC2=a).
+     *
+     * Valida o texto multiline via {@see ConversationRouter::validateField()},
+     * re-pergunta em caso de input inválido (compartilhando o contador de retry),
+     * e avança para CATEGORY quando os items são válidos.
+     *
+     * @param  array<string, mixed>  $session  Sessão atual.
+     */
+    private function handleItemsCollection(
+        string $chatId,
+        array $session,
+        string $raw,
+        TransactionData $draft,
+    ): void {
+        $items = $this->router->validateField('items', $raw);
+
+        if ($items === null) {
+            // Input inválido — re-pergunta com retry compartilhado (maxDataRetries=3).
+            $newCount = $this->firestore->incrementSessionRetry($chatId);
+            $maxRetries = 3;
+
+            if ($newCount > $maxRetries) {
+                $this->firestore->clearSession($chatId);
+                $this->messenger->notifyError(
+                    $chatId,
+                    '⚠️ Não consegui entender suas respostas. O cadastro foi cancelado — use /nova para tentar de novo.',
+                );
+
+                return;
+            }
+
+            $this->messenger->askForField(
+                $chatId,
+                'items',
+                $this->invalidWizardMessage('items', $newCount, $maxRetries)
+                    ."\n\n".self::ITEMS_PROMPT,
+            );
+
+            return;
+        }
+
+        // Items válidos (ou [] se pulou) → avança para CATEGORY.
+        $newDraft = $draft->withField('items', $items);
+        $this->advanceToStep($chatId, $session, $newDraft, WizardStep::CATEGORY);
     }
 
     /**
