@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Bot\Messaging;
 
 use App\Dto\TransactionData;
-use App\Services\Google\SheetsService;
 use App\Support\CategoryEmojiMap;
 use App\Support\ItemsSorter;
 
@@ -424,7 +423,11 @@ final class TransactionSummaryFormatter
     /**
      * Formata UMA linha de item para o Telegram (HTML).
      *
-     * 4 variantes (mesma lógica do SheetsService::formatItemLine):
+     * 4 variantes (mesma lógica do {@see \App\Services\Google\SheetsService::formatItemLine()}).
+     * A duplicação é intencional — ver justificativa no PHPDoc do método do
+     * SheetsService.
+     *
+     * Variantes:
      *   1. qty + unitPrice + subtotal: "Nome (x2 — R$ 32,90 = R$ 65,80)"
      *   2. unitPrice + subtotal (sem qty): "Nome (R$ 32,90 = R$ 65,80)"
      *   3. Só subtotal: "Nome (R$ 65,80)"

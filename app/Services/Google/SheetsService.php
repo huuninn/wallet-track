@@ -227,6 +227,8 @@ final class SheetsService
      * Monta a string de labels no formato `tag1, tag2` (vírgula + espaço).
      *
      * Filtra vazias. Lista vazia → string vazia (coluna Labels em branco).
+     * Escapa nomes com prefixo de fórmula via {@see escapeFormula()}
+     * (CWE-1236 — mesma defesa dos itens na coluna I).
      *
      * @param  array<int, string>  $labels
      */
@@ -238,12 +240,7 @@ final class SheetsService
             if ($label === '') {
                 continue;
             }
-            // Previne injeção de fórmula no Google Sheets (CWE-1236):
-            // labels começando com =, +, -, @ são interpretadas como fórmulas.
-            if (preg_match('/^[=+\-@]/', $label)) {
-                $label = "'".$label;
-            }
-            $tags[] = $label;
+            $tags[] = $this->escapeFormula($label);
         }
 
         return implode(', ', $tags);
@@ -306,6 +303,12 @@ final class SheetsService
 
     /**
      * Formata UMA linha de item para exibição na coluna I do Sheets.
+     *
+     * 4 variantes (spec §8.3). A mesma estrutura de branches aparece em
+     * {@see \App\Bot\Messaging\TransactionSummaryFormatter::formatItemLineHtml()}
+     * — com escape diferente (aqui CWE-1236, lá XSS/HTML). A duplicação é
+     * intencional: a estratégia de escape é fundamentalmente diferente e a
+     * regra dos 3 (Fowler) ainda não justifica abstração extra.
      *
      * Variantes (spec §8.3):
      *   1. qty + unitPrice + subtotal todos não-null:

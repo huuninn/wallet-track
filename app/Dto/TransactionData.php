@@ -91,22 +91,43 @@ final readonly class TransactionData
     }
 
     /**
+     * Constroi uma nova instância com os mesmos valores de `$this`,
+     * sobrescrevendo apenas os campos presentes em `$overrides`.
+     *
+     * Diferente de `??` na construção, usa `array_key_exists` para
+     * distinguir "não informado" de "explicitamente null". Isso permite
+     * que campos como `category` e `observations` recebam `null`.
+     *
+     * Usado por todos os with* (description, category, labels, items)
+     * e por {@see withField()} para reduzir repetição.
+     *
+     * @param  array<string, mixed>  $overrides  Campos a sobrescrever.
+     */
+    private function clone(array $overrides): self
+    {
+        $get = fn (string $key, mixed $default): mixed =>
+            array_key_exists($key, $overrides) ? $overrides[$key] : $default;
+
+        return new self(
+            description: $get('description', $this->description),
+            amount: $get('amount', $this->amount),
+            type: $get('type', $this->type),
+            category: $get('category', $this->category),
+            labels: $get('labels', $this->labels),
+            date: $get('date', $this->date),
+            observations: $get('observations', $this->observations),
+            confidence: $get('confidence', $this->confidence),
+            items: $get('items', $this->items),
+        );
+    }
+
+    /**
      * Retorna uma nova instância com a descrição substituída (e truncada
      * caso exceda o limite de 500 caracteres). Imutável.
      */
     public function withDescription(string $description): self
     {
-        return new self(
-            description: self::normalizeDescription($description),
-            amount: $this->amount,
-            type: $this->type,
-            category: $this->category,
-            labels: $this->labels,
-            date: $this->date,
-            observations: $this->observations,
-            confidence: $this->confidence,
-            items: $this->items,
-        );
+        return $this->clone(['description' => self::normalizeDescription($description)]);
     }
 
     /**
@@ -117,17 +138,7 @@ final readonly class TransactionData
      */
     public function withCategory(?string $category): self
     {
-        return new self(
-            description: $this->description,
-            amount: $this->amount,
-            type: $this->type,
-            category: self::stringOrNull($category),
-            labels: $this->labels,
-            date: $this->date,
-            observations: $this->observations,
-            confidence: $this->confidence,
-            items: $this->items,
-        );
+        return $this->clone(['category' => self::stringOrNull($category)]);
     }
 
     /**
@@ -149,17 +160,7 @@ final readonly class TransactionData
             static fn (string $v): bool => $v !== '',
         ));
 
-        return new self(
-            description: $this->description,
-            amount: $this->amount,
-            type: $this->type,
-            category: $this->category,
-            labels: $clean,
-            date: $this->date,
-            observations: $this->observations,
-            confidence: $this->confidence,
-            items: $this->items,
-        );
+        return $this->clone(['labels' => $clean]);
     }
 
     /**
@@ -174,17 +175,7 @@ final readonly class TransactionData
      */
     public function withItems(array $items): self
     {
-        return new self(
-            description: $this->description,
-            amount: $this->amount,
-            type: $this->type,
-            category: $this->category,
-            labels: $this->labels,
-            date: $this->date,
-            observations: $this->observations,
-            confidence: $this->confidence,
-            items: self::normalizeItems($items),
-        );
+        return $this->clone(['items' => self::normalizeItems($items)]);
     }
 
     /**
@@ -266,62 +257,12 @@ final readonly class TransactionData
     public function withField(string $field, mixed $value): self
     {
         return match ($field) {
-            'amount' => new self(
-                description: $this->description,
-                amount: $value,
-                type: $this->type,
-                category: $this->category,
-                labels: $this->labels,
-                date: $this->date,
-                observations: $this->observations,
-                confidence: $this->confidence,
-                items: $this->items,
-            ),
-            'type' => new self(
-                description: $this->description,
-                amount: $this->amount,
-                type: $value,
-                category: $this->category,
-                labels: $this->labels,
-                date: $this->date,
-                observations: $this->observations,
-                confidence: $this->confidence,
-                items: $this->items,
-            ),
-            'date' => new self(
-                description: $this->description,
-                amount: $this->amount,
-                type: $this->type,
-                category: $this->category,
-                labels: $this->labels,
-                date: $value,
-                observations: $this->observations,
-                confidence: $this->confidence,
-                items: $this->items,
-            ),
+            'amount' => $this->clone(['amount' => $value]),
+            'type' => $this->clone(['type' => $value]),
+            'date' => $this->clone(['date' => $value]),
             'description' => $this->withDescription((string) $value),
-            'category' => new self(
-                description: $this->description,
-                amount: $this->amount,
-                type: $this->type,
-                category: $value,
-                labels: $this->labels,
-                date: $this->date,
-                observations: $this->observations,
-                confidence: $this->confidence,
-                items: $this->items,
-            ),
-            'observations' => new self(
-                description: $this->description,
-                amount: $this->amount,
-                type: $this->type,
-                category: $this->category,
-                labels: $this->labels,
-                date: $this->date,
-                observations: $value,
-                confidence: $this->confidence,
-                items: $this->items,
-            ),
+            'category' => $this->clone(['category' => $value]),
+            'observations' => $this->clone(['observations' => $value]),
             'labels' => $this->withLabels(is_array($value) ? $value : []),
             'items' => $this->withItems(is_array($value) ? $value : []),
             default => throw new \InvalidArgumentException(
@@ -358,6 +299,23 @@ final readonly class TransactionData
     }
 
     /**
+     * Trunca um texto para o comprimento máximo, anexando "..." quando
+     * excede. Usado tanto para description quanto para name de items.
+     *
+     * @param  string  $text       Texto não-nulo (caller já garantiu).
+     * @param  int     $maxLength  Limite de caracteres (ex.: 500).
+     * @return string  Texto truncado com "..." se excedeu o limite.
+     */
+    private static function truncateText(string $text, int $maxLength): string
+    {
+        if (mb_strlen($text) <= $maxLength) {
+            return $text;
+        }
+
+        return mb_substr($text, 0, $maxLength - 3).'...';
+    }
+
+    /**
      * Trunca a descrição para o máximo de 500 caracteres, anexando "..."
      * nos 3 últimos quando o limite é excedido. Mantém o valor null.
      */
@@ -367,11 +325,7 @@ final readonly class TransactionData
             return null;
         }
 
-        if (mb_strlen($description) <= self::DESCRIPTION_MAX_LENGTH) {
-            return $description;
-        }
-
-        return mb_substr($description, 0, self::DESCRIPTION_MAX_LENGTH - 3).'...';
+        return self::truncateText($description, self::DESCRIPTION_MAX_LENGTH);
     }
 
     /**
@@ -456,7 +410,7 @@ final readonly class TransactionData
             }
 
             if (mb_strlen($name) > self::DESCRIPTION_MAX_LENGTH) {
-                $name = mb_substr($name, 0, self::DESCRIPTION_MAX_LENGTH - 3).'...';
+                $name = self::truncateText($name, self::DESCRIPTION_MAX_LENGTH);
             }
 
             $clean[] = [
