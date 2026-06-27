@@ -612,9 +612,8 @@ class SheetsServiceTest extends TestCase
 
     public function test_escape_formula_per_item_handles_newline_in_name(): void
     {
-        // CT-163/AC-045 relativo a Sheets: escape aplicado por item, não
-        // na string inteira. Se name tem '\n=evil', o escape é por item.
-        // Mock: name contendo newline + fórmula.
+        // CT-163/AC-045: escape aplicado por item, não na string inteira.
+        // W2: name "\n=evil" → escape por linha → "\n'=evil".
         $dto = $this->dto([
             'items' => [
                 ['name' => "\n=evil", 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
@@ -624,13 +623,29 @@ class SheetsServiceTest extends TestCase
         $this->service->appendTransaction($dto, 'fs-newline-formula');
 
         $row = $this->gateway->rows()[1];
-        // O escape é aplicado por item — o name começa com \n, seguido de =.
-        // O escapeFormula detecta que NÃO começa com [=+\-@] (começa com \n),
-        // então o valor não é prefixado. Mas se o name contivesse \n=evil no
-        // meio (não no início), também não seria escapado — o contrato é
-        // que escapeFormula só escapa quando o valor COMEÇA com char perigoso.
-        // Aqui confirmamos que o sistema não quebra com \n em name.
-        $this->assertStringContainsString('=evil', $row[8]);
+        // W2: escapeFormula agora aplica escape por linha.
+        // O "=evil" (começando com =) é prefixado com apóstrofo.
+        $this->assertStringContainsString("'=evil", $row[8]);
+        $this->assertStringNotContainsString("\n=evil", $row[8]);
+    }
+
+    public function test_escape_formula_handles_newline_followed_by_equals(): void
+    {
+        // W2: name "Produto\n=evil" → "Produto\n'=evil" (escape por linha).
+        $dto = $this->dto([
+            'items' => [
+                ['name' => "Produto\n=evil", 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]);
+
+        $this->service->appendTransaction($dto, 'fs-newline-equals');
+
+        $row = $this->gateway->rows()[1];
+        $lines = explode("\n", $row[8]);
+        // Linha 1: "1. Produto"; Linha 2: "'=evil".
+        $this->assertCount(2, $lines);
+        $this->assertSame('1. Produto', $lines[0]);
+        $this->assertSame("'=evil", $lines[1]);
     }
 
     public function test_headers_include_itens_column(): void

@@ -490,4 +490,58 @@ class TransactionDataTest extends TestCase
         $this->assertCount(2, $restored->items);
         $this->assertSame($original->items, $restored->items);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | W1 — Nome numérico coerced para string
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_from_array_with_numeric_name_coerced_to_string(): void
+    {
+        // W1: name: 12345 (int) → preservado como "12345".
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => 12345],
+            ],
+        ]);
+
+        $this->assertCount(1, $dto->items);
+        $this->assertSame('12345', $dto->items[0]['name']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | W3 — qty negativo clampar para null
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_from_array_clamps_negative_qty_to_null(): void
+    {
+        // W3: qty negativo → null (não tem significado).
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => 'Produto', 'qty' => -2],
+            ],
+        ]);
+
+        $this->assertCount(1, $dto->items);
+        $this->assertNull($dto->items[0]['qty']);
+    }
+
+    public function test_from_array_preserves_negative_unit_price(): void
+    {
+        // W3: unitPrice negativo é OK (descontos de cupom — CT-106).
+        $dto = TransactionData::fromArray([
+            'description' => 'Teste',
+            'items' => [
+                ['name' => 'Desconto', 'unitPrice' => -8.10, 'subtotal' => -8.10],
+            ],
+        ]);
+
+        $this->assertCount(1, $dto->items);
+        $this->assertSame(-8.10, $dto->items[0]['unitPrice']);
+    }
 }

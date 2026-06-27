@@ -55,19 +55,29 @@ final class ItemsParser
     /**
      * Converte a string multiline de items em lista de maps normalizados.
      *
-     * @param  string  $raw  Texto bruto do usuário (multiline).
+     * @param  string  $raw      Texto bruto do usuário (multiline).
+     * @param  int     $maxItems Limite de segurança contra listas gigantes (default 200).
      * @return list<array{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}>
      */
-    public function parse(string $raw): array
+    public function parse(string $raw, int $maxItems = 200): array
     {
         // Normaliza quebras de linha (CRLF/CR/LF → LF) e divide.
         $lines = preg_split('/\r\n|\r|\n/', $raw) ?: [];
 
         $items = [];
-        foreach ($lines as $line) {
+        foreach ($lines as $currentIndex => $line) {
             $line = trim($line);
             if ($line === '') {
                 continue;
+            }
+
+            // W5: limite de segurança contra listas gigantes.
+            if (count($items) >= $maxItems) {
+                Log::warning('ItemsParser: limite de items atingido, truncando', [
+                    'max' => $maxItems,
+                    'remaining_lines' => count($lines) - $currentIndex,
+                ]);
+                break;
             }
 
             if (! preg_match(self::LINE_REGEX, $line, $m)) {
@@ -81,6 +91,10 @@ final class ItemsParser
             }
 
             $qty = isset($m['qty']) && $m['qty'] !== '' ? $this->parseNumber($m['qty']) : null;
+            // W3: qty negativo não tem significado — clampa para null.
+            if ($qty !== null && $qty < 0) {
+                $qty = null;
+            }
             $unitPrice = isset($m['price']) && $m['price'] !== '' ? $this->parseNumber($m['price']) : null;
 
             // Subtotal calculado apenas quando ambos qty e unitPrice estão presentes.

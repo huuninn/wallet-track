@@ -153,8 +153,33 @@ class WizardHandlerTest extends TestCase
 
     /**
      * Inicia a sessão wizard (simula o que NovaHandler faz).
+     *
+     * Por padrão, `_wizard_items_asked=true` para que os testes do fluxo
+     * principal não disparem o sub-fluxo de items (M-ITENS-6).
      */
     private function startWizard(): void
+    {
+        $this->firestore->setSession(
+            self::CHAT_ID,
+            new SessionData(
+                state: ConversationState::AWAITING_DATA->value,
+                draft: [
+                    '_wizard_step' => WizardStep::TYPE->value,
+                    '_wizard_active' => true,
+                    '_wizard_items_asked' => true,
+                ],
+                awaitingField: WizardStep::TYPE->fieldName(),
+                source: 'wizard',
+                retryCount: 0,
+            ),
+        );
+    }
+
+    /**
+     * Inicia o wizard SEM a flag _wizard_items_asked — permite testar o
+     * sub-fluxo de items (M-ITENS-6).
+     */
+    private function startWizardWithItemsSubflow(): void
     {
         $this->firestore->setSession(
             self::CHAT_ID,
@@ -729,5 +754,260 @@ class WizardHandlerTest extends TestCase
         $this->assertCount(1, $fieldAsks);
         $this->assertSame('labels', $fieldAsks[0]['field']);
         $this->assertStringContainsString('sugiro labels automaticamente', $fieldAsks[0]['prompt']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M-ITENS-6 — Wizard sub-fluxo de items
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_after_description_asks_about_items(): void
+    {
+        // CT-109/AC-009: após validar descrição, pergunta "Detalhar itens?".
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->messenger->sentTexts = []; // limpa para asserção isolada
+
+        $this->routeText('Compra no mercado');
+
+        $session = $this->currentSession();
+        // Deve ter parado no step 3 com awaiting_field='items_choice'.
+        $this->assertSame(3, $session['draft']['_wizard_step']);
+        $this->assertSame('items_choice', $session['awaiting_field']);
+        $this->assertTrue($session['draft']['_wizard_items_asked']);
+
+        // Deve ter enviado mensagem "Detalhar itens?".
+        $texts = $this->messenger->sentTexts[self::CHAT_ID] ?? [];
+        $itemsMsg = array_filter($texts, fn (array $t): bool => str_contains($t['text'], 'Detalhar itens'));
+        $this->assertCount(1, $itemsMsg);
+    }
+
+    public function test_callback_yes_enters_items_collection(): void
+    {
+        // CT-110/AC-010: clica "Sim" → prompt ITEMS_PROMPT + awaiting_field='items'.
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // Agora simula callback "wizard_items_yes".
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame('items', $session['awaiting_field']);
+        $this->assertTrue($session['draft']['_wizard_items_asked']);
+
+        // Deve ter enviado ITEMS_PROMPT.
+        $fieldAsks = $this->messenger->fieldAsks[self::CHAT_ID] ?? [];
+        $this->assertNotEmpty($fieldAsks);
+        $lastAsk = end($fieldAsks);
+        $this->assertSame('items', $lastAsk['field']);
+        $this->assertStringContainsString('Itens da transação', $lastAsk['prompt']);
+    }
+
+    public function test_callback_no_advances_to_category(): void
+    {
+        // CT-113/AC-013: clica "Pular" → vai direto a Categoria com items=[].
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // Simula callback "wizard_items_no".
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-no',
+            callbackData: 'wizard_items_no',
+            callbackMessageId: 0,
+        ));
+
+        $session = $this->currentSession();
+        // Deve ter avançado para step 4 (CATEGORY).
+        $this->assertSame(4, $session['draft']['_wizard_step']);
+        $this->assertSame('category', $session['awaiting_field']);
+        // items não deve estar no draft (vazio, omitido pelo toDraftArray).
+        $this->assertArrayNotHasKey('items', $session['draft']);
+    }
+
+    public function test_multiline_items_parsed_correctly(): void
+    {
+        // CT-111/AC-011: envia items multiline → parseados + avança para CATEGORY.
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // Simula callback "wizard_items_yes".
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes-2',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        // Envia items.
+        $router->route(ConversationInput::text(
+            self::CHAT_ID,
+            "Arroz 5kg x2 32.90\nFeijão\nDetergente x1 4.50",
+        ));
+
+        $session = $this->currentSession();
+        // Deve ter avançado para step 4 (CATEGORY).
+        $this->assertSame(4, $session['draft']['_wizard_step']);
+        $this->assertSame('category', $session['awaiting_field']);
+
+        // 3 items.
+        $this->assertArrayHasKey('items', $session['draft']);
+        $this->assertCount(3, $session['draft']['items']);
+        $this->assertSame('Arroz 5kg', $session['draft']['items'][0]['name']);
+        $this->assertSame(2.0, $session['draft']['items'][0]['qty']);
+        $this->assertSame(32.90, $session['draft']['items'][0]['unitPrice']);
+    }
+
+    public function test_pular_in_items_field_advances_with_empty(): void
+    {
+        // CT-112/AC-012: envia "pular" no campo items → items=[] + avança.
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // Simula callback "wizard_items_yes".
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes-3',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        // Envia "pular" no campo items.
+        $router->route(ConversationInput::text(self::CHAT_ID, 'pular'));
+
+        $session = $this->currentSession();
+        // Avançou para step 4.
+        $this->assertSame(4, $session['draft']['_wizard_step']);
+        $this->assertSame('category', $session['awaiting_field']);
+        // items=[] omitido.
+        $this->assertArrayNotHasKey('items', $session['draft']);
+    }
+
+    public function test_total_asked_steps_remains_5(): void
+    {
+        // CT-115/AC-015: TOTAL_ASKED_STEPS permanece 5.
+        $this->assertSame(5, WizardStep::TOTAL_ASKED_STEPS);
+    }
+
+    public function test_three_invalid_inputs_cancels_wizard(): void
+    {
+        // CT-156/AC-058: após sub-fluxo de items, retry de campo inválido ainda funciona.
+        // Nota: ItemsParser é permissivo — a rejeição de items (null) ocorre só em
+        // cenários de LLM. Aqui testamos que o contador de retry do wizard funciona
+        // para o campo de categoria (após items).
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // Simula callback "wizard_items_yes".
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes-retry',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        // Envia items válidos → avança para CATEGORY (step 4).
+        $router->route(ConversationInput::text(self::CHAT_ID, 'Arroz'));
+
+        $session = $this->currentSession();
+        $this->assertSame(4, $session['draft']['_wizard_step']);
+        $this->assertSame('category', $session['awaiting_field']);
+
+        // 4 inputs inválidos de categoria → wizard cancela.
+        // Nota: a categoria precisa ser uma string vazia para ser rejeitada
+        // (validateCategory rejeita trim vazio). Usamos uma string de espaço
+        // que é trimmed para vazio e rejeitada como null.
+        for ($i = 1; $i <= 4; $i++) {
+            $this->routeText('   ');
+        }
+
+        $this->assertNull($this->currentSession(), 'Sessão deve ser limpa após exceder maxRetries');
+        $errors = $this->messenger->errors[self::CHAT_ID] ?? [];
+        $this->assertNotEmpty($errors);
+    }
+
+    public function test_wizard_items_asked_flag_persists(): void
+    {
+        // CT-157/AC-059: _wizard_items_asked=true após avançar (não re-pergunta).
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        // Simula callback "wizard_items_yes".
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes-5',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        // Envia items e avança.
+        $router->route(ConversationInput::text(self::CHAT_ID, 'Arroz'));
+        $session = $this->currentSession();
+        $this->assertSame(4, $session['draft']['_wizard_step']);
+        // Flag deve persistir.
+        $this->assertTrue($session['draft']['_wizard_items_asked']);
+    }
+
+    public function test_double_click_yes_is_idempotent(): void
+    {
+        // CT-164: 2× clique "Sim" → só 1 prompt de items.
+        $this->startWizardWithItemsSubflow();
+        $this->routeText('despesa');
+        $this->routeText('50');
+        $this->routeText('Compra no mercado');
+
+        $router = $this->makeRouter();
+
+        // Primeiro clique "Sim".
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes-1',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame('items', $session['awaiting_field']);
+        $fieldAsksBefore = count($this->messenger->fieldAsks[self::CHAT_ID] ?? []);
+
+        // Segundo clique "Sim" — deve ser silencioso (awaiting_field não é 'items_choice').
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-yes-2',
+            callbackData: 'wizard_items_yes',
+            callbackMessageId: 0,
+        ));
+
+        $session = $this->currentSession();
+        // Ainda em 'items'.
+        $this->assertSame('items', $session['awaiting_field']);
+        // Nenhum novo fieldAsk (callback cai no branch silencioso).
+        $fieldAsksAfter = count($this->messenger->fieldAsks[self::CHAT_ID] ?? []);
+        $this->assertSame($fieldAsksBefore, $fieldAsksAfter);
     }
 }

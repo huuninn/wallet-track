@@ -370,20 +370,19 @@ final class SheetsService
     /**
      * Previne injeção de fórmula no Google Sheets (CWE-1236).
      *
-     * Idêntico à lógica de {@see formatLabels()}, aplicado isoladamente por
-     * item (não na string inteira). Cada item começa em nova linha na célula,
-     * e o Sheets pode interpretar cada `\n` como início de conteúdo —
-     * escapar por item garante cobertura total mesmo se houver `\n` dentro
-     * de um name (R5/CT-163).
+     * Aplica escape **por linha** dentro do valor: cada `\n` pode iniciar
+     * novo conteúdo no Sheets. Escapar por linha garante cobertura total
+     * mesmo se houver `\n=fórmula` no meio do name (R5/CT-163).
      *
-     * Prefixa com "'" (apóstrofo) quando o valor começa com =, +, -, @.
+     * Prefixa com "'" (apóstrofo) quando a linha começa com =, +, -, @.
      */
     private function escapeFormula(string $value): string
     {
-        if (preg_match('/^[=+\-@]/', $value)) {
-            return "'".$value;
-        }
+        $lines = explode("\n", $value);
+        $escaped = array_map(static function (string $line): string {
+            return preg_match('/^[=+\-@]/', $line) ? "'".$line : $line;
+        }, $lines);
 
-        return $value;
+        return implode("\n", $escaped);
     }
 }

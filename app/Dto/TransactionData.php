@@ -276,10 +276,10 @@ final readonly class TransactionData
      * antigo antes de withField no fluxo de edição).
      *
      * Universo idêntico a EDITABLE_FIELDS_MAP do ConversationRouter:
-     * amount, type, date, description, category, observations.
+     * amount, type, date, description, category, observations, items.
      * Labels e confidence NÃO são acessíveis (não são editáveis pelo picker).
      *
-     * @param  string  $field  "amount"|"type"|"date"|"description"|"category"|"observations".
+     * @param  string  $field  "amount"|"type"|"date"|"description"|"category"|"observations"|"items".
      * @return mixed Valor bruto (float, string, ou null).
      */
     public function getFieldValue(string $field): mixed
@@ -403,7 +403,13 @@ final readonly class TransactionData
                 continue;
             }
 
-            $name = self::stringOrNull($raw['name'] ?? null);
+            $rawName = $raw['name'] ?? null;
+            // W1: coerce int/float name (ex.: código de barras) para string antes
+            // de stringOrNull — sem isso, seria descartado silenciosamente.
+            if (is_int($rawName) || is_float($rawName)) {
+                $rawName = (string) $rawName;
+            }
+            $name = self::stringOrNull($rawName);
             if ($name === null) {
                 // Item sem name é descartado (log warning via caller, não aqui).
                 continue;
@@ -413,9 +419,16 @@ final readonly class TransactionData
                 $name = self::truncateText($name, self::DESCRIPTION_MAX_LENGTH);
             }
 
+            $qty = self::floatOrNull($raw['qty'] ?? null);
+            // W3: qty negativo não tem significado — clampa para null.
+            // unitPrice/subtotal negativos são OK (CT-106: descontos de cupom).
+            if ($qty !== null && $qty < 0) {
+                $qty = null;
+            }
+
             $clean[] = [
                 'name' => $name,
-                'qty' => self::floatOrNull($raw['qty'] ?? null),
+                'qty' => $qty,
                 'unitPrice' => self::floatOrNull($raw['unitPrice'] ?? null),
                 'subtotal' => self::floatOrNull($raw['subtotal'] ?? null),
             ];

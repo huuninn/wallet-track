@@ -102,6 +102,20 @@ final class WizardHandler
             .'Envie <code>-</code> ou <code>pular</code> e eu sugiro labels automaticamente.',
     ];
 
+    /**
+     * Prompt do sub-fluxo de items (M-ITENS-6 / D-PC2=a).
+     *
+     * Enviado quando o usuário clica "Sim" na pergunta "Detalhar itens?".
+     */
+    private const string ITEMS_PROMPT = '🛒 <b>Itens da transação</b>'
+        ."\n\nEnvie cada item em uma linha. Sintaxe:"
+        ."\n<code>Nome [xN] [preço]</code>"
+        ."\n\nExemplos:"
+        ."\n<code>Arroz 5kg x2 32.90</code>"
+        ."\n<code>Feijão</code>"
+        ."\n<code>Detergente x1 4.50</code>"
+        ."\n\nEnvie <code>pular</code> para não detalhar itens.";
+
     public function __construct(
         private readonly ConversationRouter $router,
         private readonly FirestoreService $firestore,
@@ -146,8 +160,50 @@ final class WizardHandler
         $field = $step->fieldName();
         $draft = TransactionData::fromDraftArray($session['draft'] ?? null);
 
-        // Callbacks durante wizard são silenciosos (a confirmação é por texto).
+        // Callbacks: items_choice tratados primeiro (M-ITENS-6); outros são silenciosos.
         if ($input->kind === InputKind::Callback) {
+            $awaitingField = (string) ($session['awaiting_field'] ?? '');
+
+            if ($awaitingField === 'items_choice') {
+                $this->messenger->answerCallback((string) $input->callbackId, '');
+                $data = (string) ($input->callbackData ?? '');
+
+                // Remove keyboard da pergunta "Detalhar itens?".
+                $itemsChoiceMsgId = (int) ($session['draft']['_message_id_items_choice'] ?? 0);
+                if ($itemsChoiceMsgId > 0) {
+                    $this->messenger->editMessageReplyMarkup($chatId, $itemsChoiceMsgId, null);
+                }
+
+                if ($data === 'wizard_items_yes') {
+                    $draftArray = $session['draft'];
+                    $draftArray['_wizard_items_asked'] = true;
+
+                    $this->firestore->setSession($chatId, new SessionData(
+                        state: ConversationState::AWAITING_DATA->value,
+                        draft: $draftArray,
+                        awaitingField: 'items',
+                        source: $session['source'] ?? 'wizard',
+                        retryCount: 0,
+                    ));
+
+                    $this->messenger->askForField($chatId, 'items', self::ITEMS_PROMPT);
+
+                    return;
+                }
+
+                if ($data === 'wizard_items_no') {
+                    // Pula sub-fluxo — segue para CATEGORY com items=[].
+                    $draftFromSession = TransactionData::fromDraftArray($session['draft'] ?? null);
+                    $this->advanceToStep($chatId, $session, $draftFromSession, WizardStep::CATEGORY);
+
+                    return;
+                }
+
+                // Callback desconhecido no sub-fluxo → silencioso.
+                return;
+            }
+
+            // Callbacks em outras etapas do wizard → silenciosos.
             $this->messenger->answerCallback((string) $input->callbackId, '');
 
             return;
@@ -164,6 +220,44 @@ final class WizardHandler
                 .'Use a foto de nota fiscal apenas no fluxo normal (envie a foto sem /nova).',
             );
             $this->reAskCurrentStep($chatId, $draft, $step);
+
+            return;
+        }
+
+        // M-ITENS-6: coleta de items (texto) quando awaiting_field='items'.
+        $awaitingField = (string) ($session['awaiting_field'] ?? '');
+        if ($input->kind === InputKind::Text && $awaitingField === 'items') {
+            $raw = (string) $input->text;
+            $items = $this->router->validateField('items', $raw);
+
+            if ($items === null) {
+                // Input inválido — re-pergunta com retry compartilhado (maxDataRetries=3).
+                $newCount = $this->firestore->incrementSessionRetry($chatId);
+                $maxRetries = 3;
+
+                if ($newCount > $maxRetries) {
+                    $this->firestore->clearSession($chatId);
+                    $this->messenger->notifyError(
+                        $chatId,
+                        '⚠️ Não consegui entender suas respostas. O cadastro foi cancelado — use /nova para tentar de novo.',
+                    );
+
+                    return;
+                }
+
+                $this->messenger->askForField(
+                    $chatId,
+                    'items',
+                    $this->invalidWizardMessage('items', $newCount, $maxRetries)
+                        ."\n\n".self::ITEMS_PROMPT,
+                );
+
+                return;
+            }
+
+            // Items válidos (ou [] se pulou) → avança para CATEGORY.
+            $newDraft = $draft->withField('items', $items);
+            $this->advanceToStep($chatId, $session, $newDraft, WizardStep::CATEGORY);
 
             return;
         }
@@ -205,6 +299,35 @@ final class WizardHandler
         // Aplica ao draft (DTO).
         $newDraft = $draft->withField($field, $normalized);
 
+        // M-ITENS-6: após validar DESCRIPTION, pergunta sobre items (sub-fluxo opcional).
+        if ($step === WizardStep::DESCRIPTION) {
+            $itemsAsked = (bool) ($session['draft']['_wizard_items_asked'] ?? false);
+
+            if (! $itemsAsked) {
+                $draftArray = $newDraft->toDraftArray();
+                $draftArray['_wizard_step'] = WizardStep::DESCRIPTION->value;
+                $draftArray['_wizard_active'] = true;
+                $draftArray['_wizard_items_asked'] = true;
+
+                $messageId = $this->messenger->sendText(
+                    $chatId,
+                    '🛒 <b>Detalhar itens desta transação?</b>',
+                );
+                $draftArray['_message_id_items_choice'] = $messageId;
+
+                $this->firestore->setSession($chatId, new SessionData(
+                    state: ConversationState::AWAITING_DATA->value,
+                    draft: $draftArray,
+                    awaitingField: 'items_choice',
+                    source: $session['source'] ?? 'wizard',
+                    retryCount: 0,
+                ));
+
+                return;
+            }
+            // Se já perguntou, segue para CATEGORY normalmente.
+        }
+
         // Avança a etapa.
         $nextStep = $step->next();
 
@@ -244,6 +367,11 @@ final class WizardHandler
         $draftArray = $newDraft->toDraftArray();
         $draftArray['_wizard_step'] = $nextStep->value;
         $draftArray['_wizard_active'] = true;
+
+        // M-ITENS-6: preserva flag items_asked entre etapas (CT-157).
+        if (isset($session['draft']['_wizard_items_asked'])) {
+            $draftArray['_wizard_items_asked'] = $session['draft']['_wizard_items_asked'];
+        }
 
         $this->firestore->setSession(
             $chatId,
@@ -432,6 +560,7 @@ final class WizardHandler
             'description' => 'Descreva brevemente a transação (mín. 2 caracteres).',
             'category' => 'Informe o nome da categoria (ex.: <b>Alimentação</b>).',
             'labels' => 'Separe as labels por vírgula, ou envie <code>-</code> / <code>pular</code> para sugestão automática.',
+            'items' => 'Envie cada item em uma linha (ex.: <code>Arroz x2 32.90</code>) ou <code>pular</code> para não detalhar.',
             default => 'Verifique o valor informado e tente de novo.',
         };
 

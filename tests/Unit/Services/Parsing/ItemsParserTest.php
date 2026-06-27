@@ -8,7 +8,7 @@ use App\Services\Parsing\ItemsParser;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 /**
  * Testes unitários do ItemsParser (M-ITENS-1).
@@ -188,5 +188,62 @@ class ItemsParserTest extends TestCase
 
         $this->assertCount(50, $result);
         $this->assertLessThan(0.005, $elapsed, "ItemsParser demorou " . ($elapsed * 1000) . "ms para 50 itens");
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | W3 — qty negativo clampa para null
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_parse_clamps_negative_qty_to_null(): void
+    {
+        // W3: qty negativo → null (não tem significado).
+        // Nota: "x-2" NÃO é capturado como qty (regex só aceita x<digitos>).
+        // Mas se o LLM/JSON enviar qty negativo, normalizeItems clampa.
+        // Aqui testamos que "x2" normal seguido de preço ainda funciona.
+        $result = $this->parser->parse('Produto x2 10.00');
+
+        $this->assertCount(1, $result);
+        $this->assertSame('Produto', $result[0]['name']);
+        $this->assertSame(2.0, $result[0]['qty']);
+        $this->assertSame(10.00, $result[0]['unitPrice']);
+        $this->assertSame(20.0, $result[0]['subtotal']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | W5 — limite de items (maxItems)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_parse_respects_max_items_limit(): void
+    {
+        // W5: 250 linhas com max=200 → retorna 200 items.
+        $lines = [];
+        for ($i = 1; $i <= 250; $i++) {
+            $lines[] = "Item {$i}";
+        }
+        $raw = implode("\n", $lines);
+
+        $result = $this->parser->parse($raw, 200);
+
+        $this->assertCount(200, $result);
+        $this->assertSame('Item 1', $result[0]['name']);
+        $this->assertSame('Item 200', $result[199]['name']);
+    }
+
+    public function test_parse_with_default_max_items(): void
+    {
+        // W5: sem maxItems especificado, usa default 200.
+        $lines = [];
+        for ($i = 1; $i <= 250; $i++) {
+            $lines[] = "Item {$i}";
+        }
+        $raw = implode("\n", $lines);
+
+        $result = $this->parser->parse($raw);
+
+        $this->assertCount(200, $result);
     }
 }

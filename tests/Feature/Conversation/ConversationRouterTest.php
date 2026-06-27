@@ -2797,4 +2797,172 @@ class ConversationRouterTest extends TestCase
 
         $this->assertStringNotContainsString('Labels:', $summary);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M-ITENS-5 — Edição inline de items
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_edit_items_callback_transitions_to_awaiting_edition(): void
+    {
+        // CT-125/AC-017: clicar "🛒 Itens" → AWAITING_EDITION com awaiting_field='items'.
+        $this->seedSession(
+            ConversationState::AWAITING_CONFIRMATION->value,
+            $this->completeDto(),
+            ['message_id_confirm' => 2000],
+        );
+
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::callback(
+            chatId: self::CHAT_ID,
+            callbackId: 'cb-edit-items',
+            callbackData: 'edit:items',
+            callbackMessageId: 2000,
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
+        $this->assertSame('items', $session['awaiting_field']);
+
+        // Deve ter enviado o prompt de edição.
+        $editionAsks = $this->messenger->editionAsks[self::CHAT_ID] ?? [];
+        $this->assertCount(1, $editionAsks);
+        $this->assertSame('items', $editionAsks[0]['field']);
+    }
+
+    public function test_awaiting_edition_valid_items_updates_draft(): void
+    {
+        // CT-126/AC-018: envia "Coca x3 8.50\nPão" → draft atualizado com 2 items.
+        $draft = $this->completeDto();
+        $this->seedSession(
+            ConversationState::AWAITING_EDITION->value,
+            $draft,
+            [
+                'awaiting_field' => 'items',
+                'message_id_confirm' => 2000,
+            ],
+        );
+
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::text(self::CHAT_ID, "Coca x3 8.50\nPão"));
+
+        $session = $this->currentSession();
+        // Deve ter voltado para AWAITING_CONFIRMATION.
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayHasKey('items', $session['draft']);
+        $this->assertCount(2, $session['draft']['items']);
+        $this->assertSame('Coca', $session['draft']['items'][0]['name']);
+        $this->assertSame('Pão', $session['draft']['items'][1]['name']);
+    }
+
+    public function test_awaiting_edition_limpar_zeros_items(): void
+    {
+        // CT-127/AC-019: envia "limpar" → items=[].
+        $draft = $this->completeDto();
+        $draft = $draft->withField('items', [['name' => 'Coca', 'qty' => 1]]);
+        $this->seedSession(
+            ConversationState::AWAITING_EDITION->value,
+            $draft,
+            [
+                'awaiting_field' => 'items',
+                'message_id_confirm' => 2000,
+            ],
+        );
+
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::text(self::CHAT_ID, 'limpar'));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        // items=[] é omitido pelo toDraftArray (filter $v !== []).
+        $this->assertArrayNotHasKey('items', $session['draft']);
+    }
+
+    public function test_awaiting_edition_empty_input_clears_items(): void
+    {
+        // CT-128/AC-020 — adaptado: ItemsParser é permissivo (regex casa quase tudo).
+        // Whitespace → validateItems retorna [] → draft atualizado com items=[].
+        $draft = $this->completeDto();
+        $draft = $draft->withField('items', [['name' => 'Coca', 'qty' => 1]]);
+        $this->seedSession(
+            ConversationState::AWAITING_EDITION->value,
+            $draft,
+            [
+                'awaiting_field' => 'items',
+                'message_id_confirm' => 2000,
+            ],
+        );
+
+        $router = $this->makeRouter();
+        // Envia apenas whitespace/newlines — parser devolve [], validateItems retorna [].
+        $router->route(ConversationInput::text(self::CHAT_ID, " \t\n"));
+
+        $session = $this->currentSession();
+        // items=[] omitido pelo toDraftArray → confirmação sem items.
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        $this->assertArrayNotHasKey('items', $session['draft']);
+    }
+
+    public function test_sum_divergence_does_not_block(): void
+    {
+        // CT-129/AC-021: amount=87.30 + items somando 49.90 → aceito sem erro.
+        $draft = TransactionData::fromArray([
+            'description' => 'Supermercado',
+            'amount' => 87.30,
+            'type' => 'expense',
+            'date' => '2026-06-15',
+            'items' => [
+                ['name' => 'Arroz', 'qty' => 1, 'unitPrice' => 32.90, 'subtotal' => 32.90],
+                ['name' => 'Feijão', 'qty' => 1, 'unitPrice' => 17.00, 'subtotal' => 17.00],
+            ],
+        ]);
+
+        $this->seedSession(
+            ConversationState::AWAITING_EDITION->value,
+            $draft,
+            [
+                'awaiting_field' => 'items',
+                'message_id_confirm' => 2000,
+            ],
+        );
+
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::text(self::CHAT_ID, "Arroz\nFeijão"));
+
+        $session = $this->currentSession();
+        // Deve ter avançado para confirmação (sem erro).
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+    }
+
+    public function test_sum_exceeding_amount_does_not_block(): void
+    {
+        // CT-130/AC-022: amount=50 + items somando 150 → aceito.
+        $draft = TransactionData::fromArray([
+            'description' => 'Compras',
+            'amount' => 50.0,
+            'type' => 'expense',
+            'date' => '2026-06-15',
+        ]);
+
+        $this->seedSession(
+            ConversationState::AWAITING_EDITION->value,
+            $draft,
+            [
+                'awaiting_field' => 'items',
+                'message_id_confirm' => 2000,
+            ],
+        );
+
+        $router = $this->makeRouter();
+        $router->route(ConversationInput::text(
+            self::CHAT_ID,
+            "Item A x1 50.00\nItem B x1 50.00\nItem C x1 50.00",
+        ));
+
+        $session = $this->currentSession();
+        $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
+        // items aceitos (3 itens, soma 150 > amount 50).
+        $this->assertCount(3, $session['draft']['items']);
+    }
 }

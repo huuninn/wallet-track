@@ -16,6 +16,7 @@ use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Exceptions\ExtractionException;
 use App\Services\Google\FirestoreService;
+use App\Services\Parsing\ItemsParser;
 use App\Support\LabelFormatter;
 use App\Support\TextNormalizer;
 use DateTimeImmutable;
@@ -112,6 +113,7 @@ final class ConversationRouter
         'description' => true,
         'category' => true,
         'observations' => true,
+        'items' => true,
     ];
 
     /**
@@ -154,6 +156,12 @@ final class ConversationRouter
      */
     private ?array $cachedLabelCatalog = null;
 
+    /**
+     * Parser stateless de items (M-ITENS-5). Instanciado inline — sem
+     * custo de DI adicional no construtor já grande.
+     */
+    private readonly ItemsParser $itemsParser;
+
     public function __construct(
         private readonly StateMachine $stateMachine,
         private readonly BotMessenger $messenger,
@@ -169,6 +177,7 @@ final class ConversationRouter
     ) {
         $this->sessionTimeoutMinutes = $sessionTimeoutMinutes;
         $this->maxDataRetries = $maxDataRetries;
+        $this->itemsParser = new ItemsParser();
     }
 
     /**
@@ -1354,6 +1363,7 @@ final class ConversationRouter
             'date' => 'Use o formato <code>15/06/2026</code> ou <code>ontem</code>.',
             'description' => 'Descreva brevemente a transação (mín. 2 caracteres).',
             'category' => 'Informe o nome da categoria (ex.: <b>Alimentação</b>).',
+            'items' => 'Envie cada item em uma linha (ex.: <code>Arroz x2 32.90</code>) ou <code>pular</code> para limpar.',
             default => 'Verifique o valor informado e tente de novo.',
         };
 
@@ -1389,6 +1399,7 @@ final class ConversationRouter
             'category' => $this->validateCategory($raw),
             'observations' => $this->validateObservations($raw),
             'labels' => $this->validateLabels($raw),
+            'items' => $this->validateItems($raw),
             default => null,
         };
     }
@@ -1633,6 +1644,32 @@ final class ConversationRouter
         }
 
         return array_values($labels);
+    }
+
+    /**
+     * Valida e normaliza items (campo editável D-P10=a / M-ITENS-5).
+     *
+     * Atalhos 'pular'/'skip'/'limpar'/'nenhum'/'-'/vazio → retorna [] (zera items).
+     * Senão, delega para ItemsParser. Se parser retorna [] (nenhum item válido),
+     * retorna null (inválido — caller re-pergunta).
+     *
+     * NÃO valida sum(subtotal)==amount (D-P3=a — items são descritivos).
+     *
+     * @return list<array{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}>|null
+     */
+    private function validateItems(string $raw): ?array
+    {
+        $cleaned = trim($raw);
+        $keyword = mb_strtolower($cleaned);
+
+        // Atalhos para "zerar items" (consistente com validateLabels).
+        if ($keyword === '' || in_array($keyword, ['pular', 'skip', 'limpar', 'nenhum', '-'], true)) {
+            return [];
+        }
+
+        $items = $this->itemsParser->parse($cleaned);
+
+        return $items === [] ? null : $items;
     }
 
     /**
