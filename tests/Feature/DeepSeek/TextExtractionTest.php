@@ -85,6 +85,7 @@ class TextExtractionTest extends TestCase
             'labels' => [],
             'date' => 'hoje',
             'observations' => null,
+            'items' => [],
             'confidence' => 0.9,
         ], $data), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }
@@ -536,5 +537,163 @@ class TextExtractionTest extends TestCase
         // Após LabelFormatter: "Almoço", "Almoco", "Restaurante", "Restaurante"
         // Após dedup por fold: "Almoço" e "Restaurante" (primeiros de cada grupo).
         $this->assertSame(['Almoço', 'Restaurante'], $dto->labels);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-100 — DeepSeek extrai items de texto com items explícitos
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * CT-100 / AC-001: O DeepSeek retorna JSON com items explicitamente listados
+     * e o DTO tem `items` com os objetos normalizados.
+     *
+     * Cenário: usuário envia "comprei arroz 5kg por 32,90 e feijão por 17".
+     * O LLM interpreta e retorna 2 items.
+     */
+    public function test_extract_with_items_explicit_in_text(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Supermercado',
+            'amount' => 82.80,
+            'type' => 'expense',
+            'category' => 'Mercado',
+            'items' => [
+                ['name' => 'Arroz 5kg', 'qty' => 2, 'unitPrice' => 32.90, 'subtotal' => 65.80],
+                ['name' => 'Feijão', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        ]));
+
+        $dto = $service->extract('Comprei arroz 5kg por 32,90 e feijão por 17 no mercado');
+
+        $this->assertCount(2, $dto->items);
+        $this->assertSame('Arroz 5kg', $dto->items[0]['name']);
+        $this->assertSame(2.0, $dto->items[0]['qty']);
+        $this->assertSame(32.90, $dto->items[0]['unitPrice']);
+        $this->assertSame(65.80, $dto->items[0]['subtotal']);
+        $this->assertSame('Feijão', $dto->items[1]['name']);
+        $this->assertNull($dto->items[1]['qty']);
+        $this->assertNull($dto->items[1]['unitPrice']);
+        $this->assertNull($dto->items[1]['subtotal']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-101 — Transação sem items → items=[]
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * CT-101 / AC-002: Texto que não menciona itens (ex.: "paguei aluguel")
+     * deve resultar em `items: []` (array vazio).
+     */
+    public function test_extract_without_items_returns_empty_array(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Aluguel',
+            'amount' => 1500.00,
+            'type' => 'expense',
+            'category' => 'Moradia',
+            'items' => [],
+        ]));
+
+        $dto = $service->extract('Paguei o aluguel de 1500');
+
+        $this->assertSame([], $dto->items);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-102 — items:null normalizado para []
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * CT-102 / AC-003: Defesa em profundidade — se o LLM enviar `items: null`
+     * (violação do schema), o DTO normaliza para `[]` sem lançar exceção.
+     */
+    public function test_extract_normalizes_items_null_to_empty(): void
+    {
+        // Simula JSON com items explicitamente null (violação do schema)
+        $json = json_encode([
+            'description' => 'Mercado',
+            'amount' => 50.00,
+            'type' => 'expense',
+            'category' => 'Mercado',
+            'labels' => [],
+            'date' => 'hoje',
+            'observations' => null,
+            'items' => null,
+            'confidence' => 0.9,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+
+        $service = $this->serviceReturning($json);
+
+        $dto = $service->extract('Gastei 50 no mercado');
+
+        // normalizeItems(null) → []
+        $this->assertSame([], $dto->items);
+        $this->assertSame('Mercado', $dto->description);
+        $this->assertSame(50.00, $dto->amount);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-103 — Item com name vazio é descartado
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * CT-103 / AC-004: Item com name="" (vazio após trim) deve ser descartado
+     * durante a normalização. Itens válidos subsequentes são preservados.
+     */
+    public function test_extract_discards_item_with_empty_name(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Mercado',
+            'amount' => 50.00,
+            'type' => 'expense',
+            'category' => 'Mercado',
+            'items' => [
+                ['name' => '', 'qty' => 2, 'unitPrice' => 10.00, 'subtotal' => 20.00],
+                ['name' => 'Coca', 'qty' => 1, 'unitPrice' => 5.00, 'subtotal' => 5.00],
+            ],
+        ]));
+
+        $dto = $service->extract('Comprei coca no mercado');
+
+        // Apenas 1 item (o de name vazio foi descartado)
+        $this->assertCount(1, $dto->items);
+        $this->assertSame('Coca', $dto->items[0]['name']);
+        $this->assertSame(1.0, $dto->items[0]['qty']);
+        $this->assertSame(5.00, $dto->items[0]['unitPrice']);
+        $this->assertSame(5.00, $dto->items[0]['subtotal']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validação de sintaxe dos prompts (M-ITENS-3, Tarefa 3.6)
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Garante que os nowdocs dos prompts não quebraram: os arquivos são
+     * carregáveis via require, retornam strings não-vazias e contêm as
+     * substrings críticas da feature items.
+     */
+    public function test_prompts_syntax_is_valid_and_contain_items_substrings(): void
+    {
+        // Prompt DeepSeek (text-extraction.php)
+        $textPrompt = (string) require resource_path('prompts/text-extraction.php');
+        $this->assertNotEmpty($textPrompt, 'text-extraction.php retornou string vazia.');
+        $this->assertStringContainsString('"items"', $textPrompt, 'text-extraction.php não contém a chave "items".');
+        $this->assertStringContainsString('"subtotal"', $textPrompt, 'text-extraction.php não contém a chave "subtotal".');
+
+        // Prompt Gemini (image-ocr.php)
+        $imagePrompt = (string) require resource_path('prompts/image-ocr.php');
+        $this->assertNotEmpty($imagePrompt, 'image-ocr.php retornou string vazia.');
+        $this->assertStringContainsString('"items"', $imagePrompt, 'image-ocr.php não contém a chave "items".');
+        $this->assertStringContainsString('"subtotal"', $imagePrompt, 'image-ocr.php não contém a chave "subtotal".');
     }
 }

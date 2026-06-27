@@ -51,6 +51,7 @@ class ExtractFromImageTest extends TestCase
             'labels' => [],
             'date' => 'hoje',
             'observations' => null,
+            'items' => [],
             'confidence' => 0.9,
         ], $data), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }

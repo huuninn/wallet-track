@@ -61,6 +61,35 @@ return new Schema(
             description: 'Detalhes adicionais: CNPJ, forma de pagamento. null se nada relevante.',
             nullable: true,
         ),
+        'items' => new Schema(
+            type: DataType::ARRAY,
+            description: 'Lista dos itens que compõem a transação, extraídos da nota fiscal. Cada item é um objeto com chaves: name (string, obrigatório), qty (number, nullable), unitPrice (number, nullable — pode ser negativo em descontos), subtotal (number, nullable — qty × unitPrice). Array vazio se a imagem não tem itens identificáveis.',
+            items: new Schema(
+                type: DataType::OBJECT,
+                properties: [
+                    'name' => new Schema(
+                        type: DataType::STRING,
+                        description: 'Nome ou descrição curta do item (ex.: "Arroz 5kg"). Obrigatório.',
+                    ),
+                    'qty' => new Schema(
+                        type: DataType::NUMBER,
+                        description: 'Quantidade (> 0). null se não informada.',
+                        nullable: true,
+                    ),
+                    'unitPrice' => new Schema(
+                        type: DataType::NUMBER,
+                        description: 'Preço unitário. Pode ser negativo em descontos. null se não informado.',
+                        nullable: true,
+                    ),
+                    'subtotal' => new Schema(
+                        type: DataType::NUMBER,
+                        description: 'qty × unitPrice quando ambos informados. null caso contrário.',
+                        nullable: true,
+                    ),
+                ],
+                required: ['name'],
+            ),
+        ),
         'confidence' => new Schema(
             type: DataType::NUMBER,
             description: 'Confiança na extração (0.0 a 1.0).',

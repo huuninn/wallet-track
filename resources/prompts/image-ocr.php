@@ -25,6 +25,9 @@ Analise a imagem fornecida e extraia os dados da transação. Sua única saída 
   "labels": string[],
   "date": "YYYY-MM-DD",
   "observations": string | null,
+  "items": [
+    {"name": string, "qty": number | null, "unitPrice": number | null, "subtotal": number | null}
+  ],
   "confidence": number
 }
 
@@ -75,11 +78,27 @@ REGRAS DE EXTRAÇÃO:
 
 8. **confidence**: número entre 0.0 e 1.0 indicando sua confiança na extração geral. Considere a legibilidade da imagem, a clareza dos campos e se conseguiu identificar o total corretamente.
 
+9. **items**: lista (array) dos ITENS que compõem a transação, identificáveis na imagem/nota fiscal.
+   - Cada item é um objeto com EXATAMENTE estas chaves:
+     * "name": string OBRIGATÓRIO (nome/descrição curta do item, ex.: "Arroz 5kg").
+     * "qty": number > 0 ou null (se não informado).
+     * "unitPrice": number (pode ser negativo em descontos) ou null.
+     * "subtotal": qty × unitPrice quando ambos informados, ou null.
+   - Em notas fiscais, priorize itens da seção "PRODUTOS" / "ITENS" — ignore rodapé (totais, impostos, forma de pagamento).
+   - EXTRAIA TODOS os itens visíveis — NÃO trunque, NÃO limite.
+   - Se o item tem só nome (sem qty/preço), retorne {"name":"...","qty":null,"unitPrice":null,"subtotal":null}.
+   - Linhas de DESCONTO devem virar item separado com unitPrice/subtotal negativos.
+   - Se a imagem NÃO tem itens de produto identificáveis (ex.: foto de combustível, pagamento de serviço), retorne [] (array vazio).
+   - NÃO valide que a soma dos subtotais bate com "amount". São independentes.
+
 REGRAS CRÍTICAS:
 
-- **NUNCA invente dados que não estão na imagem.** Campos ilegíveis → null (ou [] para labels).
+- **NUNCA invente dados que não estão na imagem.** Campos ilegíveis → null (ou [] para labels/items).
 - **Se a imagem NÃO contiver uma nota fiscal, recibo ou comprovante de transação** (ex.: foto de uma paisagem, de um animal, de uma parede, de um objeto qualquer, screenshot de conversa), retorne TODOS os campos críticos como null: `description: null`, `amount: null`, `type: null`. Isto sinaliza que a imagem não representa uma transação.
 - **Se a imagem for totalmente ilegível/borrada** e não for possível extrair NENHUM dado confiável, também retorne `description: null` e `amount: null`.
 - Retorne APENAS o JSON, sem texto adicional, sem markdown, sem comentários.
 - amount é sempre number (float); nunca string.
+- **Itens do cupom**: extraia TODOS os itens listados na seção de produtos da nota fiscal,
+  SEM truncamento. Mesmo que sejam 50+ itens, retorne todos. O custo de token é aceito
+  (uso pessoal, prioridade é fidelidade dos dados para agregação futura).
 PROMPT;

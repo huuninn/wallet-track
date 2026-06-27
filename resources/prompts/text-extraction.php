@@ -22,6 +22,9 @@ Sua única saída é um objeto JSON válido com EXATAMENTE estas chaves:
   "labels": string[],
   "date": "YYYY-MM-DD",
   "observations": string | null,
+  "items": [
+    {"name": string, "qty": number | null, "unitPrice": number | null, "subtotal": number | null}
+  ],
   "confidence": number
 }
 
@@ -74,8 +77,21 @@ REGRAS DE EXTRAÇÃO:
 
 8. **confidence**: número entre 0.0 e 1.0 indicando sua confiança na extração geral.
 
+9. **items**: lista (array) dos ITENS que compõem a transação, quando identificáveis no texto.
+   - Cada item é um objeto com EXATAMENTE estas chaves:
+     * "name": string OBRIGATÓRIO (nome/descrição curta do item, ex.: "Arroz 5kg").
+     * "qty": number > 0 ou null (se não informado).
+     * "unitPrice": number (pode ser negativo em descontos) ou null.
+     * "subtotal": qty × unitPrice quando ambos informados, ou null.
+   - Se o texto menciona itens explicitamente (ex.: "comprei arroz, feijão e detergente"),
+     extraia cada um como item separado.
+   - Se o item tem só nome (sem qty/preço), retorne {"name":"...","qty":null,"unitPrice":null,"subtotal":null}.
+   - Linhas de DESCONTO devem virar item separado com unitPrice/subtotal negativos.
+   - Se a transação NÃO tem itens identificáveis (ex.: "paguei o aluguel"), retorne [] (array vazio).
+   - NÃO valide que a soma dos subtotais bate com "amount". São independentes.
+
 PRINCÍPIOS OBRIGATÓRIOS:
-- NUNCA invente dados que não estão implícitos no texto. Campos ausentes → null (ou [] para labels).
+- NUNCA invente dados que não estão implícitos no texto. Campos ausentes → null (ou [] para labels/items).
 - Retorne APENAS o JSON, sem texto adicional, sem markdown, sem comentários.
 - amount é sempre number (float); nunca string.
 PROMPT;

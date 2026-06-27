@@ -86,6 +86,7 @@ class ImageExtractionTest extends TestCase
             'labels' => [],
             'date' => 'hoje',
             'observations' => null,
+            'items' => [],
             'confidence' => 0.9,
         ], $data), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }
@@ -528,5 +529,79 @@ class ImageExtractionTest extends TestCase
         // Após LabelFormatter: "Supermercado", "Supermercado", "Compras", "Compras"
         // Após dedup por fold: "Supermercado" e "Compras" (primeiros de cada grupo).
         $this->assertSame(['Supermercado', 'Compras'], $dto->labels);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-105 — Gemini extrai items de cupom fiscal
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * CT-105 / AC-005: Foto de cupom fiscal com itens → DTO tem items
+     * extraídos com name/qty/unitPrice/subtotal normalizados.
+     */
+    public function test_extract_image_with_items(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Supermercado XYZ',
+            'amount' => 87.30,
+            'type' => 'expense',
+            'category' => 'Mercado',
+            'items' => [
+                ['name' => 'Arroz 5kg', 'qty' => 1, 'unitPrice' => 32.90, 'subtotal' => 32.90],
+                ['name' => 'Feijão', 'qty' => 2, 'unitPrice' => 8.50, 'subtotal' => 17.00],
+                ['name' => 'Detergente', 'qty' => 3, 'unitPrice' => 4.50, 'subtotal' => 13.50],
+            ],
+        ]));
+
+        $dto = $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg');
+
+        $this->assertCount(3, $dto->items);
+        $this->assertSame('Arroz 5kg', $dto->items[0]['name']);
+        $this->assertSame(1.0, $dto->items[0]['qty']);
+        $this->assertSame(32.90, $dto->items[0]['unitPrice']);
+        $this->assertSame(32.90, $dto->items[0]['subtotal']);
+        $this->assertSame('Feijão', $dto->items[1]['name']);
+        $this->assertSame(2.0, $dto->items[1]['qty']);
+        $this->assertSame(8.50, $dto->items[1]['unitPrice']);
+        $this->assertSame(17.00, $dto->items[1]['subtotal']);
+        $this->assertSame('Detergente', $dto->items[2]['name']);
+        $this->assertSame(3.0, $dto->items[2]['qty']);
+        $this->assertSame(4.50, $dto->items[2]['unitPrice']);
+        $this->assertSame(13.50, $dto->items[2]['subtotal']);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CT-107 — Imagem sem items → items=[]
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * CT-107 / AC-007: Imagem que não contém itens identificáveis (ex.: foto
+     * de paisagem) deve resultar em `items: []`.
+     *
+     * Nota: o caso CT-107 completo (paisagem → NOT_A_TRANSACTION) já está
+     * coberto por test_ct009_non_receipt_image_raises_not_a_transaction.
+     * Aqui testamos o caso em que a imagem tem transação válida (description
+     * e amount presentes) mas sem itens de produto (ex.: recibo de combustível
+     * sem discriminação de itens).
+     */
+    public function test_extract_image_without_items(): void
+    {
+        $service = $this->serviceReturning($this->fixture([
+            'description' => 'Posto Shell',
+            'amount' => 150.00,
+            'type' => 'expense',
+            'category' => 'Combustível',
+            'items' => [],
+        ]));
+
+        $dto = $service->extractFromImage('iVBORw0KGgo=', 'image/jpeg');
+
+        $this->assertSame([], $dto->items);
+        $this->assertSame('Posto Shell', $dto->description);
+        $this->assertSame(150.00, $dto->amount);
     }
 }
