@@ -56,7 +56,7 @@ final class NutgramBotMessenger implements BotMessenger
         );
     }
 
-    public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?string $firestoreId = null): int
+    public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?int $txId = null): int
     {
         return $this->messageId(
             $this->bot->sendMessage(

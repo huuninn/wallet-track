@@ -7,16 +7,17 @@ namespace Tests\Feature\Commands;
 use App\Bot\Handlers\CancelarHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
+use App\Dto\SessionData;
 use App\Enums\ConversationState;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
-use Tests\Feature\Conversation\ConversationRouterTest;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -30,11 +31,12 @@ use Tests\TestCase;
 #[CoversClass(CancelarHandler::class)]
 class CancelarHandlerTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
-    private InMemoryFirestoreGateway $gateway;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -42,11 +44,11 @@ class CancelarHandlerTest extends TestCase
     {
         parent::setUp();
 
-        $this->gateway = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->gateway);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
 
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->bindStoreToContainer();
         $this->app->instance(BotMessenger::class, $this->messenger);
     }
 
@@ -78,21 +80,29 @@ class CancelarHandlerTest extends TestCase
      */
     private function seedSession(string $state, array $overrides = []): void
     {
-        $this->gateway->setDocument(
-            FirestoreService::COLLECTION_SESSIONS,
-            self::CHAT_ID,
-            array_merge([
-                'state' => $state,
-                'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-            ], $overrides),
-        );
+        $draft = $overrides['draft'] ?? null;
+        $messageIdConfirm = $overrides['message_id_confirm'] ?? null;
+        $messageIdEditPicker = $overrides['message_id_edit_picker'] ?? null;
+        $messageIdAskEdition = $overrides['message_id_ask_edition'] ?? null;
+        $source = $overrides['source'] ?? null;
+        $awaitingField = $overrides['awaiting_field'] ?? null;
+
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: $state,
+            draft: $draft,
+            awaitingField: $awaitingField,
+            messageIdConfirm: $messageIdConfirm,
+            messageIdEditPicker: $messageIdEditPicker,
+            messageIdAskEdition: $messageIdAskEdition,
+            source: $source,
+        ));
     }
 
     public function test_cancelar_in_idle_shows_nothing_to_cancel(): void
     {
         // CT-026a: /cancelar em IDLE (sem sessão) → mensagem amigável,
         // SEM chamar notifyCancelled (que enviaria "🚫 Transação cancelada...").
-        $this->assertNull($this->firestore->getSession(self::CHAT_ID), 'precondição: sem sessão');
+        $this->assertNull($this->store->getSession(self::CHAT_ID), 'precondição: sem sessão');
 
         $bot = $this->makeBotMock();
         (new CancelarHandler)($bot);
@@ -128,7 +138,7 @@ class CancelarHandlerTest extends TestCase
         (new CancelarHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão AWAITING_DATA deve ser limpa após /cancelar (CT-026b)',
         );
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
@@ -151,7 +161,7 @@ class CancelarHandlerTest extends TestCase
         (new CancelarHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão AWAITING_CONFIRMATION deve ser limpa após /cancelar (CT-026c)',
         );
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
@@ -173,7 +183,7 @@ class CancelarHandlerTest extends TestCase
         (new CancelarHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão AWAITING_EDITION deve ser limpa após /cancelar (CT-026d)',
         );
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);
@@ -197,7 +207,7 @@ class CancelarHandlerTest extends TestCase
         (new CancelarHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão de wizard deve ser limpa após /cancelar (CT-026e)',
         );
         $this->assertSame(1, $this->messenger->cancelled[self::CHAT_ID] ?? 0);

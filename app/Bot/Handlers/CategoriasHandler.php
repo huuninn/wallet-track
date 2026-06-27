@@ -6,8 +6,9 @@ namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Support\CategoryEmojiMap;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
 
@@ -65,11 +66,11 @@ final class CategoriasHandler
         // S-2: $messenger resolvido UMA ÚNICA VEZ, antes do try — assim o catch block
         // reusa a mesma instância em vez de re-resolver via `app(BotMessenger::class)`.
         $services = app();
-        $firestore = $services->make(FirestoreService::class);
+        $store = $services->make(WalletStore::class);
         $messenger = $services->make(BotMessenger::class);
 
         try {
-            $categories = $firestore->getCategories();
+            $categories = $store->getCategories();
 
             $messenger->sendText($chatId, $this->renderList($categories));
         } catch (\Throwable $e) {
@@ -87,27 +88,24 @@ final class CategoriasHandler
     /**
      * Formata a listagem de categorias (PT-BR, HTML).
      *
-     * @param  list<array{id: string, data: array<string, mixed>}>  $categories
+     * @param  \Illuminate\Database\Eloquent\Collection<int, \App\Models\Category>  $categories
      */
-    private function renderList(array $categories): string
+    private function renderList(Collection $categories): string
     {
         // Ordena por use_count DESC, depois display_name ASC.
-        $sorted = $categories;
-        usort(
-            $sorted,
-            fn (array $a, array $b): int => (($b['data']['use_count'] ?? 0) <=> ($a['data']['use_count'] ?? 0))
-                ?: strcmp((string) ($a['data']['display_name'] ?? ''), (string) ($b['data']['display_name'] ?? ''))
-        );
+        $sorted = $categories->sortBy([
+            ['use_count', 'desc'],
+            ['display_name', 'asc'],
+        ]);
 
         $lines = ['📊 <b>Categorias</b>', ''];
 
-        if ($sorted === []) {
+        if ($sorted->isEmpty()) {
             $lines[] = '<i>Nenhuma categoria cadastrada ainda. Crie ao registrar transações — elas aparecerão aqui automaticamente.</i>';
         } else {
             foreach ($sorted as $row) {
-                $data = $row['data'];
-                $name = (string) ($data['display_name'] ?? '?');
-                $count = (int) ($data['use_count'] ?? 0);
+                $name = $row->display_name;
+                $count = (int) $row->use_count;
                 $emoji = CategoryEmojiMap::EMOJIS[$name] ?? self::CATEGORY_EMOJI_FALLBACK;
                 $noun = $count === 1 ? 'transação' : 'transações';
                 $lines[] = "{$emoji} {$name} — {$count} {$noun}";

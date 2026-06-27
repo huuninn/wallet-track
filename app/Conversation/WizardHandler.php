@@ -12,7 +12,7 @@ use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Enums\WizardStep;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -118,7 +118,7 @@ final class WizardHandler
 
     public function __construct(
         private readonly ConversationRouter $router,
-        private readonly FirestoreService $firestore,
+        private readonly WalletStore $store,
         private readonly BotMessenger $messenger,
         private readonly TransactionSummaryFormatter $formatter,
         private readonly SuggestsLabels $suggestLabels,
@@ -147,7 +147,7 @@ final class WizardHandler
                 'chat_id' => $chatId,
                 'wizard_step' => $wizardStep,
             ]);
-            $this->firestore->clearSession($chatId);
+            $this->store->clearSession($chatId);
             $this->messenger->notifyError(
                 $chatId,
                 '⚠️ Ocorreu um problema no cadastro. Use /nova para começar de novo.',
@@ -178,7 +178,7 @@ final class WizardHandler
                     $draftArray = $session['draft'];
                     $draftArray['_wizard_items_asked'] = true;
 
-                    $this->firestore->setSession($chatId, new SessionData(
+                    $this->store->setSession($chatId, new SessionData(
                         state: ConversationState::AWAITING_DATA->value,
                         draft: $draftArray,
                         awaitingField: 'items',
@@ -282,7 +282,7 @@ final class WizardHandler
                 $messageId = $this->messenger->sendItemsChoiceQuestion($chatId);
                 $draftArray['_wizard_message_id_items_choice'] = $messageId;
 
-                $this->firestore->setSession($chatId, new SessionData(
+                $this->store->setSession($chatId, new SessionData(
                     state: ConversationState::AWAITING_DATA->value,
                     draft: $draftArray,
                     awaitingField: 'items_choice',
@@ -339,11 +339,11 @@ final class WizardHandler
         if ($items === null) {
             // Input inválido — re-pergunta com retry compartilhado (W-C: usa
             // maxDataRetries do Router em vez de hardcoded 3).
-            $newCount = $this->firestore->incrementSessionRetry($chatId);
+            $newCount = $this->store->incrementSessionRetry($chatId);
             $maxRetries = $this->router->maxDataRetries();
 
             if ($newCount > $maxRetries) {
-                $this->firestore->clearSession($chatId);
+                $this->store->clearSession($chatId);
                 $this->messenger->notifyError(
                     $chatId,
                     '⚠️ Não consegui entender suas respostas. O cadastro foi cancelado — use /nova para tentar de novo.',
@@ -388,7 +388,7 @@ final class WizardHandler
             $draftArray['_wizard_items_asked'] = $session['draft']['_wizard_items_asked'];
         }
 
-        $this->firestore->setSession(
+        $this->store->setSession(
             $chatId,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,
@@ -424,7 +424,7 @@ final class WizardHandler
      * Trata resposta inválida: re-pergunta o mesmo campo, incrementando
      * `retry_count` da sessão. Acima do limite, desiste (limpa sessão).
      *
-     * Estratégia: usa {@see FirestoreService::incrementSessionRetry()}
+     * Estratégia: usa {@see WalletStore::incrementSessionRetry()}
      * (já existente) e compara com o limite padrão do Router. A constante
      * `maxDataRetries` não está exposta no Router, mas o limite razoável
      * é 3 (consistente com M7).
@@ -437,11 +437,11 @@ final class WizardHandler
         string $field,
         string $raw,
     ): void {
-        $newCount = $this->firestore->incrementSessionRetry($chatId);
+        $newCount = $this->store->incrementSessionRetry($chatId);
         $maxRetries = $this->router->maxDataRetries();
 
         if ($newCount > $maxRetries) {
-            $this->firestore->clearSession($chatId);
+            $this->store->clearSession($chatId);
             $this->messenger->notifyError(
                 $chatId,
                 '⚠️ Não consegui entender suas respostas. O cadastro foi cancelado — use /nova para tentar de novo.',

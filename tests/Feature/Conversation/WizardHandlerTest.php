@@ -19,11 +19,12 @@ use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Enums\WizardStep;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -35,7 +36,7 @@ use Tests\TestCase;
  * (delegate para WizardHandler quando wizard ativo).
  *
  * **Setup**: idêntico ao {@see ConversationRouterTest}:
- *  - `InMemoryFirestoreGateway` bindado no container;
+ *  - `WalletStore` via `app(WalletStore::class)` com `RedisFake`;
  *  - `InMemoryBotMessenger` capturando todas as chamadas de I/O;
  *  - Stubs anônimos para ExtractsText/Image e SyncsSheet (nunca invocados
  *    no wizard — o wizard é fluxo manual, sem extração LLM);
@@ -64,11 +65,12 @@ use Tests\TestCase;
 #[CoversClass(ConversationRouter::class)]
 class WizardHandlerTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
-    private InMemoryFirestoreGateway $firestoreGw;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -88,8 +90,8 @@ class WizardHandlerTest extends TestCase
     {
         parent::setUp();
 
-        $this->firestoreGw = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->firestoreGw);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
 
         // Stubs nunca invocados no wizard, mas o Router exige no construtor.
@@ -109,7 +111,7 @@ class WizardHandlerTest extends TestCase
         };
         $this->syncSheet = new class implements SyncsSheet
         {
-            public function handle(TransactionData $dto, string $firestoreId): bool
+            public function handle(TransactionData $dto, int $txId): bool
             {
                 throw new \LogicException('syncSheet não deve ser chamado neste teste (wizard ainda em etapa).');
             }
@@ -120,12 +122,6 @@ class WizardHandlerTest extends TestCase
 
     private function makeRouter(): ConversationRouter
     {
-        // Usa as classes REAIS do M8 (não mockáveis por serem `final`).
-        // Sugestões de labels M8 são aplicadas após o wizard — os testes
-        // que validam os labels do wizard devem considerar a união:
-        //   $expected = $userLabels + $suggestedFromDescription
-        // Para testes sensíveis (CT-025h/i/j), usamos descrições com
-        // keywords MÍNIMAS para reduzir ruído.
         $this->suggestLabels = new class implements SuggestsLabels
         {
             public array $toReturn = [];
@@ -140,13 +136,12 @@ class WizardHandlerTest extends TestCase
             stateMachine: new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $this->suggestLabels,
-            sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );
     }
@@ -159,7 +154,7 @@ class WizardHandlerTest extends TestCase
      */
     private function startWizard(): void
     {
-        $this->firestore->setSession(
+        $this->store->setSession(
             self::CHAT_ID,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,
@@ -181,7 +176,7 @@ class WizardHandlerTest extends TestCase
      */
     private function startWizardWithItemsSubflow(): void
     {
-        $this->firestore->setSession(
+        $this->store->setSession(
             self::CHAT_ID,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,
@@ -203,7 +198,7 @@ class WizardHandlerTest extends TestCase
 
     private function currentSession(): ?array
     {
-        return $this->firestore->getSession(self::CHAT_ID);
+        return $this->store->getSession(self::CHAT_ID);
     }
 
     public function test_wizard_step1_type_desp_advances_to_step2_amount(): void
@@ -402,7 +397,7 @@ class WizardHandlerTest extends TestCase
         // (Este teste valida a integração: NovaHandler chama clearSession.)
         // Aqui validamos a parte do ConversationRouter: se wizard_active
         // está true, mesmo que o estado seja outro, o wizard assume.
-        $this->firestore->setSession(
+        $this->store->setSession(
             self::CHAT_ID,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,
@@ -577,13 +572,12 @@ class WizardHandlerTest extends TestCase
             stateMachine: new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $suggestLabels,
-            sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );
 
@@ -619,13 +613,12 @@ class WizardHandlerTest extends TestCase
             stateMachine: new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $suggestLabels,
-            sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );
 
@@ -660,13 +653,12 @@ class WizardHandlerTest extends TestCase
             stateMachine: new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $suggestLabels,
-            sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );
 
@@ -705,13 +697,12 @@ class WizardHandlerTest extends TestCase
             stateMachine: new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $suggestLabels,
-            sessionTimeoutMinutes: 15,
             maxDataRetries: 3,
         );
 
@@ -1044,7 +1035,7 @@ class WizardHandlerTest extends TestCase
         // _wizard_message_id_items_choice são removidos do draft.
         // Simulamos uma sessão que passou pelo sub-fluxo de items
         // (portanto tem ambos os flags) e está na etapa LABELS.
-        $this->firestore->setSession(
+        $this->store->setSession(
             self::CHAT_ID,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,

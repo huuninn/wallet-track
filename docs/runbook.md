@@ -60,16 +60,26 @@ O script cria:
 - Service account `wallet-track-run` com permissoes de Secret Manager, Firestore e Cloud Run
 - Repositorio Docker `wallet-track` no Artifact Registry (`southamerica-east1`)
 
-### 2.2 Configurar trigger do Cloud Build
+### 2.2 Provisionar trigger de build automatico
 
 ```bash
-# Via console GCP:
-# Cloud Build → Triggers → Create Trigger
-#   - Event: Push to a branch
-#   - Repository: github.com/diego-oliveira/wallet-track
-#   - Branch: ^main$
-#   - Configuration: Cloud Build configuration file (cloudbuild.yaml)
+./scripts/deploy.sh trigger
 ```
+
+O script provisiona de forma idempotente tres recursos do Cloud Build:
+
+1. **GitHub Connection** (`github-wallet-track`) - cria a conexao entre o
+   projeto GCP e o GitHub. Na primeira execucao, exibe uma URL de OAuth
+   que deve ser aberta no navegador para autorizar o Google Cloud Build
+   no repositorio `github.com/huuninn/wallet-track`. O script aguarda
+   (timeout de 5 minutos) ate que a autorizacao seja concluida.
+2. **Repository Link** (`wallet-track`) - vincula o repositorio GitHub a
+   connection criada no passo anterior.
+3. **Build Trigger** (`wallet-track-deploy`) - configura o gatilho que
+   executa `cloudbuild.yaml` a cada push na branch `main`.
+
+O subcomando `trigger` **nao esta incluido** em `deploy.sh all` - deve
+ser executado separadamente, assim como `scheduler`.
 
 ### 2.3 Primeiro deploy
 
@@ -95,12 +105,12 @@ O pipeline automaticamente:
 
 ## 3. Deploy continuo
 
-- Todo push para `main` dispara o pipeline automaticamente via Cloud Build trigger
-- Nao ha necessidade de acoes manuais
-- O webhook e re-registrado a cada deploy (idempotente)
-- Para pular o deploy, incluir `[skip ci]` na mensagem do commit (se o trigger estiver configurado para respeitar)
+Todo push para `main` dispara o pipeline do Cloud Build automaticamente.
+Nao ha necessidade de acoes manuais - o webhook do Telegram e
+re-registrado a cada deploy (idempotente).
 
----
+Para evitar um deploy, trabalhe em uma branch separada e faca merge
+apenas quando pronto para produzir.
 
 ## 4. Rollback
 

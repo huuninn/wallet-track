@@ -5,43 +5,32 @@ declare(strict_types=1);
 /*
 
 |--------------------------------------------------------------------------
-| Google Cloud (projeto, Firestore, credenciais service account)
+| Google Cloud (projeto, credenciais service account)
 |--------------------------------------------------------------------------
 |
 | Configuração central de tudo que toca o Google Cloud no Wallet Track:
 |
 |  - Identidade do projeto GCP (GOOGLE_CLOUD_PROJECT_ID).
-|  - Banco de dados Firestore em Native mode (FIRESTORE_DATABASE_ID).
 |  - Credenciais da service account (M5 lê de arquivo local; M10 injeta
 |    via Secret Manager).
 |
 | Consumidores atuais:
-|  - App\Services\Google\CloudFirestoreGateway  → projectId + databaseId +
-|    keyFile (resolvido por App\Services\Google\GoogleCredentials).
+|  - App\Services\Google\GoogleSheetsGateway → projectId + keyFile
+|    (resolvido por App\Services\Google\GoogleCredentials).
 |
-| Veja docs/02-especificacao-tecnica.md §5 (modelo de dados Firestore),
-| §12 (envvars) e docs/04-firestore-modelo-dados.md.
-|
-| Importante sobre o `database` do Firestore: o SDK usa `(default)` quando
-| omitido; aqui apontamos para `wallet-track-db` (DB Native mode dedicado,
-| já provisionado no projeto GCP). Não confundir com Datastore mode.
+| Veja docs/02-especificacao-tecnica.md §12 (envvars).
 
 */
 
 return [
 
-    // Identificador do projeto GCP onde o Firestore/Sheets/etc vivem.
+    // Identificador do projeto GCP.
     'cloud' => [
         'project_id' => env('GOOGLE_CLOUD_PROJECT_ID'),
     ],
 
-    // Configuração do Firestore (Native mode).
-    'firestore' => [
-        // Database ID. Em produção: 'wallet-track-db'. Omitir cai no '(default)'.
-        'database_id' => env('FIRESTORE_DATABASE_ID', '(default)'),
-    ],
-
     /*
+
     |----------------------------------------------------------------------
     | Google Sheets (planilha de transações — spec §4)
     |----------------------------------------------------------------------
@@ -49,9 +38,8 @@ return [
     |  - spreadsheet_id: ID da planilha compartilhada com a service account.
     |  - sheet_name: aba principal onde cada transação vira uma linha
     |    (cabeçalho na linha 1, dados a partir da linha 2).
-    |  - categories_sheet_name: aba auxiliar somente-leitura, sincronizada do
-    |    Firestore ({see SheetsService::syncCategories()}). Pode ainda não
-    |    existir — a sincronização é best-effort.
+    |  - categories_sheet_name: aba auxiliar somente-leitura, sincronizada
+    |    best-effort a partir das categorias cadastradas.
     |
     | Consumidores: App\Services\Google\GoogleSheetsGateway e SheetsService.
     |

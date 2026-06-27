@@ -4,17 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Console;
 
-use App\Actions\SyncSheet;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
 use App\Console\Commands\SyncPendingTransactions;
-use App\Dto\TransactionData;
-use App\Services\Google\FirestoreGateway;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Models\Transaction;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use PHPUnit\Framework\Attributes\CoversClass;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -34,46 +33,50 @@ use Tests\TestCase;
  *  - --chat-id: filtra por chat.
  *
  * O SyncSheet é mockado por stub anônimo (não usa InMemorySheetsGateway
- * porque o SyncSheet já encapsula a chamada Sheets + update Firestore —
+ * porque o SyncSheet já encapsula a chamada Sheets + update WalletStore —
  * queremos testar a ORQUESTRAÇÃO do command, não o SyncSheet em si).
  *
  * O BotMessenger é o InMemoryBotMessenger (captura `notifyError` etc).
  *
- * O Firestore é o InMemoryFirestoreGateway, bindado no container para
- * que o FirestoreService (singleton) e o command compartilhem a mesma
- * instância dentro de cada teste.
+ * O WalletStore é resolvido via container e usa RefreshDatabase (SQLite
+ * in-memory) para que o command compartilhe a mesma instância do banco.
  */
 #[CoversClass(SyncPendingTransactions::class)]
 class SyncPendingTransactionsCommandTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
     private const string CHAT_ID_OTHER = '67890';
 
-    private InMemoryFirestoreGateway $gateway;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
     /**
      * Stub configurável do SyncsSheet — substitui SyncSheet::handle().
-     *
-     * @var StubSyncsSheet
      */
-    private object $syncSheet;
+    private StubSyncsSheet $syncSheet;
+
+    /**
+     * Mapa label → ID inteiro para rastrear transações criadas.
+     *
+     * @var array<string, int>
+     */
+    private array $txIds = [];
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->gateway = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->gateway);
-        $this->messenger = new InMemoryBotMessenger;
-        $this->syncSheet = new StubSyncsSheet($this->firestore);
+        $this->setUpWalletStore();
 
-        $this->app->instance(FirestoreGateway::class, $this->gateway);
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->messenger = new InMemoryBotMessenger;
+        $this->syncSheet = new StubSyncsSheet($this->store);
+
+        $this->bindStoreToContainer();
         $this->app->instance(BotMessenger::class, $this->messenger);
         $this->app->instance(SyncsSheet::class, $this->syncSheet);
     }
@@ -83,27 +86,18 @@ class SyncPendingTransactionsCommandTest extends TestCase
      *
      * @param  array<string, mixed>  $overrides
      */
-    private function seedPendingTx(string $id, int $attempts = 0, string $chatId = self::CHAT_ID, array $overrides = []): void
+    private function seedPendingTx(string $label, int $attempts = 0, string $chatId = self::CHAT_ID, array $overrides = []): int
     {
-        $this->gateway->setDocument(FirestoreService::COLLECTION_TRANSACTIONS, $id, array_merge([
+        $tx = Transaction::factory()->create(array_merge([
             'chat_id' => $chatId,
-            'description' => "Tx {$id}",
-            'amount' => 50.0,
-            'type' => 'expense',
-            'category' => 'Outros',
-            'date' => '2026-06-15',
-            'labels' => [],
-            'source' => 'text',
-            'sync_status' => FirestoreService::SYNC_PENDING,
+            'description' => "Tx {$label}",
+            'sync_status' => WalletStore::SYNC_PENDING,
             'sync_attempts' => $attempts,
-            'sync_last_attempt_at' => null,
-            'sync_error_message' => null,
-            'spreadsheet_row_id' => null,
             'processing' => false,
-            'notified_at' => null,
-            'created_at' => '2026-06-15T00:00:00.000000Z',
-            'updated_at' => '2026-06-15T00:00:00.000000Z',
         ], $overrides));
+        $this->txIds[$label] = $tx->id;
+
+        return $tx->id;
     }
 
     /*
@@ -136,9 +130,9 @@ class SyncPendingTransactionsCommandTest extends TestCase
             ->assertSuccessful()
             ->expectsOutputToContain('1 sincronizadas');
 
-        $doc = $this->firestore->getTransaction('tx1');
-        $this->assertSame(FirestoreService::SYNC_SYNCED, $doc['sync_status']);
-        $this->assertSame('tx1', $doc['spreadsheet_row_id']);
+        $tx = Transaction::find($this->txIds['tx1']);
+        $this->assertSame(WalletStore::SYNC_SYNCED, $tx->sync_status);
+        $this->assertSame((string) $this->txIds['tx1'], $tx->spreadsheet_row_id);
     }
 
     /*
@@ -154,11 +148,11 @@ class SyncPendingTransactionsCommandTest extends TestCase
 
         $this->artisan('transactions:sync-pending')->assertSuccessful();
 
-        $doc = $this->firestore->getTransaction('tx1');
-        $this->assertSame(FirestoreService::SYNC_SYNCED, $doc['sync_status']);
+        $tx = Transaction::find($this->txIds['tx1']);
+        $this->assertSame(WalletStore::SYNC_SYNCED, $tx->sync_status);
         // Sucesso NÃO incrementa attempts (comportamento do M6 SyncSheet:
         // `updateSyncStatus(SYNC_SYNCED)` sem errorMessage → sem increment).
-        $this->assertSame(2, $doc['sync_attempts']);
+        $this->assertSame(2, $tx->sync_attempts);
     }
 
     /*
@@ -175,10 +169,10 @@ class SyncPendingTransactionsCommandTest extends TestCase
 
         $this->artisan('transactions:sync-pending')->assertSuccessful();
 
-        $doc = $this->firestore->getTransaction('tx1');
-        $this->assertSame(FirestoreService::SYNC_FAILED, $doc['sync_status']);
-        $this->assertSame(3, $doc['sync_attempts']);
-        $this->assertNotNull($doc['notified_at'], 'notified_at deve ser carimbado na 1ª failed definitiva');
+        $tx = Transaction::find($this->txIds['tx1']);
+        $this->assertSame(WalletStore::SYNC_FAILED, $tx->sync_status);
+        $this->assertSame(3, $tx->sync_attempts);
+        $this->assertNotNull($tx->notified_at, 'notified_at deve ser carimbado na 1ª failed definitiva');
 
         // NotifyError chamado exatamente 1x.
         $errors = $this->messenger->errors[self::CHAT_ID] ?? [];
@@ -192,7 +186,7 @@ class SyncPendingTransactionsCommandTest extends TestCase
         // em execução anterior). Nova execução não deve re-notificar.
         $this->syncSheet->defaultReturn = false;
         $this->seedPendingTx('tx1', attempts: 3, overrides: [
-            'notified_at' => '2026-06-15T10:00:00.000000Z',
+            'notified_at' => '2026-06-15 10:00:00',
             // SyncSheet::handle sempre marca failed (e nosso stub também) — mas
             // a próxima iteração do command precisa pular este doc (attempts>=3
             // + listPendingSync filtra). Aqui simulamos um cenário "edge": o
@@ -218,7 +212,7 @@ class SyncPendingTransactionsCommandTest extends TestCase
     {
         $this->syncSheet->defaultReturn = true;
         $this->seedPendingTx('tx1', attempts: 3, overrides: [
-            'sync_status' => FirestoreService::SYNC_PENDING, // ainda pending (rare edge)
+            'sync_status' => WalletStore::SYNC_PENDING, // still pending (rare edge)
         ]);
 
         $this->artisan('transactions:sync-pending')->assertSuccessful();
@@ -226,7 +220,7 @@ class SyncPendingTransactionsCommandTest extends TestCase
         // SyncSheet NÃO deve ter sido chamado para esta tx.
         $this->assertSame(0, $this->syncSheet->callCount);
         // Doc permanece inalterado.
-        $this->assertSame(3, $this->firestore->getTransaction('tx1')['sync_attempts']);
+        $this->assertSame(3, Transaction::find($this->txIds['tx1'])->sync_attempts);
     }
 
     /*
@@ -243,10 +237,10 @@ class SyncPendingTransactionsCommandTest extends TestCase
 
         $this->artisan('transactions:sync-pending')->assertSuccessful();
 
-        $doc = $this->firestore->getTransaction('tx1');
-        $this->assertSame(FirestoreService::SYNC_PENDING, $doc['sync_status'], 'deve voltar a pending para próxima rodada');
-        $this->assertSame(1, $doc['sync_attempts'], 'tentativa contabilizada (sync_attempts++)');
-        $this->assertNull($doc['notified_at'], 'NÃO deve notificar (ainda não atingiu 3)');
+        $tx = Transaction::find($this->txIds['tx1']);
+        $this->assertSame(WalletStore::SYNC_PENDING, $tx->sync_status, 'deve voltar a pending para próxima rodada');
+        $this->assertSame(1, $tx->sync_attempts, 'tentativa contabilizada (sync_attempts++)');
+        $this->assertNull($tx->notified_at, 'NÃO deve notificar (ainda não atingiu 3)');
     }
 
     /*
@@ -268,8 +262,8 @@ class SyncPendingTransactionsCommandTest extends TestCase
         $this->assertSame(20, $this->syncSheet->callCount);
 
         // Verifica que as 5 últimas (tx-20..tx-24) NÃO foram processadas.
-        $this->assertSame(FirestoreService::SYNC_PENDING, $this->firestore->getTransaction('tx-20')['sync_status']);
-        $this->assertSame(FirestoreService::SYNC_PENDING, $this->firestore->getTransaction('tx-24')['sync_status']);
+        $this->assertSame(WalletStore::SYNC_PENDING, Transaction::find($this->txIds['tx-20'])->sync_status);
+        $this->assertSame(WalletStore::SYNC_PENDING, Transaction::find($this->txIds['tx-24'])->sync_status);
     }
 
     /*
@@ -318,13 +312,13 @@ class SyncPendingTransactionsCommandTest extends TestCase
             ->expectsOutputToContain('1 sincronizadas');
 
         // Apenas tx-c1 foi processada.
-        $this->assertSame(FirestoreService::SYNC_SYNCED, $this->firestore->getTransaction('tx-c1')['sync_status']);
-        $this->assertSame(FirestoreService::SYNC_PENDING, $this->firestore->getTransaction('tx-c2')['sync_status']);
+        $this->assertSame(WalletStore::SYNC_SYNCED, Transaction::find($this->txIds['tx-c1'])->sync_status);
+        $this->assertSame(WalletStore::SYNC_PENDING, Transaction::find($this->txIds['tx-c2'])->sync_status);
     }
 
     /*
     |--------------------------------------------------------------------------
-    | --dry-run não toca Firestore/Sheets
+    | --dry-run não toca WalletStore/Sheets
     |--------------------------------------------------------------------------
     */
 
@@ -339,9 +333,9 @@ class SyncPendingTransactionsCommandTest extends TestCase
 
         // SyncSheet NUNCA chamado.
         $this->assertSame(0, $this->syncSheet->callCount);
-        // Firestore inalterado.
-        $this->assertSame(FirestoreService::SYNC_PENDING, $this->firestore->getTransaction('tx1')['sync_status']);
-        $this->assertSame(0, $this->firestore->getTransaction('tx1')['sync_attempts']);
+        // Banco inalterado.
+        $this->assertSame(WalletStore::SYNC_PENDING, Transaction::find($this->txIds['tx1'])->sync_status);
+        $this->assertSame(0, Transaction::find($this->txIds['tx1'])->sync_attempts);
     }
 
     /*
@@ -358,86 +352,81 @@ class SyncPendingTransactionsCommandTest extends TestCase
         $this->seedPendingTx('tx-fail', overrides: ['sync_attempts' => 2]);
 
         // tx-fail falha.
-        $this->syncSheet->overrides['tx-fail'] = ['return' => false, 'error' => 'HTTP 500'];
+        $this->syncSheet->overrides[$this->txIds['tx-fail']] = ['return' => false, 'error' => 'HTTP 500'];
 
         $this->artisan('transactions:sync-pending')
             ->assertSuccessful()
             ->expectsOutputToContain('3 processadas');
 
-        // Verifica contadores nos Firestore docs.
-        $this->assertSame(FirestoreService::SYNC_SYNCED, $this->firestore->getTransaction('tx-ok-1')['sync_status']);
-        $this->assertSame(FirestoreService::SYNC_SYNCED, $this->firestore->getTransaction('tx-ok-2')['sync_status']);
-        $this->assertSame(FirestoreService::SYNC_FAILED, $this->firestore->getTransaction('tx-fail')['sync_status']);
-        $this->assertSame(3, $this->firestore->getTransaction('tx-fail')['sync_attempts']);
+        // Verifica contadores nos registros do banco de dados.
+        $this->assertSame(WalletStore::SYNC_SYNCED, Transaction::find($this->txIds['tx-ok-1'])->sync_status);
+        $this->assertSame(WalletStore::SYNC_SYNCED, Transaction::find($this->txIds['tx-ok-2'])->sync_status);
+        $this->assertSame(WalletStore::SYNC_FAILED, Transaction::find($this->txIds['tx-fail'])->sync_status);
+        $this->assertSame(3, Transaction::find($this->txIds['tx-fail'])->sync_attempts);
 
         // 1 notificação (apenas para tx-fail, que atingiu 3 tentativas).
         $this->assertCount(1, $this->messenger->errors[self::CHAT_ID] ?? []);
     }
-}
 
-/**
- * Stub do {@see SyncsSheet} — simula fielmente o efeito colateral de
- * {@see SyncSheet} no Firestore.
- *
- * Em produção, o `SyncSheet` real:
- *  - Sucesso → chama `updateSyncStatus(id, SYNC_SYNCED)` (sem increment attempts).
- *  - Falha   → chama `updateSyncStatus(id, SYNC_FAILED, $error)` (com increment).
- *
- * O command então decide a próxima ação (re-enfileirar pending ou marcar
- * definitivo failed). Para que os testes de orquestração sejam fiéis à
- * produção, o stub replica EXATAMENTE este side effect no Firestore de
- * teste. Sem isso, o command "enxergaria" o doc como se ainda tivesse o
- * attempts original e tomaria a decisão errada.
- */
-class StubSyncsSheet implements SyncsSheet
-{
-    public bool $defaultReturn = true;
+    /*
+    |--------------------------------------------------------------------------
+    | --time-budget (orçamento de tempo)
+    |--------------------------------------------------------------------------
+    */
 
-    public string $defaultError = 'unknown';
-
-    /**
-     * Mapa de overrides por id de transação.
-     *
-     * @var array<string, array{return: bool, error?: string}>
-     */
-    public array $overrides = [];
-
-    public int $callCount = 0;
-
-    public function __construct(
-        private readonly ?FirestoreService $firestore = null,
-    ) {}
-
-    public function handle(TransactionData $dto, string $firestoreId): bool
+    public function test_time_budget_low_interrupts_processing(): void
     {
-        $this->callCount++;
+        // Cenário: 3 documentos pendentes, --time-budget=1.
+        // Com budget de 1s e margem de 5s, a condição `elapsed + 5 > budget`
+        // é verdadeira na primeira iteração (0 + 5 > 1).
+        // Esperado: processed=0, time_budget_exhausted=true.
+        $this->syncSheet->defaultReturn = true;
+        $this->seedPendingTx('tx1');
+        $this->seedPendingTx('tx2');
+        $this->seedPendingTx('tx3');
 
-        $override = $this->overrides[$firestoreId] ?? null;
-        $shouldReturn = $override['return'] ?? $this->defaultReturn;
-        $error = $override['error'] ?? $this->defaultError;
+        $exit = Artisan::call('transactions:sync-pending', [
+            '--format' => 'json',
+            '--time-budget' => '1',
+        ]);
+        $this->assertSame(0, $exit);
 
-        if (! $shouldReturn) {
-            // Replica side effect do SyncSheet real em falha: marca failed
-            // (com increment) e retorna false.
-            if ($this->firestore !== null) {
-                $this->firestore->updateSyncStatus(
-                    $firestoreId,
-                    FirestoreService::SYNC_FAILED,
-                    $error,
-                );
-            }
+        $output = trim(Artisan::output());
+        $decoded = json_decode($output, true);
 
-            return false;
-        }
+        $this->assertIsArray($decoded, "Output deve ser JSON válido. Recebido: '{$output}'");
+        $this->assertSame('ok', $decoded['status']);
+        $this->assertSame(0, $decoded['processed'], 'Com budget=1, nenhuma transação deve ser processada');
+        $this->assertTrue($decoded['time_budget_exhausted'], 'time_budget_exhausted deve ser true');
+        $this->assertSame(0, $decoded['synced']);
+        $this->assertSame(0, $decoded['failed']);
+    }
 
-        // Sucesso: replica side effect (status=synced, sem increment).
-        if ($this->firestore !== null) {
-            $this->firestore->updateSyncStatus(
-                $firestoreId,
-                FirestoreService::SYNC_SYNCED,
-            );
-        }
+    public function test_time_budget_high_allows_normal_processing(): void
+    {
+        // Cenário: 3 documentos pendentes, --time-budget=3600.
+        // Com budget generoso (1h), todas as transações devem ser processadas.
+        // Esperado: processed=3, time_budget_exhausted=false.
+        $this->syncSheet->defaultReturn = true;
+        $this->seedPendingTx('tx1');
+        $this->seedPendingTx('tx2');
+        $this->seedPendingTx('tx3');
 
-        return true;
+        $exit = Artisan::call('transactions:sync-pending', [
+            '--format' => 'json',
+            '--time-budget' => '3600',
+        ]);
+        $this->assertSame(0, $exit);
+
+        $output = trim(Artisan::output());
+        $decoded = json_decode($output, true);
+
+        $this->assertIsArray($decoded, "Output deve ser JSON válido. Recebido: '{$output}'");
+        $this->assertSame('ok', $decoded['status']);
+        $this->assertSame(3, $decoded['processed'], 'Com budget=3600, todas as 3 transações devem ser processadas');
+        $this->assertFalse($decoded['time_budget_exhausted'], 'time_budget_exhausted deve ser false');
+        $this->assertSame(3, $decoded['synced']);
+        $this->assertSame(0, $decoded['failed']);
     }
 }
+

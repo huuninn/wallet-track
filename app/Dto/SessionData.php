@@ -12,10 +12,10 @@ use App\Enums\ConversationState;
  * transição de estado.
  *
  * Substitui o set de 10 parâmetros nomeados do
- * {@see \App\Services\Google\FirestoreService::setSession()} (estado + draft +
+ * {@see \App\Services\Store\WalletStore::setSession()} (estado + draft +
  * flags de UI + ids de mensagens + clearFields) por um único valor tipado.
  * O id do chat continua sendo parâmetro do serviço porque é a chave do
- * documento, não parte do "conteúdo" da sessão.
+ * documento, não parte do "conteúdo" da sessão (Redis Hash session:{chatId}).
  *
  * Mapeamento entre parâmetros do método antigo e propriedades deste DTO:
  *  - `$state`             → `state`
@@ -28,13 +28,13 @@ use App\Enums\ConversationState;
  *  - `$retryCount`        → `retryCount` (null = preservar; 0 = reset explícito)
  *
  * A lista de campos a serem **apagados** (`clearFields` no método antigo)
- * permanece como segundo argumento de `FirestoreService::setSession()` —
+ * permanece como segundo argumento de {@see \App\Services\Store\WalletStore::setSession()} —
  * não faz parte do DTO porque depende de contexto externo (quais campos
  * o caller considera stale), não da sessão em si.
  *
  * **Filtro de merge preservado (P7-A-2)**: as regras de omissão aplicadas
- * por {@see toMergeArray()} são idênticas às do antigo
- * `FirestoreService::filterSessionField()`:
+ * por {@see toMergeArray()} são as mesmas implementadas em
+ * {@see filterSessionField()}:
  *  - `null` em qualquer campo → omitir (merge não sobrescreve valor existente);
  *  - `0` em `message_id_*` → omitir (sentinela "mensagem não enviada" — sem
  *    isto, helpers que devolvem 0 quando a mensagem é null poluem o doc);
@@ -71,14 +71,14 @@ final readonly class SessionData
      *    por `filterSessionField()`. Use quando o helper do
      *    {@see BotMessenger} devolve `null`/0 (defensivo contra falhas de
      *    envio ou chats restritos) e o caller converte para int.
-     *  - `> 0` → persistido no merge como `message_id_<campo>` no Firestore.
+     *  - `> 0` → persistido no Redis Hash como `message_id_<campo>`.
      *
      * Para **remover** um campo `message_id_*` de uma sessão existente
      * (ex.: após edição válida o `message_id_ask_edition` deve desaparecer),
      * passe `clearFields: ['message_id_<campo>']` como segundo argumento de
-     * {@see FirestoreService::setSession()}. Merge com `null`/`0` apenas
-     * omite — não apaga — campos já persistidos (limitação do merge do
-     * Firestore). Ver uso real em {@see ConversationRouter::handleAwaitingEdition()}.
+     * {@see \App\Services\Store\WalletStore::setSession()}. Merge com `null`/`0` apenas
+     * omite — não apaga — campos já persistidos (limitação do Redis HMSET).
+     * Ver uso real em {@see ConversationRouter::handleAwaitingEdition()}.
      */
     public function __construct(
         public ?string $state = null,
@@ -92,9 +92,9 @@ final readonly class SessionData
     ) {}
 
     /**
-     * Serializa o DTO como array snake_case pronto para `mergeDocument`.
+     * Serializa o DTO como array snake_case pronto para o Redis HMSET.
      *
-     * Aplica o filtro herdado de `FirestoreService::filterSessionField()`
+     * Aplica o filtro de {@see filterSessionField()}
      * (P7-A-2): `null` sempre omitido; `0` em `message_id_*` omitido (sentinela
      * "mensagem não enviada" do `BotMessenger::messageId`); demais valores
      * preservados — incluindo `0` em `retry_count`, que é semântico
@@ -122,11 +122,11 @@ final readonly class SessionData
     }
 
     /**
-     * Lista de campos a serem **removidos** do documento via
-     * `FieldValue::delete()` (não cobertos pelo merge).
+     * Lista de campos a serem **removidos** da sessão via
+     * Redis HDEL (não cobertos pelo HMSET).
      *
      * Inicialmente vazia — o caller passa a lista real como segundo
-     * argumento de `FirestoreService::setSession()`, pois depende de
+     * argumento de {@see \App\Services\Store\WalletStore::setSession()}, pois depende de
      * contexto externo (quais campos o caller considera stale após a
      * transição). Este método existe na API do DTO para simetria com
      * {@see toMergeArray()} e para evolução futura (ex.: o DTO poder
@@ -142,7 +142,7 @@ final readonly class SessionData
     /**
      * Filtro de campo de sessão para `array_filter` em {@see toMergeArray()}.
      *
-     * P7-A-2 (LOW2): extraído de closure inline do antigo `FirestoreService::setSession()`
+     * P7-A-2 (LOW2): extraído de closure inline do antigo FirestoreService (deletado em M7)
      * para método estático — facilita teste unitário e evita recriação da
      * closure a cada chamada.
      *

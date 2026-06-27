@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\App;
  * Helper estático que centraliza a condição de ativação do Telescope.
  *
  * Portão único consumido pelos 3 service providers instrumentados
- * (FirestoreServiceProvider, GeminiServiceProvider, DeepSeekServiceProvider)
+ * (StoreServiceProvider, GeminiServiceProvider, DeepSeekServiceProvider)
  * e pelo {@see TelescopeServiceProvider}. Garante que a
  * decisão "Telescope está ativo?" é tomada num único lugar — sem chance
  * de um provider divergir dos outros.

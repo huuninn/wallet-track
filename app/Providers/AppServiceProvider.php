@@ -19,6 +19,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // Migração MySQL → MariaDB: remove a conexão residual 'mysql' que o
+        // Laravel framework injeta via merge de base config (LoadConfiguration).
+        // Sem isto, config('database.connections.mysql') retorna o array do
+        // skeleton do framework mesmo sem o bloco no config/database.php do app.
+        $connections = config('database.connections');
+        unset($connections['mysql']);
+        config(['database.connections' => $connections]);
     }
 }

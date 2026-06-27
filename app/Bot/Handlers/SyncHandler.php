@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
@@ -20,10 +20,10 @@ use SergiX44\Nutgram\Nutgram;
  * cron ver `sync_attempts=3` e marcar como `failed` definitiva.
  *
  * **Lock atômico entre `/sync` e cron (Decisão Portão 2 #8)**: o
- * {@see FirestoreService::resetPendingSyncAttempts()} zera os contadores
+ * {@see WalletStore::resetPendingSyncAttempts()} zera os contadores
  * SEM adquirir o flag `processing` — é uma operação segura para rodar
  * concorrentemente. Dentro do command `transactions:sync-pending`, o
- * lock é então respeitado via {@see FirestoreService::markSyncStarted()},
+ * lock é então respeitado via {@see WalletStore::markSyncStarted()},
  * pulando transações que outra execução esteja processando.
  *
  * **Execução síncrona**: ao contrário do cron, o `/sync` é executado
@@ -65,12 +65,12 @@ final class SyncHandler
         $chatIdStr = (string) $chatId;
 
         $services = app();
-        $firestore = $services->make(FirestoreService::class);
+        $store = $services->make(WalletStore::class);
         $messenger = $services->make(BotMessenger::class);
 
         // 1. Reseta o contador de tentativas das pendentes deste chat.
         //    Decisão Portão 2 #7: /sync dá "mais 3 chances" ao usuário.
-        $resetCount = $firestore->resetPendingSyncAttempts($chatIdStr);
+        $resetCount = $store->resetPendingSyncAttempts($chatIdStr);
 
         // 2. Se não há nada para sincronizar, responde amigável e sai.
         if ($resetCount === 0) {

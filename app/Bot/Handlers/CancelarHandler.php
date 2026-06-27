@@ -8,7 +8,7 @@ use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\SessionMessageCleaner;
 use App\Conversation\ConversationRouter;
 use App\Enums\ConversationState;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use SergiX44\Nutgram\Nutgram;
 
 /**
@@ -53,18 +53,18 @@ class CancelarHandler
             return;
         }
 
-        // FirestoreService exige `string` (strict_types=1 impede coerção
+        // WalletStore exige `string` (strict_types=1 impede coerção
         // automática), então convertemos o ID numérico do Telegram.
         $chatId = (int) $message->chat->id;
         $chatIdStr = (string) $chatId;
 
         $services = app();
-        $firestore = $services->make(FirestoreService::class);
+        $store = $services->make(WalletStore::class);
         $messenger = $services->make(BotMessenger::class);
 
         // T-003: detecta IDLE. Se não há sessão OU a sessão tem state='idle',
         // emite mensagem amigável e NÃO chama notifyCancelled (CT-026a).
-        $session = $firestore->getSession($chatIdStr);
+        $session = $store->getSession($chatIdStr);
         $isIdle = $session === null || ($session['state'] ?? null) === ConversationState::IDLE->value;
 
         if ($isIdle) {
@@ -82,7 +82,7 @@ class CancelarHandler
         // R1 — remove teclados inline de X e Y via SessionMessageCleaner.
         $services->make(SessionMessageCleaner::class)->cleanup($chatIdStr, $session);
 
-        $firestore->clearSession($chatIdStr);
+        $store->clearSession($chatIdStr);
         $messenger->notifyCancelled($chatIdStr);
     }
 }

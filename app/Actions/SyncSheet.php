@@ -6,16 +6,16 @@ namespace App\Actions;
 
 use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Services\Google\SheetsService;
 use Google\Service\Exception as GoogleServiceException;
 
 /**
- * Orquestra o espelhamento de UMA transação Firestore → Google Sheets (M6.4/M6.5).
+ * Orquestra o espelhamento de UMA transação WalletStore → Google Sheets (M6.4/M6.5).
  *
  * Ponto único de entrada para o sincronismo síncrono (logo após persistir a
  * transação) ou assíncrono (cron de sync-pending, M9). Tenta o append na
- * planilha; em sucesso marca o documento Firestore como `synced`, em falha
+ * planilha; em sucesso marca a transação como `synced`, em falha
  * marca como `failed` (com mensagem de erro + incremento de `sync_attempts`).
  *
  * **NÃO relança exceções esperadas de I/O**: o caller decide o que fazer. A
@@ -36,29 +36,29 @@ use Google\Service\Exception as GoogleServiceException;
  * Implementa {@see SyncsSheet} (introduzida em M7.3) para desacoplar o
  * {@see ConversationRouter} desta implementação concreta.
  *
- * @see FirestoreService::updateSyncStatus()
+ * @see WalletStore::updateSyncStatus()
  */
 final class SyncSheet implements SyncsSheet
 {
     public function __construct(
         private readonly SheetsService $sheets,
-        private readonly FirestoreService $firestore,
+        private readonly WalletStore $store,
     ) {}
 
     /**
-     * Espelha a transação na planilha e atualiza o status de sync no Firestore.
+     * Espelha a transação na planilha e atualiza o status de sync no WalletStore.
      *
-     * @param  string  $firestoreId  ID do documento em `transactions/`.
+     * @param  int  $txId  ID da transação no banco de dados.
      * @return bool `true` em sucesso (sync_status=synced), `false` em falha
      *              esperada de I/O (sync_status=failed + sync_attempts
      *              incrementado). Exceções de programação (DTO incompleto,
      *              etc.) **propagam** ao caller — não devem ser mascaradas
      *              como falha de sync.
      */
-    public function handle(TransactionData $dto, string $firestoreId): bool
+    public function handle(TransactionData $dto, int $txId): bool
     {
         try {
-            $this->sheets->appendTransaction($dto, $firestoreId);
+            $this->sheets->appendTransaction($dto, $txId);
         } catch (GoogleServiceException|\RuntimeException $e) {
             // Apenas erros esperados de I/O da API Sheets (403/404/429/500) e
             // falhas de rede/timeout (RuntimeException propagada pelo SDK/HTTP
@@ -66,16 +66,16 @@ final class SyncSheet implements SyncsSheet
             // DTO incompleto) NÃO é capturado aqui — deve propagar para
             // evitar mascarar bugs como falhas de sync e poluir o contador
             // de retentativas lido pelo M9 (notificação ao usuário).
-            $this->firestore->updateSyncStatus(
-                $firestoreId,
-                FirestoreService::SYNC_FAILED,
+            $this->store->updateSyncStatus(
+                $txId,
+                WalletStore::SYNC_FAILED,
                 $e->getMessage(),
             );
 
             return false;
         }
 
-        $this->firestore->updateSyncStatus($firestoreId, FirestoreService::SYNC_SYNCED);
+        $this->store->updateSyncStatus($txId, WalletStore::SYNC_SYNCED);
 
         return true;
     }

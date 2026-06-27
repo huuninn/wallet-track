@@ -29,7 +29,7 @@ use Throwable;
  *
  * **Por que `final readonly class`?** Este decorator não tem property
  * mutável — é seguro usar `readonly` (diferente do
- * {@see FirestoreWatcherDecorator} que tem `$nestedOperationCount`).
+ * o antigo FirestoreWatcherDecorator (deletado em M7), que tinha `$nestedOperationCount`).
  */
 final readonly class GeminiImageCompleterWatcherDecorator implements ImageCompleter
 {

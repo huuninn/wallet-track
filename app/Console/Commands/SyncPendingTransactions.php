@@ -7,7 +7,8 @@ namespace App\Console\Commands;
 use App\Actions\SyncsSheet;
 use App\Bot\Messaging\BotMessenger;
 use App\Dto\TransactionData;
-use App\Services\Google\FirestoreService;
+use App\Models\Transaction;
+use App\Services\Store\WalletStore;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -17,15 +18,15 @@ use Throwable;
  *
  * Disparado pelo Cloud Scheduler (cron a cada 5 min) e pelo handler
  * `/sync` (execução manual do usuário). Itera sobre as pendentes, espelha
- * cada uma no Google Sheets e atualiza o estado de sync no Firestore.
+ * cada uma no Google Sheets e atualiza o estado de sync no banco.
  *
  * Comando:
  * ```
- * php artisan transactions:sync-pending [--chat-id=CHAT_ID] [--limit=N] [--dry-run] [--format=text|json]
+ * php artisan transactions:sync-pending [--chat-id=CHAT_ID] [--limit=N] [--dry-run] [--format=text|json] [--time-budget=N]
  * ```
  *
  * **Lock atômico `processing` (Decisão Portão 2 #8)**: cada transação é
- * adquirida via {@see FirestoreService::markSyncStarted()} antes de processar.
+ * adquirida via {@see WalletStore::markSyncStarted()} antes de processar.
  * Se outra execução (cron paralelo, `/sync` simultâneo) já tem o lock, o
  * doc é pulado — evitando duplicação na planilha (Sheets API não é idempotente).
  *
@@ -75,6 +76,7 @@ final class SyncPendingTransactions extends Command
     protected $signature = 'transactions:sync-pending
         {--chat-id= : Processa apenas transações deste chat (uso do /sync manual)}
         {--limit= : Limite de transações por execução (default: 20)}
+        {--time-budget= : Orçamento de tempo em segundos (default: 90). Para antes de iniciar nova transação se restar < 5s.}
         {--dry-run : Lista as transações que SERIAM processadas, sem tocar Firestore/Sheets}
         {--format= : Formato de saída (text|json, default: text)}';
 
@@ -108,14 +110,20 @@ final class SyncPendingTransactions extends Command
         $limitOpt = $this->option('limit');
         $limit = is_string($limitOpt) && $limitOpt !== '' ? max(1, (int) $limitOpt) : self::DEFAULT_LIMIT;
 
-        // FirestoreService é resolvido sempre (necessário mesmo no dry-run).
-        /** @var FirestoreService $firestore */
-        $firestore = app(FirestoreService::class);
+        $timeBudgetOpt = $this->option('time-budget');
+        $timeBudget = is_string($timeBudgetOpt) && $timeBudgetOpt !== ''
+            ? max(1, (int) $timeBudgetOpt)
+            : 90;
+        $startTime = hrtime(true);
+
+        // WalletStore é resolvido sempre (necessário mesmo no dry-run).
+        /** @var WalletStore $store */
+        $store = app(WalletStore::class);
 
         // Dry-run: só lista, sem side-effects. Não precisa de SyncsSheet
         // nem BotMessenger — esses só são úteis para processamento real.
         if ($isDryRun) {
-            return $this->dryRun($firestore, $chatId, $limit, $isJson);
+            return $this->dryRun($store, $chatId, $limit, $isJson);
         }
 
         // SyncsSheet e BotMessenger: resolvidos tardiamente só quando vamos
@@ -126,12 +134,12 @@ final class SyncPendingTransactions extends Command
         /** @var BotMessenger|null $messenger */
         $messenger = app()->bound(BotMessenger::class) ? app(BotMessenger::class) : null;
 
-        $docs = $firestore->listPendingSync($chatId, $limit);
+        $docs = $store->listPendingSync($chatId, $limit);
 
         if (! $isJson) {
             $this->info(sprintf(
                 'Sincronizando %d transação(ões) pendente(s)...',
-                count($docs),
+                $docs->count(),
             ));
         }
 
@@ -139,13 +147,30 @@ final class SyncPendingTransactions extends Command
         $synced = 0;
         $failed = 0;
         $errors = [];
+        $budgetExhausted = false;
 
-        foreach ($docs as $doc) {
-            $id = (string) $doc['id'];
-            $data = (array) $doc['data'];
+        foreach ($docs as $tx) {
+            // Orçamento de tempo: verifica ANTES de incrementar o contador
+            // `$processed` — se estourar, `$processed` reflete apenas o que
+            // realmente foi processado (evita inflar o contador com o doc que
+            // seria pulado). Margem de 5s para o commit final + response JSON.
+            $elapsedSec = (hrtime(true) - $startTime) / 1_000_000_000;
+            if ($elapsedSec + 5 > $timeBudget) {
+                $budgetExhausted = true;
+                if (! $isJson) {
+                    $this->warn(sprintf(
+                        'Orçamento de tempo (%ds) atingido após %d transação(ões). Restam pendentes para próxima rodada.',
+                        $timeBudget,
+                        $processed,
+                    ));
+                }
+                break;
+            }
+
+            $id = $tx->id;
             $processed++;
 
-            $result = $this->processOne($firestore, $syncSheet, $messenger, $id, $data, $isJson);
+            $result = $this->processOne($store, $syncSheet, $messenger, $id, $tx, $isJson);
 
             if ($result['synced']) {
                 $synced++;
@@ -166,6 +191,7 @@ final class SyncPendingTransactions extends Command
                 'synced' => $synced,
                 'failed' => $failed,
                 'errors' => $errors,
+                'time_budget_exhausted' => $budgetExhausted,
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         } else {
             $this->info(sprintf(
@@ -174,7 +200,25 @@ final class SyncPendingTransactions extends Command
                 $synced,
                 $failed,
             ));
+
+            if ($budgetExhausted) {
+                $this->warn(sprintf(
+                    'Orçamento de tempo (%ds) atingido. Transações restantes serão processadas na próxima rodada.',
+                    $timeBudget,
+                ));
+            }
         }
+
+        $totalDurationMs = (int) ((hrtime(true) - $startTime) / 1_000_000);
+
+        Log::info('transactions:sync-pending concluído', [
+            'processed' => $processed,
+            'synced' => $synced,
+            'failed' => $failed,
+            'duration_ms' => $totalDurationMs,
+            'time_budget_exhausted' => $budgetExhausted,
+            'time_budget_sec' => $timeBudget,
+        ]);
 
         // Exit code 0 mesmo com falhas parciais (recuperáveis) — o orquestrador
         // (cron) só re-tenta em exit≠0. Falha parcial é estado normal esperado
@@ -188,12 +232,12 @@ final class SyncPendingTransactions extends Command
      * Útil para diagnóstico e smoke tests em produção (responde "o que o
      * próximo cron vai fazer?" sem efeitos colaterais).
      */
-    private function dryRun(FirestoreService $firestore, ?string $chatId, int $limit, bool $isJson): int
+    private function dryRun(WalletStore $store, ?string $chatId, int $limit, bool $isJson): int
     {
         // Para o dry-run, listamos COM o filtro de attempts<3 (igual à execução
         // real) — caso contrário, mentiria sobre o que seria processado.
-        $docs = $firestore->listPendingSync($chatId, $limit);
-        $ids = array_map(static fn (array $doc): string => (string) $doc['id'], $docs);
+        $docs = $store->listPendingSync($chatId, $limit);
+        $ids = $docs->map(fn (Transaction $tx): int => $tx->id)->toArray();
 
         if ($isJson) {
             $this->line((string) json_encode([
@@ -218,7 +262,7 @@ final class SyncPendingTransactions extends Command
     /**
      * Processa UMA transação: sincroniza com Google Sheets.
      *
-     * @param  array<string, mixed>  $data  Documento da transação (campos do schema `transactions/`).
+     * @param  Transaction  $tx  Modelo Eloquent da transação.
      * @return array{synced: bool, attempts: int, error: ?string} Resultado do processamento:
      *                                                            - `synced`: bool — true se gravou no Sheets com sucesso
      *                                                            - `attempts`: int — contador final de tentativas (pós-incremento se falhou)
@@ -242,18 +286,18 @@ final class SyncPendingTransactions extends Command
      * do que iterar em cima de Firestore quebrado).
      */
     private function processOne(
-        FirestoreService $firestore,
+        WalletStore $store,
         SyncsSheet $syncSheet,
         ?BotMessenger $messenger,
-        string $id,
-        array $data,
+        int $id,
+        Transaction $tx,
         bool $isJson,
     ): array {
-        $chatId = (string) ($data['chat_id'] ?? '');
+        $chatId = (string) ($tx->chat_id ?? '');
 
         // 1. Tenta adquirir o lock atômico `processing`. Se outra execução
         // já tem o lock, pula (Decisão Portão 2 #8 — lock atômico).
-        if (! $firestore->markSyncStarted($id)) {
+        if (! $store->markSyncStarted($id)) {
             if (! $isJson) {
                 $this->warn("Transação {$id} já em processamento — pulando.");
             }
@@ -262,13 +306,27 @@ final class SyncPendingTransactions extends Command
         }
 
         try {
-            $dto = TransactionData::fromArray($data);
+            $dto = TransactionData::fromArray([
+                'description' => $tx->description,
+                'amount' => $tx->amount,
+                'type' => $tx->type,
+                'category' => $tx->category,
+                'date' => is_object($tx->date) ? $tx->date->format('Y-m-d') : $tx->date,
+                'observations' => $tx->observations,
+                'labels' => $tx->labels->pluck('name')->toArray(),
+                'items' => $tx->items->map(fn ($i) => [
+                    'name' => $i->name,
+                    'qty' => $i->qty,
+                    'unitPrice' => $i->unit_price,
+                    'subtotal' => $i->subtotal,
+                ])->toArray(),
+            ]);
         } catch (Throwable $e) {
             // DTO inválido (improvável — saveTransaction já validou) — marca
             // como failed mas SEM notificar (não é erro de sync do user).
-            $firestore->markSyncFailed($id, 'invalid DTO: '.$e->getMessage());
-            $doc = $firestore->getTransaction($id) ?? [];
-            $attempts = (int) ($doc['sync_attempts'] ?? 0);
+            $store->markSyncFailed($id, 'invalid DTO: '.$e->getMessage());
+            $txModel = $store->getTransaction($id);
+            $attempts = $txModel?->sync_attempts ?? 0;
 
             if (! $isJson) {
                 $this->error("Transação {$id} falhou: DTO inválido ({$e->getMessage()})");
@@ -283,13 +341,13 @@ final class SyncPendingTransactions extends Command
             // Bug de programação escapou do SyncSheet (esperado que ele
             // capture erros de I/O, mas pode escapar DTO inválido, etc).
             // Marca como failed definitivo + notifica se >= 3 attempts.
-            return $this->handleFailure($firestore, $messenger, $id, $dto, $chatId, $e->getMessage(), $isJson);
+            return $this->handleFailure($store, $messenger, $id, $dto, $chatId, $e->getMessage(), $isJson);
         }
 
         if ($success) {
             // SyncSheet já marcou sync_status=synced. Apenas carimbamos
-            // o rowId (placeholder = Firestore id por ora) e liberamos lock.
-            $firestore->markSyncSuccess($id, $id);
+            // o rowId (placeholder = ID por ora) e liberamos lock.
+            $store->markSyncSuccess($id, (string) $id);
 
             if (! $isJson) {
                 $this->info("Transação {$id} sincronizada (row={$id})");
@@ -300,16 +358,16 @@ final class SyncPendingTransactions extends Command
 
         // Falha recuperável: SyncSheet já incrementou attempts e marcou
         // sync_status=failed. Re-lê o estado atual e decide:
-        $fresh = $firestore->getTransaction($id) ?? [];
-        $attempts = (int) ($fresh['sync_attempts'] ?? 0);
-        $error = (string) ($fresh['sync_error_message'] ?? 'unknown');
+        $fresh = $store->getTransaction($id);
+        $attempts = $fresh?->sync_attempts ?? 0;
+        $error = $fresh?->sync_error_message ?? 'unknown';
 
         if ($attempts < self::MAX_ATTEMPTS) {
             // Re-enfileira como pending para próxima execução.
             // Usa requeuePendingSync (sem increment) em vez de updateSyncStatus
             // — o SyncSheet já incrementou; duplo-incremento quebraria o
             // limite de tentativas.
-            $firestore->requeuePendingSync($id);
+            $store->requeuePendingSync($id);
 
             if (! $isJson) {
                 $this->warn(sprintf(
@@ -324,7 +382,7 @@ final class SyncPendingTransactions extends Command
             return ['synced' => false, 'attempts' => $attempts, 'error' => $error];
         }
 
-        return $this->handleFailure($firestore, $messenger, $id, $dto, $chatId, $error, $isJson, $attempts);
+        return $this->handleFailure($store, $messenger, $id, $dto, $chatId, $error, $isJson, $attempts);
     }
 
     /**
@@ -333,9 +391,9 @@ final class SyncPendingTransactions extends Command
      * @return array{synced: bool, attempts: int, error: ?string}
      */
     private function handleFailure(
-        FirestoreService $firestore,
+        WalletStore $store,
         ?BotMessenger $messenger,
-        string $id,
+        int $id,
         TransactionData $dto,
         string $chatId,
         string $error,
@@ -345,13 +403,13 @@ final class SyncPendingTransactions extends Command
         // IMPORTANTE: checa notified_at ANTES de chamar markSyncFailed, pois
         // este último carimba o flag. Se checássemos depois, a 1ª falha
         // nunca notificaria (sempre veria notified_at setado por ele mesmo).
-        $fresh = $firestore->getTransaction($id) ?? [];
-        $alreadyNotified = ! empty($fresh['notified_at']);
+        $fresh = $store->getTransaction($id);
+        $alreadyNotified = ! empty($fresh?->notified_at);
 
         // Carimba o failed + notified_at (1ª vez) + libera lock.
-        $firestore->markSyncFailed($id, $error);
+        $store->markSyncFailed($id, $error);
 
-        $finalAttempts = $attempts ?? (int) ($fresh['sync_attempts'] ?? 0);
+        $finalAttempts = $attempts ?? ($fresh?->sync_attempts ?? 0);
 
         if (! $isJson) {
             $this->error(sprintf(

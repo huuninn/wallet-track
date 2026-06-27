@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Bot\Messaging;
 
 use App\Dto\TransactionData;
+use App\Models\Transaction;
 use App\Support\CategoryEmojiMap;
 use App\Support\ItemsSorter;
+use Illuminate\Support\Collection;
 
 /**
  * Formatação humanizada do resumo de um {@see TransactionData} para exibição
@@ -160,20 +162,20 @@ final class TransactionSummaryFormatter
      *
      * Cobertura de testes: CT-027, CT-027a, CT-027b, CT-027c, CT-028g.
      *
-     * @param  list<array{id: string, data: array<string, mixed>}>  $transactions
+     * @param  Collection<int, Transaction>  $transactions
      */
-    public function listSummary(array $transactions, int $shown): string
+    public function listSummary(Collection $transactions, int $shown): string
     {
         $noun = $shown === 1 ? 'transação' : 'transações';
         $header = "📋 <b>Últimas {$shown} {$noun}</b>";
 
-        if ($transactions === []) {
+        if ($transactions->isEmpty()) {
             return $header;
         }
 
         $rows = [];
-        foreach ($transactions as $i => $doc) {
-            $rows[] = $this->listRow($doc['data'] ?? [], $i + 1);
+        foreach ($transactions as $i => $tx) {
+            $rows[] = $this->listRow($tx, $i + 1);
         }
 
         $footer = $shown === 1
@@ -258,30 +260,32 @@ final class TransactionSummaryFormatter
     /**
      * Formata uma única linha da listagem (formato compacto do spec §2.8 / T-005).
      *
-     * @param  array<string, mixed>  $data  Documento da transação (campos do schema `transactions/`).
+     * @param  Transaction  $tx  Modelo Eloquent da transação.
      * @param  int  $index  Posição 1-indexada na listagem.
      */
-    private function listRow(array $data, int $index): string
+    private function listRow(Transaction $tx, int $index): string
     {
-        $description = $this->escape((string) ($data['description'] ?? '—'));
-        $category = (string) ($data['category'] ?? '');
+        $description = $this->escape($tx->description ?? '—');
+        $category = $tx->category ?? '';
         $catEmoji = $category !== '' ? $this->categoryEmoji($category) : self::CATEGORY_EMOJI_FALLBACK;
 
-        $type = (string) ($data['type'] ?? '');
+        $type = $tx->type ?? '';
         $typeEmoji = self::TYPE_EMOJIS[$type] ?? self::CATEGORY_EMOJI_FALLBACK;
         $typeLabel = self::TYPE_LABELS[$type] ?? $type;
 
-        $amount = isset($data['amount']) && is_numeric($data['amount'])
-            ? (float) $data['amount']
+        $amount = isset($tx->amount) && is_numeric($tx->amount)
+            ? (float) $tx->amount
             : null;
         $amountStr = $this->formatAmount($amount);
 
-        $dateStr = $this->formatDate(isset($data['date']) ? (string) $data['date'] : null);
+        $dateStr = $this->formatDate(
+            is_object($tx->date) ? $tx->date->format('Y-m-d') : $tx->date
+        );
 
         $firstLine = "{$index}. {$catEmoji} <b>{$description}</b>";
         $secondLine = "   {$typeEmoji} {$typeLabel} · {$amountStr}".($category !== '' ? " · {$this->escape($category)}" : '');
 
-        $labels = $this->formatLabels($data['labels'] ?? []);
+        $labels = $this->formatLabels($tx->labels->pluck('name')->toArray());
         $thirdLine = $labels !== ''
             ? "   📅 {$dateStr} · {$labels}"
             : "   📅 {$dateStr}";

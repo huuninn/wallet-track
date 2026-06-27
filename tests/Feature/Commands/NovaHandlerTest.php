@@ -8,15 +8,17 @@ use App\Bot\Handlers\NovaHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
 use App\Conversation\WizardHandler;
+use App\Dto\SessionData;
 use App\Enums\ConversationState;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -31,18 +33,19 @@ use Tests\TestCase;
  *  - Compatibilidade com BotLoader (registro do comando)
  *
  * Padrão de teste consistente com {@see StartHandlerTest}
- * e {@see CancelarHandlerTest}: `InMemoryFirestoreGateway`
- * bindado no container + `InMemoryBotMessenger` para captura + mock leve
- * do `Nutgram` com `message()` pré-configurado.
+ * e {@see CancelarHandlerTest}: `WalletStore` bindado no container
+ * + `InMemoryBotMessenger` para captura + mock leve do `Nutgram`
+ * com `message()` pré-configurado.
  */
 #[CoversClass(NovaHandler::class)]
 class NovaHandlerTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
-    private InMemoryFirestoreGateway $gateway;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -50,11 +53,11 @@ class NovaHandlerTest extends TestCase
     {
         parent::setUp();
 
-        $this->gateway = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->gateway);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
 
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->bindStoreToContainer();
         $this->app->instance(BotMessenger::class, $this->messenger);
     }
 
@@ -86,14 +89,22 @@ class NovaHandlerTest extends TestCase
      */
     private function seedSession(string $state, array $overrides = []): void
     {
-        $this->gateway->setDocument(
-            FirestoreService::COLLECTION_SESSIONS,
-            self::CHAT_ID,
-            array_merge([
-                'state' => $state,
-                'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-            ], $overrides),
-        );
+        $draft = $overrides['draft'] ?? null;
+        $messageIdConfirm = $overrides['message_id_confirm'] ?? null;
+        $messageIdEditPicker = $overrides['message_id_edit_picker'] ?? null;
+        $messageIdAskEdition = $overrides['message_id_ask_edition'] ?? null;
+        $source = $overrides['source'] ?? null;
+        $awaitingField = $overrides['awaiting_field'] ?? null;
+
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: $state,
+            draft: $draft,
+            awaitingField: $awaitingField,
+            messageIdConfirm: $messageIdConfirm,
+            messageIdEditPicker: $messageIdEditPicker,
+            messageIdAskEdition: $messageIdAskEdition,
+            source: $source,
+        ));
     }
 
     #[Group('smoke')]
@@ -102,12 +113,12 @@ class NovaHandlerTest extends TestCase
         // CT-025 (parte da inicialização): /nova em IDLE → sessão wizard
         // configurada com state=AWAITING_DATA, awaiting_field='type', e
         // draft com _wizard_step=1 + _wizard_active=true.
-        $this->assertNull($this->firestore->getSession(self::CHAT_ID), 'precondição: IDLE');
+        $this->assertNull($this->store->getSession(self::CHAT_ID), 'precondição: IDLE');
 
         $bot = $this->makeBotMock();
         (new NovaHandler)($bot);
 
-        $session = $this->firestore->getSession(self::CHAT_ID);
+        $session = $this->store->getSession(self::CHAT_ID);
         $this->assertNotNull($session, 'Sessão wizard deve ser criada');
         $this->assertSame(ConversationState::AWAITING_DATA->value, $session['state']);
         $this->assertSame('type', $session['awaiting_field']);
@@ -150,7 +161,7 @@ class NovaHandlerTest extends TestCase
         $bot = $this->makeBotMock();
         (new NovaHandler)($bot);
 
-        $session = $this->firestore->getSession(self::CHAT_ID);
+        $session = $this->store->getSession(self::CHAT_ID);
         $this->assertNotNull($session);
         $this->assertSame(ConversationState::AWAITING_DATA->value, $session['state']);
         $this->assertSame(1, $session['draft']['_wizard_step']);
@@ -197,7 +208,7 @@ class NovaHandlerTest extends TestCase
         $bot = $this->makeBotMock();
         (new NovaHandler)($bot);
 
-        $session = $this->firestore->getSession(self::CHAT_ID);
+        $session = $this->store->getSession(self::CHAT_ID);
         $this->assertSame(1, $session['draft']['_wizard_step'], 'wizard deve voltar para step 1');
         $this->assertTrue($session['draft']['_wizard_active']);
         $this->assertSame('type', $session['awaiting_field']);
@@ -214,7 +225,7 @@ class NovaHandlerTest extends TestCase
         $bot = $this->makeBotMock();
         (new NovaHandler)($bot);
 
-        $session = $this->firestore->getSession(self::CHAT_ID);
+        $session = $this->store->getSession(self::CHAT_ID);
         $this->assertSame(ConversationState::AWAITING_DATA->value, $session['state']);
         $this->assertSame(1, $session['draft']['_wizard_step']);
     }
@@ -235,7 +246,7 @@ class NovaHandlerTest extends TestCase
     {
         // Em IDLE, NÃO deve enviar aviso de descarte (não há nada para
         // descartar). Apenas inicia o wizard.
-        $this->assertNull($this->firestore->getSession(self::CHAT_ID));
+        $this->assertNull($this->store->getSession(self::CHAT_ID));
 
         $bot = $this->makeBotMock();
         (new NovaHandler)($bot);
@@ -251,12 +262,12 @@ class NovaHandlerTest extends TestCase
         // /nova duas vezes → mesmo estado final (wizard reinicia).
         $bot1 = $this->makeBotMock();
         (new NovaHandler)($bot1);
-        $session1 = $this->firestore->getSession(self::CHAT_ID);
+        $session1 = $this->store->getSession(self::CHAT_ID);
         $this->assertSame(1, $session1['draft']['_wizard_step']);
 
         $bot2 = $this->makeBotMock();
         (new NovaHandler)($bot2);
-        $session2 = $this->firestore->getSession(self::CHAT_ID);
+        $session2 = $this->store->getSession(self::CHAT_ID);
         $this->assertSame(1, $session2['draft']['_wizard_step']);
         $this->assertSame('type', $session2['awaiting_field']);
     }
@@ -296,7 +307,7 @@ class NovaHandlerTest extends TestCase
     public function test_nova_with_no_active_session_is_noop_for_cleanup(): void
     {
         // Sem sessão → /nova inicia wizard, mas cleanup é no-op.
-        $this->assertNull($this->firestore->getSession(self::CHAT_ID), 'precondição: IDLE');
+        $this->assertNull($this->store->getSession(self::CHAT_ID), 'precondição: IDLE');
 
         $bot = $this->makeBotMock();
         (new NovaHandler)($bot);

@@ -18,7 +18,7 @@ use App\Dto\TransactionData;
  * ({@see InMemoryBotMessenger}) para testes.
  *
  * Isto replica o padrão gateway+fake usado em M3-M6 (ChatCompleter,
- * ImageCompleter, FirestoreGateway, SheetsGateway): a regra de negócio nunca
+ * ImageCompleter, SheetsGateway): a regra de negócio nunca
  * toca a SDK diretamente.
  *
  * Convenções de retorno:
@@ -47,11 +47,11 @@ interface BotMessenger
      * O resumo deve listar em PT-BR legível: Descrição, Valor, Tipo
      * (Despesa/Receita), Categoria (se houver) e Data.
      *
-     * @param  string|null  $firestoreId  Opcional — apenas informativo (não
-     *                                    exposto ao usuário; persisted só no confirm).
+     * @param  int|null  $txId  Opcional — ID da transação (apenas informativo;
+     *                           não exposto ao usuário; persisted só no confirm).
      * @return int message_id da mensagem com o keyboard.
      */
-    public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?string $firestoreId = null): int;
+    public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?int $txId = null): int;
 
     /**
      * Pede ao usuário o valor de um campo pedível (AWAITING_DATA).

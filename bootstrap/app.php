@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\ValidateTelegramWebhook;
-use App\Http\Middleware\VerifyCronToken;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,15 +19,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // (Laravel 13+) em vez de poluir o array `$routeMiddleware` legado.
         $middleware->alias([
             'telegram.webhook' => ValidateTelegramWebhook::class,
-            'cron' => VerifyCronToken::class,
         ]);
 
         // O webhook do Telegram recebe POSTs sem token CSRF (chamada de
         // servidor-para-servidor), então deve ficar de fora da verificação
         // VerifyCsrfToken. Sem isto, o Telegram receberia 419 em produção.
-        //
-        // A rota /cron/sync-pending também é GET server-to-server e
-        // precisa ser excluída — o Cloud Scheduler não envia token CSRF.
         //
         // As rotas do Telescope (POST /telescope/telescope-api/*) também
         // são chamadas pela própria UI Vue do Telescope via fetch sem CSRF
@@ -36,7 +31,6 @@ return Application::configure(basePath: dirname(__DIR__))
         // com erro 419 silencioso no console do browser.
         $middleware->validateCsrfTokens(except: [
             'webhook/telegram',
-            'cron/sync-pending',
             'telescope/*',
         ]);
     })

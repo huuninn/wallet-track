@@ -12,27 +12,23 @@
 # ----------------------------------------------------------------------------
 # Estágio base — imagem oficial FrankenPHP com PHP 8.4 (Debian Bookworm)
 # ----------------------------------------------------------------------------
-FROM dunglas/frankenphp:1.4-php8.4-bookworm AS base
+# O ARG BASE_IMAGE permite que docker-compose injete uma imagem pré-construída
+# (docker/Dockerfile.base) com as extensões PHP já compiladas, evitando rebuild
+# completo em cada `docker compose build`. Em builds standalone (Cloud Build),
+# o default aponta diretamente para a imagem oficial FrankenPHP.
+ARG BASE_IMAGE=dunglas/frankenphp:1.4-php8.4-bookworm
+FROM ${BASE_IMAGE} AS base
 
-# Extensões PHP obrigatórias ao projeto (plano §M0.6 + composer.json ext-*).
+# Extensões PHP obrigatórias ao projeto (plano §M1.3 + composer.json ext-*).
 # `install-php-extensions` é um helper já presente na imagem FrankenPHP.
 # Notas:
-#  - grpc: instalado via bsn4/grpc-php-rs (binário pré-compilado, ~1MB) —
-#    evita os 30-40 min de compilação do gRPC C++ oficial (grpc/grpc#34278).
-#    FrankenPHP é ZTS → usamos a tag `-zts` do grpc-php-rs. Drop-in
-#    replacement: mesma `Grpc\ namespace
-#  - protobuf: exigido pelo google/cloud-firestore (otimização de serialização)
-#  - intl: normalização Unicode (heurística de labels em M8)
+#  - pdo_mysql: driver MariaDB/MySQL (pdo_mysql) para persistência de transações, categorias e labels
+#  - redis: extensão phpredis para sessões conversacionais e cache
+#  - intl: normalização Unicode (heurística de labels)
 #  - gmp/bcmath: aritmética precisa (cálculos de valores)
-#  - pdo_sqlite: banco padrão do skeleton (sessões/cache em dev)
+#  - pdo_sqlite: banco usado por testes unitários
 #  - opcache: performance em worker mode
 #  - zip: Composer / uploads
-# (pcntl seria exigido pelo Octane para sinais SIGINT; como usamos o servidor
-#  FrankenPHP nativo, não é necessário — ver nota no CMD abaixo.)
-#
-# grpc-php-rs vem ANTES de install-php-extensions para que a .so já esteja
-# no extension_dir antes de qualquer outra extensão ser configurada.
-COPY --from=ghcr.io/bsn4/grpc-php-rs:latest-php8.4-zts /usr/local/ /usr/local/
 
 # Atualizamos índices apt explicitamente para evitar listas obsoletas no cache
 # da imagem base (que pode estar defasado no momento do pull).
@@ -43,8 +39,9 @@ RUN apt-get update \
         bcmath \
         intl \
         opcache \
-        protobuf \
+        pdo_mysql \
         pdo_sqlite \
+        redis \
         zip \
     && rm -rf /var/lib/apt/lists/*
 
@@ -193,5 +190,62 @@ EXPOSE 8080
 # Executa como usuário não-privilegiado www-data (hardening: superfície de RCE
 # reduzida caso uma dependência seja vulnerável).
 USER www-data
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+
+# ----------------------------------------------------------------------------
+# Estágio dev — desenvolvimento local com hot-reload
+# ----------------------------------------------------------------------------
+# Usado por docker-compose.yml (`target: dev`). Diferenças do estágio runtime:
+#  - Composer com dev-dependencies (phpunit, pint, telescope etc.)
+#  - opcache com revalidação de timestamps (reflete alterações sem rebuild)
+#  - Usuário root (necessário para artisan commands, composer require etc.)
+#  - Xdebug NÃO é instalado (mantido fora para não penalizar performance;
+#    instalar sob demanda com `docker compose exec app pecl install xdebug`)
+# ----------------------------------------------------------------------------
+FROM base AS dev
+
+# Composer oficial + git/unzip para operações de desenvolvimento.
+COPY --from=composer:2.8 /usr/bin/composer /usr/bin/composer
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instala TODAS as dependências (incluindo require-dev: phpunit, pint, etc.).
+COPY composer.json composer.lock ./
+RUN composer install \
+        --no-interaction \
+        --no-scripts \
+        --no-autoloader \
+        --prefer-dist
+
+# Copia o código da aplicação e gera autoload completo (com dev classes).
+COPY . .
+RUN composer dump-autoload --optimize --no-scripts
+
+# Configuração PHP para dev: revalida timestamps do opcache a cada request
+# (reflete alterações de código sem rebuild da imagem).
+ENV PHP_OPCACHE_VALIDATE_TIMESTAMPS=1 \
+    PHP_OPCACHE_ENABLE=1 \
+    PHP_OPCACHE_MEMORY_CONSUMPTION=128 \
+    PHP_OPCACHE_MAX_ACCELERATED_FILES=20000
+
+# Copia o Caddyfile (mesmo do runtime; FrankenPHP escuta em :8080).
+COPY docker/Caddyfile /etc/caddy/Caddyfile
+
+# Variáveis de ambiente para dev local (sobrescritas pelo docker-compose env_file).
+ENV APP_ENV=local \
+    APP_DEBUG=true \
+    SESSION_DRIVER=file \
+    LOG_CHANNEL=stderr \
+    LOG_LEVEL=debug \
+    SERVER_NAME=:8080 \
+    OCTANE_SERVER=frankenphp
+
+EXPOSE 8080
+
+# Em dev, roda como root para permitir composer require, artisan commands, etc.
+# O entrypoint.sh (herdado do runtime) gerencia a inicialização.
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

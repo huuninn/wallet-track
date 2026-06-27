@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Tests\Unit\Actions;
 
 use App\Actions\SuggestCategory;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 /**
  * Testes da heurística de sugestão de categoria (M8.4).
@@ -26,16 +26,17 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(SuggestCategory::class)]
 class SuggestCategoryTest extends TestCase
 {
-    private FirestoreService $firestore;
+    use RefreshDatabase;
+
+    private WalletStore $store;
 
     private SuggestCategory $action;
 
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->firestore = new FirestoreService(new InMemoryFirestoreGateway);
-        $this->action = new SuggestCategory($this->firestore);
+        $this->store = app(WalletStore::class);
+        $this->action = new SuggestCategory($this->store);
     }
 
     /**
@@ -43,10 +44,10 @@ class SuggestCategoryTest extends TestCase
      */
     private function seedDefaultCategories(): void
     {
-        $this->firestore->createCategory('Alimentação', 'expense', isDefault: true);
-        $this->firestore->createCategory('Transporte', 'expense', isDefault: true);
-        $this->firestore->createCategory('Moradia', 'expense', isDefault: true);
-        $this->firestore->createCategory('Outros', 'expense', isDefault: true);
+        $this->store->createCategory('Alimentação', 'expense', isDefault: true);
+        $this->store->createCategory('Transporte', 'expense', isDefault: true);
+        $this->store->createCategory('Moradia', 'expense', isDefault: true);
+        $this->store->createCategory('Outros', 'expense', isDefault: true);
     }
 
     public function test_exact_match_returns_existing_category(): void
@@ -133,7 +134,7 @@ class SuggestCategoryTest extends TestCase
     public function test_default_is_marked_new_when_category_does_not_exist(): void
     {
         // Não popula "Outros".
-        $this->firestore->createCategory('Alimentação', 'expense', isDefault: true);
+        $this->store->createCategory('Alimentação', 'expense', isDefault: true);
 
         $result = $this->action->suggest(null, null);
 

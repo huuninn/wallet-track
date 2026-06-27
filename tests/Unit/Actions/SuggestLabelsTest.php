@@ -5,16 +5,16 @@ declare(strict_types=1);
 namespace Tests\Unit\Actions;
 
 use App\Actions\SuggestLabels;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 /**
  * Testes da heurística de sugestão de labels (M8.1).
  *
  * Cobre o algoritmo definido em `docs/04-clarificacoes.md` §4:
- *  - Fase A — Histórico (Firestore) tem prioridade sobre Fase B (keywords).
+ *  - Fase A — Histórico (banco de dados) tem prioridade sobre Fase B (keywords).
  *  - Cap em {@see SuggestLabels::MAX_SUGGESTED_LABELS} (5).
  *  - Dedup contra `$existingLabels` e contra o acumulado.
  *  - NUNCA inventa labels quando não há fonte de sinal.
@@ -25,16 +25,17 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(SuggestLabels::class)]
 class SuggestLabelsTest extends TestCase
 {
-    private FirestoreService $firestore;
+    use RefreshDatabase;
+
+    private WalletStore $store;
 
     private SuggestLabels $action;
 
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->firestore = new FirestoreService(new InMemoryFirestoreGateway);
-        $this->action = new SuggestLabels($this->firestore);
+        $this->store = app(WalletStore::class);
+        $this->action = new SuggestLabels($this->store);
     }
 
     public function test_returns_empty_when_no_history_no_keywords(): void
@@ -57,10 +58,10 @@ class SuggestLabelsTest extends TestCase
         // Histórico: "Ifood" (3x) e "Restaurante" (2x).
         // incrementLabelUse agora grava com LabelFormatter::format() (P1 — Sentence Case).
         for ($i = 0; $i < 3; $i++) {
-            $this->firestore->incrementLabelUse('ifood');
+            $this->store->incrementLabelUse('ifood');
         }
         for ($i = 0; $i < 2; $i++) {
-            $this->firestore->incrementLabelUse('restaurante');
+            $this->store->incrementLabelUse('restaurante');
         }
 
         // Descrição contém "pizza" como keyword — mas o histórico tem prioridade
@@ -83,7 +84,7 @@ class SuggestLabelsTest extends TestCase
     {
         // Cria 10 labels com mesmo use_count → top 10 (HISTORY_LIMIT).
         for ($i = 1; $i <= 10; $i++) {
-            $this->firestore->incrementLabelUse("label-{$i}");
+            $this->store->incrementLabelUse("label-{$i}");
         }
 
         // Descrição com várias keywords adicionais.
@@ -100,8 +101,8 @@ class SuggestLabelsTest extends TestCase
     {
         // Histórico: 2 labels (cobra 2 vagas).
         // incrementLabelUse agora grava com LabelFormatter::format() (P1 — Sentence Case).
-        $this->firestore->incrementLabelUse('ifood');
-        $this->firestore->incrementLabelUse('restaurante');
+        $this->store->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('restaurante');
 
         // Descrição com keywords suficientes para preencher até o MAX.
         $result = $this->action->suggest(
@@ -124,8 +125,8 @@ class SuggestLabelsTest extends TestCase
     public function test_dedupes_against_existing_labels(): void
     {
         // Histórico: Ifood, Restaurante (capitalizados pelo LabelFormatter).
-        $this->firestore->incrementLabelUse('ifood');
-        $this->firestore->incrementLabelUse('restaurante');
+        $this->store->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('restaurante');
 
         // existingLabels já contém "Ifood" — não deve ser sugerido de novo.
         $result = $this->action->suggest(
@@ -140,7 +141,7 @@ class SuggestLabelsTest extends TestCase
 
     public function test_dedupes_against_existing_labels_case_insensitive(): void
     {
-        $this->firestore->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('ifood');
 
         $result = $this->action->suggest(
             'Pizza ifood',
@@ -157,7 +158,7 @@ class SuggestLabelsTest extends TestCase
         // CT-021a: existingLabels: ['almoco'] (já folded),
         // descrição com "Almoço" → não duplica.
         // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood".
-        $this->firestore->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('ifood');
 
         $result = $this->action->suggest(
             'Almoço no restaurante',
@@ -199,7 +200,7 @@ class SuggestLabelsTest extends TestCase
     public function test_does_not_invent_labels_with_empty_description(): void
     {
         // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood".
-        $this->firestore->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('ifood');
 
         // description vazia → sem keywords.
         $result = $this->action->suggest('', 'Alimentação');
@@ -228,10 +229,10 @@ class SuggestLabelsTest extends TestCase
         // Nova transação "Paguei R$ 32,00 na pizza do iFood" → sugere os 2 primeiros.
         // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood", "Restaurante".
         for ($i = 0; $i < 3; $i++) {
-            $this->firestore->incrementLabelUse('ifood');
+            $this->store->incrementLabelUse('ifood');
         }
         for ($i = 0; $i < 2; $i++) {
-            $this->firestore->incrementLabelUse('restaurante');
+            $this->store->incrementLabelUse('restaurante');
         }
 
         $result = $this->action->suggest('Paguei 32,00 na pizza do iFood', 'Alimentação');
@@ -264,7 +265,7 @@ class SuggestLabelsTest extends TestCase
         // bloqueiam edição futura: o que SuggestLabels devolve é o que
         // entra no draft, e o ConversationRouter permite ao usuário editar.
         // incrementLabelUse agora grava com LabelFormatter::format() → "Ifood".
-        $this->firestore->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('ifood');
 
         $suggested = $this->action->suggest(
             'Paguei 55,00 no iFood de japonês domingo',
@@ -285,7 +286,7 @@ class SuggestLabelsTest extends TestCase
     {
         // Cria 15 labels com mesmo use_count.
         for ($i = 1; $i <= 15; $i++) {
-            $this->firestore->incrementLabelUse("label-{$i}");
+            $this->store->incrementLabelUse("label-{$i}");
         }
 
         // HISTORY_LIMIT=10 consulta top 10, mas MAX_SUGGESTED_LABELS=5 limita
@@ -299,7 +300,7 @@ class SuggestLabelsTest extends TestCase
     {
         // 8 labels no histórico → só 5 são devolvidos (cap).
         for ($i = 1; $i <= 8; $i++) {
-            $this->firestore->incrementLabelUse("label-{$i}");
+            $this->store->incrementLabelUse("label-{$i}");
         }
 
         $result = $this->action->suggest('', 'Outros');

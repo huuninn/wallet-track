@@ -14,19 +14,22 @@ use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Conversation\ConversationInput;
 use App\Conversation\ConversationRouter;
 use App\Conversation\StateMachine;
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Models\Transaction;
 use App\Services\Google\InMemorySheetsGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\CoversClass;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
  * Testes E2E da feature items (M-ITENS-7 / CT-159, CT-160).
  *
  * Validam o fluxo completo da extração de items até a persistência
- * nos 3 destinos (Firestore, Sheets, Telegram), sem chamar LLM real —
+     * nos 3 destinos (banco de dados, Sheets, Telegram), sem chamar LLM real —
  * usando mocks determinísticos e InMemory gateways.
  *
  * CT-159: foto de cupom → extração → confirmação → persistência (3 destinos)
@@ -35,13 +38,14 @@ use Tests\TestCase;
 #[CoversClass(ConversationRouter::class)]
 class E2eItemsFlowTest extends TestCase
 {
-    private const string CHAT_ID = '99999';
+    use RefreshDatabase;
+    use WithWalletStore;
 
-    private InMemoryFirestoreGateway $firestoreGw;
+    private const string CHAT_ID = '99999';
 
     private InMemorySheetsGateway $sheetsGw;
 
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -58,10 +62,12 @@ class E2eItemsFlowTest extends TestCase
     {
         parent::setUp();
 
-        $this->firestoreGw = new InMemoryFirestoreGateway;
+        $this->setUpWalletStore();
+
         $this->sheetsGw = new InMemorySheetsGateway;
-        $this->firestore = new FirestoreService($this->firestoreGw);
         $this->messenger = new InMemoryBotMessenger;
+
+        $this->bindStoreToContainer();
 
         // Stub de extração de texto — não será usado nos testes E2E de foto,
         // mas o Router precisa da dependência.
@@ -111,24 +117,24 @@ class E2eItemsFlowTest extends TestCase
 
             public ?TransactionData $lastDto = null;
 
-            public ?string $lastFirestoreId = null;
+            public ?int $lastTxId = null;
 
             public function __construct(
                 private readonly InMemorySheetsGateway $sheetsGw,
             ) {}
 
-            public function handle(TransactionData $dto, string $firestoreId): bool
+            public function handle(TransactionData $dto, int $txId): bool
             {
                 $this->callCount++;
                 $this->lastDto = $dto;
-                $this->lastFirestoreId = $firestoreId;
+                $this->lastTxId = $txId;
 
                 // Simula o append na planilha (formata items como faria o SheetsService).
                 // InMemorySheetsGateway é single-sheet — não tem parâmetro de aba.
                 $header = $this->sheetsGw->getHeaderRow();
                 if ($header === null || $header === []) {
                     $this->sheetsGw->writeHeaderRow(
-                        ['Data', 'Descrição', 'Valor', 'Tipo', 'Categoria', 'Labels', 'ID Firestore', 'Observações', 'Itens'],
+                        ['Data', 'Descrição', 'Valor', 'Tipo', 'Categoria', 'Labels', 'ID', 'Observações', 'Itens'],
                     );
                 }
 
@@ -139,7 +145,7 @@ class E2eItemsFlowTest extends TestCase
                     $dto->type ?? '',
                     $dto->category ?? '',
                     implode(' ', $dto->labels),
-                    $firestoreId,
+                    (string) $txId,
                     $dto->observations ?? '',
                     $this->formatItemsForSheets($dto->items),
                 ]);
@@ -191,7 +197,7 @@ class E2eItemsFlowTest extends TestCase
         };
     }
 
-    private function makeRouter(int $timeout = 15, int $maxRetries = 3): ConversationRouter
+    private function makeRouter(int $maxRetries = 3): ConversationRouter
     {
         $suggestLabels = new class implements SuggestsLabels
         {
@@ -207,13 +213,12 @@ class E2eItemsFlowTest extends TestCase
             stateMachine: new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $suggestLabels,
-            sessionTimeoutMinutes: $timeout,
             maxDataRetries: $maxRetries,
         );
     }
@@ -227,26 +232,26 @@ class E2eItemsFlowTest extends TestCase
     {
         $confirmMsgId = (int) ($overrides['message_id_confirm'] ?? 2000);
 
-        $data = array_merge([
-            'state' => ConversationState::AWAITING_CONFIRMATION->value,
-            'draft' => $dto->toDraftArray(),
-            'message_id_confirm' => $confirmMsgId,
-            'source' => 'text',
-            'retry_count' => 0,
-            'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-        ], $overrides);
-
-        $this->firestoreGw->setDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID, $data);
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: ConversationState::AWAITING_CONFIRMATION->value,
+            draft: $overrides['draft'] ?? $dto->toDraftArray(),
+            awaitingField: $overrides['awaiting_field'] ?? null,
+            source: $overrides['source'] ?? 'text',
+            messageIdConfirm: $confirmMsgId,
+            messageIdEditPicker: $overrides['message_id_edit_picker'] ?? null,
+            messageIdAskEdition: $overrides['message_id_ask_edition'] ?? null,
+            retryCount: $overrides['retry_count'] ?? 0,
+        ));
     }
 
     /**
-     * Lê a sessão atual do Firestore.
+     * Lê a sessão atual do WalletStore.
      *
      * @return array<string, mixed>|null
      */
     private function currentSession(): ?array
     {
-        return $this->firestore->getSession(self::CHAT_ID);
+        return $this->store->getSession(self::CHAT_ID);
     }
 
     /**
@@ -296,19 +301,19 @@ class E2eItemsFlowTest extends TestCase
 
     /*
     |--------------------------------------------------------------------------
-    | CT-159: E2E foto de cupom → Firestore + Sheets + Telegram
+    | CT-159: E2E foto de cupom → banco de dados + Sheets + Telegram
     |--------------------------------------------------------------------------
     */
 
     /**
      * CT-159: fluxo completo da extração via foto (Gemini) de cupom com 10
-     * items até a persistência nos 3 destinos: Firestore, Sheets e Telegram.
+     * items até a persistência nos 3 destinos: banco de dados, Sheets e Telegram.
      *
      * Critérios de aceite:
      *  - Gemini retorna JSON com 10 items
      *  - Router processa foto → DTO com items
      *  - Confirmação mostra bloco items (10, sem truncamento)
-     *  - Confirmar → saveTransaction (Firestore tem items[])
+     *  - Confirmar → saveTransaction (banco de dados tem items[])
      *  - SyncSheet → Sheets tem coluna I com 10 linhas numeradas
      *  - Assert: 3 destinos têm os mesmos 10 items
      */
@@ -336,7 +341,6 @@ class E2eItemsFlowTest extends TestCase
 
         // 5. Confirmar a transação (callback "confirm").
         $currentConfirmId = (int) $session['message_id_confirm'];
-        $this->firestoreGw->setDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID, $session);
 
         $router->route(ConversationInput::callback(
             self::CHAT_ID,
@@ -345,16 +349,14 @@ class E2eItemsFlowTest extends TestCase
             $currentConfirmId,
         ));
 
-        // 6. Verificar Firestore: transação salva com 10 items.
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
-        $txId = array_key_first($transactions);
-        $tx = $transactions[$txId];
-        $this->assertArrayHasKey('items', $tx);
-        $this->assertCount(10, $tx['items']);
-        $this->assertSame('Arroz 5kg', $tx['items'][0]['name']);
-        $this->assertSame(32.90, $tx['items'][0]['unitPrice']);
-        $this->assertSame('Óleo', $tx['items'][9]['name']);
+        // 6. Verificar banco de dados: transação salva com 10 items.
+        $tx = Transaction::with('items')->where('chat_id', self::CHAT_ID)->first();
+        $this->assertNotNull($tx);
+        $items = $tx->items->toArray();
+        $this->assertCount(10, $items);
+        $this->assertSame('Arroz 5kg', $items[0]['name']);
+        $this->assertSame(32.90, (float) $items[0]['unit_price']);
+        $this->assertSame('Óleo', $items[9]['name']);
 
         // 7. Verificar Sheets: coluna I com 10 linhas numeradas.
         $this->assertSame(1, $this->syncSheet->callCount, 'SyncSheet deve ter sido chamado');
@@ -386,7 +388,7 @@ class E2eItemsFlowTest extends TestCase
      *  - Transação confirmada com 3 items
      *  - Editar → 🛒 Itens → enviar 5 items novos
      *  - Nova confirmação mostra 5 items
-     *  - Confirmar → Firestore atualizado
+     *  - Confirmar → banco de dados atualizado
      *  - Sheets é append-only (documentar limitação)
      */
     public function test_e2e_edit_items_via_picker_updates_draft(): void
@@ -459,8 +461,6 @@ class E2eItemsFlowTest extends TestCase
 
         // 7. Confirmar a transação editada.
         $newConfirmId = (int) $sessionAfter['message_id_confirm'];
-        // Atualizar a sessão para que o callback passe no CT-047.
-        $this->firestoreGw->setDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID, $sessionAfter);
 
         $router->route(ConversationInput::callback(
             self::CHAT_ID,
@@ -469,13 +469,13 @@ class E2eItemsFlowTest extends TestCase
             $newConfirmId,
         ));
 
-        // 8. Verificar Firestore: 5 items (não 3).
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
-        $tx = reset($transactions);
-        $this->assertCount(5, $tx['items']);
-        $this->assertSame('Item A', $tx['items'][0]['name']);
-        $this->assertSame('Item E', $tx['items'][4]['name']);
+        // 8. Verificar banco de dados: 5 items (não 3).
+        $tx = Transaction::with('items')->where('chat_id', self::CHAT_ID)->first();
+        $this->assertNotNull($tx);
+        $items = $tx->items->toArray();
+        $this->assertCount(5, $items);
+        $this->assertSame('Item A', $items[0]['name']);
+        $this->assertSame('Item E', $items[4]['name']);
 
         // 9. Verificar que o sync foi chamado (append-only).
         $this->assertSame(1, $this->syncSheet->callCount);

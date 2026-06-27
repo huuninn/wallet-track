@@ -18,6 +18,8 @@ Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extra�
 | 05 | [Revisão v2](./05-revisao-v2.md) | Atualização de stack: Laravel 13 + Gemini OCR (substituindo Google Vision) | ✅ Aprovada |
 | 06 | [Plano de Implementação](./06-plano-implementacao.md) | 11 milestones (M0–M10) com dependências, riscos e critérios de aceitação | ✅ Aprovado |
 | - | [Viability Report](./viability-report.md) | Relatório de viabilidade técnica (PHP 8.4 + extensões + Docker) | ✅ |
+| - | [Comparativo de Preço de Infra](./comparativo-preco-infra.md) | Raw pricing GCP × Railway × Heroku × Render (compute + DB) | ✅ |
+| - | [Comparativo de VPS](./comparativo-vps.md) | VPS BR (Locaweb, Magalu, HostDime) × Global (Hetzner, Contabo, DO, Vultr) × Paraguai | ✅ |
 
 ## Documentos do M9 — Comandos Auxiliares
 

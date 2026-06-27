@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Actions\SyncSheet;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Services\Google\GoogleCredentials;
 use App\Services\Google\GoogleSheetsGateway;
 use App\Services\Google\InMemorySheetsGateway;
@@ -34,7 +34,7 @@ use RuntimeException;
  *  - {@see SheetsService} → singleton resolvido com a gateway + nomes das abas.
  *
  *  - {@see SyncSheet} → singleton resolvido com {@see SheetsService} e
- *    {@see FirestoreService}.
+ *    {@see WalletStore}.
  *
  * Em testes, os serviços são instanciados diretamente com
  * {@see InMemorySheetsGateway}, sem passar por este
@@ -50,7 +50,7 @@ class SheetsServiceProvider extends ServiceProvider
 
             $keyFile = GoogleCredentials::fromConfig($config->get('google'))->resolveKeyFile();
 
-            // Mesmo cuidado do FirestoreServiceProvider (FIX-7): o trace de
+            // Mesmo cuidado do StoreServiceProvider (FIX-7): o trace de
             // exceções aqui poderia incluir o conteúdo do keyFile (private_key).
             // Wrap relança RuntimeException genérica, preservando a original
             // como `previous` para diagnóstico local sem vazar o segredo.
@@ -94,7 +94,7 @@ class SheetsServiceProvider extends ServiceProvider
         $this->app->singleton(SyncSheet::class, function ($app): SyncSheet {
             return new SyncSheet(
                 $app->make(SheetsService::class),
-                $app->make(FirestoreService::class),
+                $app->make(WalletStore::class),
             );
         });
     }

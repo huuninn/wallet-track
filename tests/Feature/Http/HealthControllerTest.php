@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Http;
 
 use App\Http\Controllers\HealthController;
+use Illuminate\Support\Facades\Redis;
+use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Tests\TestCase;
 
@@ -14,23 +16,25 @@ use Tests\TestCase;
  * Cobertura:
  *  - CT-M10-H1 → todas env vars presentes → 200, status: ok.
  *  - CT-M10-H2 → env var crítica ausente → 503, status: degraded.
- *  - CT-M10-H3 → verbose=1 → inclui checks.env + checks.firestore.
+ *  - CT-M10-H3 → verbose=1 → inclui checks.env + checks.database + checks.redis.
  *  - CT-M10-H4 → modo não-verbose NÃO vaza nomes de env vars.
  *  - CT-M10-H5 → version/app só em debug mode (regressão W1 do M0).
- *  - CT-M10-H6 → Firestore ping retorna ok: false com credenciais inválidas.
+ *  - CT-M10-H6 → database/Redis ping retorna ok: true quando conectivos.
  *  - CT-M10-H7 → verbose expõe nomes ausentes para diagnóstico (sem valores).
  *
  * O controller usa config() (não env()) para verificar as variáveis, o que
  * permite sobrescrita por teste via config(['chave' => null]). APP_KEY está
  * sempre presente (Laravel exige para bootar o EncryptionServiceProvider).
- *
- * As demais env vars vêm de phpunit.xml com valores não-vazios:
- * TELEGRAM_BOT_TOKEN, DEEPSEEK_API_KEY, GEMINI_API_KEY, GOOGLE_CLOUD_PROJECT_ID,
- * FIRESTORE_DATABASE_ID, GOOGLE_SERVICE_ACCOUNT_JSON_PATH.
  */
 #[CoversClass(HealthController::class)]
 class HealthControllerTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
+    }
+
     // -----------------------------------------------------------------
     // CT-M10-H1: Todas as env vars presentes → 200, status: ok
     // -----------------------------------------------------------------
@@ -70,11 +74,13 @@ class HealthControllerTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // CT-M10-H3: verbose=1 → checks.env + checks.firestore
+    // CT-M10-H3: verbose=1 → checks.env + checks.database + checks.redis
     // -----------------------------------------------------------------
 
     public function test_verbose_mode_includes_checks_object(): void
     {
+        config(['app.debug' => true]);
+
         $response = $this->getJson('/health?verbose=1');
 
         $response->assertOk();
@@ -86,11 +92,12 @@ class HealthControllerTest extends TestCase
             'app',
             'checks' => [
                 'env' => ['ok', 'total', 'missing_count', 'missing'],
-                'firestore' => ['ok', 'latency_ms', 'error'],
+                'database' => ['ok', 'latency_ms', 'error'],
+                'redis' => ['ok', 'latency_ms', 'error'],
             ],
         ]);
         $response->assertJsonPath('checks.env.ok', true);
-        $response->assertJsonPath('checks.env.total', 7);
+        $response->assertJsonPath('checks.env.total', 6);
         $response->assertJsonPath('checks.env.missing_count', 0);
     }
 
@@ -142,27 +149,25 @@ class HealthControllerTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // CT-M10-H6: Firestore ping retorna ok: false com credenciais inválidas
+    // CT-M10-H6: database + Redis checks funcionais em modo verbose
     // -----------------------------------------------------------------
 
-    public function test_verbose_firestore_check_fails_gracefully_without_credentials(): void
+    public function test_verbose_database_and_redis_checks_return_ok_when_connected(): void
     {
-        // Todas as env vars de negócio presentes.
-        // GOOGLE_SERVICE_ACCOUNT_JSON_PATH está em phpunit.xml com caminho
-        // que não existe no disco → FirestoreClient falha ao ser construído.
-        // O HealthController captura Throwable e retorna ok: false.
+        config(['app.debug' => true]);
+
+        // DB::select('SELECT 1') roda nativamente via SQLite :memory: do phpunit.xml;
+        // não usamos mock para evitar colisão com SessionManager (SESSION_DRIVER=database).
+        Redis::shouldReceive('ping')->once()->andReturn('PONG');
 
         $response = $this->getJson('/health?verbose=1');
 
-        // Status geral ainda é ok (env vars de negócio todas presentes).
         $response->assertOk();
         $response->assertJsonPath('status', 'ok');
-        $response->assertJsonPath('checks.env.ok', true);
-
-        // Firestore deve falhar graciosamente.
-        $response->assertJsonPath('checks.firestore.ok', false);
-        $this->assertNotNull($response->json('checks.firestore.latency_ms'));
-        $this->assertNotNull($response->json('checks.firestore.error'));
+        $response->assertJsonPath('checks.database.ok', true);
+        $response->assertJsonPath('checks.redis.ok', true);
+        $this->assertNotNull($response->json('checks.database.latency_ms'));
+        $this->assertNotNull($response->json('checks.redis.latency_ms'));
     }
 
     // -----------------------------------------------------------------
@@ -171,6 +176,7 @@ class HealthControllerTest extends TestCase
 
     public function test_verbose_exposes_missing_env_var_names_for_diagnosis(): void
     {
+        config(['app.debug' => true]);
         config(['telegram.bot_token' => null]);
         config(['google.service_account_json_path' => null]);
         config(['google.service_account_json' => null]);
@@ -190,5 +196,47 @@ class HealthControllerTest extends TestCase
         // Mas NUNCA os valores — o token simulado de phpunit.xml não deve vazar.
         $body = (string) $response->getContent();
         $this->assertStringNotContainsString('0000000000', $body);
+    }
+
+    // -----------------------------------------------------------------
+    // CT-M10-H8: graceful-fail do checkDatabase quando DB indisponível
+    // -----------------------------------------------------------------
+
+    public function test_verbose_database_check_fails_gracefully_when_db_unavailable(): void
+    {
+        config(['app.debug' => true]);
+        // SESSION_DRIVER=array evita que o SessionManager tente acessar a
+        // conexão broken durante o request HTTP (causaria 500 antes do controller).
+        config(['session.driver' => 'array']);
+        config(['database.connections.broken' => [
+            'driver' => 'sqlite',
+            'database' => '/nonexistent/path/that/does/not/exist.db',
+        ]]);
+        config(['database.default' => 'broken']);
+
+        Redis::shouldReceive('ping')->once()->andReturn('PONG');
+
+        $response = $this->getJson('/health?verbose=1');
+
+        $response->assertOk(); // status overall ainda é 'ok' (env vars presentes para testes)
+        $response->assertJsonPath('checks.database.ok', false);
+        $this->assertNotNull($response->json('checks.database.error'));
+        $this->assertNotNull($response->json('checks.database.latency_ms'));
+    }
+
+    // -----------------------------------------------------------------
+    // CT-M10-H9: verbose é ignorado quando debug=false (produção)
+    // -----------------------------------------------------------------
+
+    public function test_verbose_ignored_in_production_mode(): void
+    {
+        config(['app.debug' => false]);
+
+        $response = $this->getJson('/health?verbose=1');
+
+        $response->assertOk();
+        // checks NÃO deve estar presente em produção.
+        $data = $response->json();
+        $this->assertArrayNotHasKey('checks', $data);
     }
 }

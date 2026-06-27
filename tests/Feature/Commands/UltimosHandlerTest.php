@@ -7,14 +7,17 @@ namespace Tests\Feature\Commands;
 use App\Bot\Handlers\UltimosHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Dto\SessionData;
+use App\Models\Transaction;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -36,13 +39,14 @@ use Tests\TestCase;
 #[CoversClass(UltimosHandler::class)]
 class UltimosHandlerTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
     private const int CHAT_ID_INT = 12345;
 
-    private InMemoryFirestoreGateway $gateway;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -50,11 +54,11 @@ class UltimosHandlerTest extends TestCase
     {
         parent::setUp();
 
-        $this->gateway = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->gateway);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
 
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->bindStoreToContainer();
         $this->app->instance(BotMessenger::class, $this->messenger);
     }
 
@@ -95,15 +99,13 @@ class UltimosHandlerTest extends TestCase
                 ? (string) $data['date']
                 : $baseDate->modify("-{$i} days")->format('Y-m-d');
 
-            $this->gateway->setDocument(FirestoreService::COLLECTION_TRANSACTIONS, "tx-{$i}", array_merge([
+            Transaction::factory()->create(array_merge([
                 'chat_id' => self::CHAT_ID,
                 'description' => "Tx {$i}",
                 'amount' => 10.0,
                 'type' => 'expense',
                 'category' => 'Outros',
                 'date' => $date,
-                'labels' => [],
-                'source' => 'text',
                 'sync_status' => 'synced',
             ], $data));
         }
@@ -247,22 +249,17 @@ class UltimosHandlerTest extends TestCase
         $this->seedTransactions(array_fill(0, 2, []));
 
         // Simula sessão em AWAITING_DATA.
-        $this->gateway->setDocument(
-            FirestoreService::COLLECTION_SESSIONS,
-            self::CHAT_ID,
-            [
-                'state' => 'awaiting_data',
-                'awaiting_field' => 'amount',
-                'draft' => ['description' => 'Almoço'],
-                'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-            ],
-        );
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: 'awaiting_data',
+            awaitingField: 'amount',
+            draft: ['description' => 'Almoço'],
+        ));
 
         $bot = $this->makeBotMock('/ultimos 3');
         (new UltimosHandler)($bot);
 
         // Sessão preservada intacta.
-        $session = $this->firestore->getSession(self::CHAT_ID);
+        $session = $this->store->getSession(self::CHAT_ID);
         $this->assertNotNull($session, 'Sessão deve permanecer após /ultimos (CT-028f)');
         $this->assertSame('awaiting_data', $session['state']);
         $this->assertSame('amount', $session['awaiting_field']);

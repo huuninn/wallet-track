@@ -7,16 +7,17 @@ namespace Tests\Feature\Commands;
 use App\Bot\Handlers\StartHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
+use App\Dto\SessionData;
 use App\Enums\ConversationState;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
-use Tests\Feature\Conversation\ConversationRouterTest;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -25,19 +26,19 @@ use Tests\TestCase;
  * Garante que `/start` reseta a sessão em qualquer estado (CT-023a, CT-023b,
  * CT-023c, CT-023f) e mantém a idempotência em IDLE (CT-023e).
  *
- * Padrão de teste (consistente com {@see ConversationRouterTest}):
- * `InMemoryFirestoreGateway` bindado no container + `InMemoryBotMessenger`
+ * Padrão de teste: `WalletStore` bindado no container + `InMemoryBotMessenger`
  * como `BotMessenger` (captura `sendMessage` indireto) + mock leve do
  * `Nutgram` que devolve um `Message` pré-configurado.
  */
 #[CoversClass(StartHandler::class)]
 class StartHandlerTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
-    private InMemoryFirestoreGateway $gateway;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -45,11 +46,11 @@ class StartHandlerTest extends TestCase
     {
         parent::setUp();
 
-        $this->gateway = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->gateway);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
 
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->bindStoreToContainer();
         $this->app->instance(BotMessenger::class, $this->messenger);
     }
 
@@ -88,14 +89,22 @@ class StartHandlerTest extends TestCase
      */
     private function seedSession(string $state, array $overrides = []): void
     {
-        $this->gateway->setDocument(
-            FirestoreService::COLLECTION_SESSIONS,
-            self::CHAT_ID,
-            array_merge([
-                'state' => $state,
-                'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-            ], $overrides),
-        );
+        $draft = $overrides['draft'] ?? null;
+        $messageIdConfirm = $overrides['message_id_confirm'] ?? null;
+        $messageIdEditPicker = $overrides['message_id_edit_picker'] ?? null;
+        $messageIdAskEdition = $overrides['message_id_ask_edition'] ?? null;
+        $source = $overrides['source'] ?? null;
+        $awaitingField = $overrides['awaiting_field'] ?? null;
+
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: $state,
+            draft: $draft,
+            awaitingField: $awaitingField,
+            messageIdConfirm: $messageIdConfirm,
+            messageIdEditPicker: $messageIdEditPicker,
+            messageIdAskEdition: $messageIdAskEdition,
+            source: $source,
+        ));
     }
 
     #[Group('smoke')]
@@ -106,7 +115,7 @@ class StartHandlerTest extends TestCase
 
         (new StartHandler)($bot);
 
-        $this->assertNull($this->firestore->getSession(self::CHAT_ID));
+        $this->assertNull($this->store->getSession(self::CHAT_ID));
         $this->assertCount(1, $this->messenger->sentTexts[self::CHAT_ID] ?? []);
         $this->assertStringContainsString('Olá! Sou o Wallet Track', $this->messenger->sentTexts[self::CHAT_ID][0]['text']);
     }
@@ -123,7 +132,7 @@ class StartHandlerTest extends TestCase
         (new StartHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão em AWAITING_DATA deve ser limpa após /start (CT-023a)',
         );
         $this->assertCount(1, $this->messenger->sentTexts[self::CHAT_ID] ?? []);
@@ -146,7 +155,7 @@ class StartHandlerTest extends TestCase
         (new StartHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão em AWAITING_CONFIRMATION deve ser limpa após /start (CT-023b)',
         );
     }
@@ -163,7 +172,7 @@ class StartHandlerTest extends TestCase
         (new StartHandler)($bot);
 
         $this->assertNull(
-            $this->firestore->getSession(self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Sessão em AWAITING_EDITION deve ser limpa após /start (CT-023c)',
         );
     }
@@ -177,7 +186,7 @@ class StartHandlerTest extends TestCase
         $bot2 = $this->makeBotMock();
         (new StartHandler)($bot2);
 
-        $this->assertNull($this->firestore->getSession(self::CHAT_ID));
+        $this->assertNull($this->store->getSession(self::CHAT_ID));
     }
 
     public function test_start_persisted_session_is_removed(): void
@@ -189,14 +198,14 @@ class StartHandlerTest extends TestCase
         ]);
 
         // Confirma persistência ANTES do /start.
-        $this->assertNotNull($this->gateway->getDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID));
+        $this->assertNotNull($this->store->getSession(self::CHAT_ID));
 
         $bot = $this->makeBotMock();
         (new StartHandler)($bot);
 
         // Após /start, o doc foi removido.
         $this->assertNull(
-            $this->gateway->getDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID),
+            $this->store->getSession(self::CHAT_ID),
             'Documento da sessão deve ser removido após /start (CT-023f)',
         );
     }

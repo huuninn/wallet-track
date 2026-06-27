@@ -10,6 +10,10 @@
 .env.backup
 .env.local
 .env.production
+.env.dev
+
+# Pacotes .deb baixados localmente
+*.deb
 .phpactor.json
 .phpunit.result.cache
 Homestead.json
@@ -65,6 +69,12 @@ logs/
 *~
 .DS_Store
 Thumbs.db
+
+# --- Anotações pessoais de infra (não fazem parte do produto) ---
+/docs/comparativo-preco-infra.md
+/docs/comparativo-vps.md
+/docs/infra-pessoal.md
+/docs/planos/
 
 # --- Docker local (volumes/overrides não oficiais) ---
 docker-compose.override.yml

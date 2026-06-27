@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Support\Stopwords;
 use App\Support\TextNormalizer;
 
@@ -45,8 +45,7 @@ use App\Support\TextNormalizer;
  *
  * A categoria passada como parâmetro é atualmente **ignorada** pelo
  * histórico (a spec §5 define o schema `labels/` sem `category`). O
- * parâmetro existe na assinatura para preparar a evolução futura (vide
- * nota no FirestoreService::incrementLabelUse — ambiguidade da spec).
+ * parâmetro existe na assinatura para preparar a evolução futura.
  */
 final class SuggestLabels
 {
@@ -56,11 +55,11 @@ final class SuggestLabels
     /** Comprimento mínimo de uma keyword (spec §4) — usado por Stopwords. */
     public const int MIN_TOKEN_LENGTH = 3;
 
-    /** Quantos labels top olhar do Firestore (spec §4). */
+    /** Quantos labels top olhar do banco (spec §4). */
     public const int HISTORY_LIMIT = 10;
 
     public function __construct(
-        private readonly FirestoreService $firestore,
+        private readonly WalletStore $store,
     ) {}
 
     /**
@@ -91,11 +90,11 @@ final class SuggestLabels
         $result = [];
         $resultSet = [];
 
-        // FASE A — Histórico. Firestore já devolve ordenado por use_count DESC.
-        $history = $this->firestore->getTopLabels(self::HISTORY_LIMIT);
+        // FASE A — Histórico. Já devolvido ordenado por use_count DESC.
+        $history = $this->store->getTopLabels(self::HISTORY_LIMIT);
 
         foreach ($history as $row) {
-            $name = (string) ($row['data']['name'] ?? $row['id']);
+            $name = $row->name;
 
             if ($name === '') {
                 continue;

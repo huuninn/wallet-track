@@ -17,17 +17,24 @@ use App\Conversation\ConversationInput;
 use App\Conversation\ConversationRouter;
 use App\Conversation\InputKind;
 use App\Conversation\StateMachine;
+use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Exceptions\ExtractionException;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Models\Category;
+use App\Models\Label;
+use App\Models\Transaction;
+use App\Services\Store\WalletStore;
+use App\Support\LabelFormatter;
+use App\Support\TextNormalizer;
 use DateTimeImmutable;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -37,13 +44,13 @@ use Tests\TestCase;
  * é testado em isolamento, recebendo um {@see ConversationInput} (DTO
  * normalizado) e exercitando os caminhos da máquina de estados contra
  * stubs anônimos de {@see ExtractsText}, {@see ExtractsImage} e
- * {@see SyncsSheet}, com {@see FirestoreService} rodando sobre
- * {@see InMemoryFirestoreGateway} e {@see InMemoryBotMessenger} capturando
+ * {@see SyncsSheet}, com {@see WalletStore} rodando sobre
+ * banco de dados + Redis (via {@see RedisFake}) e {@see InMemoryBotMessenger} capturando
  * todas as chamadas de I/O para asserção determinística.
  *
  * Cobertura mapeada para os critérios de aceitação do §10.5 (M7):
  *
- *  - CT-015 (confirm grava Sheets+Firestore)  → test_awaiting_confirmation_confirm_*
+ *  - CT-015 (confirm grava banco de dados+Sheets)  → test_awaiting_confirmation_confirm_*
  *  - CT-016 (editar campo atualiza resumo)   → test_awaiting_edition_*
  *  - CT-017 (cancelar limpa sessão)          → test_awaiting_confirmation_cancel_clears_session
  *  - CT-018 (duplo clique → 1 transação)     → test_awaiting_confirmation_idempotent_*
@@ -56,11 +63,12 @@ use Tests\TestCase;
 #[CoversClass(ConversationRouter::class)]
 class ConversationRouterTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
-    private InMemoryFirestoreGateway $firestoreGw;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -77,9 +85,12 @@ class ConversationRouterTest extends TestCase
     {
         parent::setUp();
 
-        $this->firestoreGw = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->firestoreGw);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
+
+        $this->bindStoreToContainer();
+        $this->app->instance(BotMessenger::class, $this->messenger);
 
         $this->extractText = new class implements ExtractsText
         {
@@ -135,13 +146,13 @@ class ConversationRouterTest extends TestCase
 
             public ?TransactionData $lastDto = null;
 
-            public ?string $lastFirestoreId = null;
+            public ?int $lastTxId = null;
 
-            public function handle(TransactionData $dto, string $firestoreId): bool
+            public function handle(TransactionData $dto, int $txId): bool
             {
                 $this->callCount++;
                 $this->lastDto = $dto;
-                $this->lastFirestoreId = $firestoreId;
+                $this->lastTxId = $txId;
                 if ($this->toThrow !== null) {
                     throw $this->toThrow;
                 }
@@ -158,7 +169,6 @@ class ConversationRouterTest extends TestCase
     */
 
     private function makeRouter(
-        int $timeout = 15,
         int $maxRetries = 3,
         ?StateMachine $stateMachine = null,
     ): ConversationRouter {
@@ -176,13 +186,12 @@ class ConversationRouterTest extends TestCase
             stateMachine: $stateMachine ?? new StateMachine,
             messenger: $this->messenger,
             formatter: new TransactionSummaryFormatter,
-            firestore: $this->firestore,
+            store: $this->store,
             extractText: $this->extractText,
             extractImage: $this->extractImage,
             syncSheet: $this->syncSheet,
-            suggestCategory: new SuggestCategory($this->firestore),
+            suggestCategory: new SuggestCategory($this->store),
             suggestLabels: $suggestLabels,
-            sessionTimeoutMinutes: $timeout,
             maxDataRetries: $maxRetries,
         );
     }
@@ -208,13 +217,16 @@ class ConversationRouterTest extends TestCase
      */
     private function seedSession(string $state, ?TransactionData $draft = null, array $overrides = []): void
     {
-        $data = array_merge([
-            'state' => $state,
-            'draft' => $draft?->toDraftArray(),
-            'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-        ], $overrides);
-
-        $this->firestoreGw->setDocument(FirestoreService::COLLECTION_SESSIONS, self::CHAT_ID, $data);
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: $state,
+            draft: $overrides['draft'] ?? $draft?->toDraftArray(),
+            awaitingField: $overrides['awaiting_field'] ?? null,
+            source: $overrides['source'] ?? null,
+            messageIdConfirm: $overrides['message_id_confirm'] ?? null,
+            messageIdEditPicker: $overrides['message_id_edit_picker'] ?? null,
+            messageIdAskEdition: $overrides['message_id_ask_edition'] ?? null,
+            retryCount: $overrides['retry_count'] ?? null,
+        ));
     }
 
     /**
@@ -224,7 +236,7 @@ class ConversationRouterTest extends TestCase
      */
     private function currentSession(): ?array
     {
-        return $this->firestore->getSession(self::CHAT_ID);
+        return $this->store->getSession(self::CHAT_ID);
     }
 
     /*
@@ -378,7 +390,7 @@ class ConversationRouterTest extends TestCase
             'retry_count' => 3, // já no limite
         ]);
 
-        $this->makeRouter(timeout: 15, maxRetries: 3)
+        $this->makeRouter(maxRetries: 3)
             ->route(ConversationInput::text(self::CHAT_ID, 'lixo'));
 
         // retry_count incrementou para 4 > max=3 → desiste.
@@ -426,7 +438,7 @@ class ConversationRouterTest extends TestCase
     |--------------------------------------------------------------------------
     */
 
-    public function test_awaiting_confirmation_confirm_saves_to_firestore_and_sheets(): void
+    public function test_awaiting_confirmation_confirm_saves_to_database_and_sheets(): void
     {
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
@@ -442,16 +454,15 @@ class ConversationRouterTest extends TestCase
         ));
 
         // Transação persistida.
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
-        $stored = array_values($transactions)[0];
-        $this->assertSame(self::CHAT_ID, $stored['chat_id']);
-        $this->assertSame(FirestoreService::SYNC_PENDING, $stored['sync_status']);
+        $tx = Transaction::latest()->first();
+        $this->assertNotNull($tx);
+        $this->assertSame(self::CHAT_ID, $tx->chat_id);
+        $this->assertSame(WalletStore::SYNC_PENDING, $tx->sync_status);
 
         // SyncSheet chamado com DTO+id corretos.
         $this->assertSame(1, $this->syncSheet->callCount);
         $this->assertNotNull($this->syncSheet->lastDto);
-        $this->assertNotNull($this->syncSheet->lastFirestoreId);
+        $this->assertNotNull($this->syncSheet->lastTxId);
 
         // notifySuccess enviado, cancelamento NÃO.
         $this->assertCount(1, $this->messenger->successes[self::CHAT_ID] ?? []);
@@ -482,10 +493,9 @@ class ConversationRouterTest extends TestCase
         ));
 
         // Transação persistida com sync_status=pending (cron M9 recupera).
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
-        $stored = array_values($transactions)[0];
-        $this->assertSame(FirestoreService::SYNC_PENDING, $stored['sync_status']);
+        $tx = Transaction::latest()->first();
+        $this->assertNotNull($tx);
+        $this->assertSame(WalletStore::SYNC_PENDING, $tx->sync_status);
 
         // notifySuccess MESMO COM sync falho (o usuário não vê falha).
         $this->assertCount(1, $this->messenger->successes[self::CHAT_ID] ?? []);
@@ -519,8 +529,7 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 5001,
         ));
 
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
+        $this->assertSame(1, Transaction::count());
     }
 
     public function test_awaiting_confirmation_callback_edit_sends_field_picker_and_keeps_state(): void
@@ -542,7 +551,7 @@ class ConversationRouterTest extends TestCase
         // Estado PERMANECE AWAITING_CONFIRMATION — awaiting_field continua null.
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertArrayNotHasKey('awaiting_field', $session);
+        $this->assertNull($session['awaiting_field'] ?? null);
 
         // P1 (CT-047 fix): o message_id do picker foi persistido como segunda
         // âncora (Y) para que callbacks edit:<field> passem no CT-047.
@@ -653,7 +662,7 @@ class ConversationRouterTest extends TestCase
         $this->assertSame('cb-stale', $lastAnswer['callback_id']);
 
         // Nenhuma transação criada.
-        $this->assertCount(0, $this->firestoreGw->raw()['transactions'] ?? []);
+        $this->assertSame(0, Transaction::count());
 
         // notifyError chamado.
         $this->assertCount(1, $this->messenger->errors[self::CHAT_ID] ?? []);
@@ -692,42 +701,35 @@ class ConversationRouterTest extends TestCase
 
     public function test_session_timeout_clears_session_and_returns_to_idle(): void
     {
-        // Sessão "antiga" — 16 minutos atrás.
-        $old = (new DateTimeImmutable('-16 minutes'))->format('Y-m-d\TH:i:s.u\Z');
+        // Simula sessão expirada no Redis (TTL esgotou): limpamos a sessão
+        // manualmente para simular o comportamento da expiração do Redis,
+        // depois verificamos que uma nova extração via texto funciona normalmente.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 100,
             'source' => 'text',
-            'updated_at' => $old,
         ]);
         $this->extractText->toReturn = $this->completeDto();
 
+        // Simula expiração: Redis TTL expirou → sessão removida.
+        $this->store->clearSession(self::CHAT_ID);
+
+        // Nova extração por texto deve criar uma nova sessão.
         $this->makeRouter()->route(ConversationInput::text(self::CHAT_ID, 'outra transação'));
 
-        // Sessão antiga foi limpa (sessão nova é de extraction recente).
+        // Sessão nova foi criada (extração subsequente).
         $session = $this->currentSession();
         $this->assertNotNull($session, 'Extração subsequente deve criar nova sessão');
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        // updated_at renovado (não é mais a timestamp antiga).
-        $this->assertNotSame($old, $session['updated_at']);
-
-        // notifyError com mensagem de sessão expirada.
-        $errors = $this->messenger->errors[self::CHAT_ID] ?? [];
-        $this->assertGreaterThanOrEqual(1, count($errors));
-        $messages = array_column($errors, 'message');
-        $this->assertTrue(
-            (bool) array_filter($messages, fn (string $m): bool => str_contains($m, 'expirou')),
-            'Esperava-se mensagem de sessão expirada, recebeu: '.implode(' | ', $messages),
-        );
     }
 
     public function test_session_within_timeout_window_is_not_expired(): void
     {
-        // 5 minutos atrás — dentro da janela de 15min.
-        $recent = (new DateTimeImmutable('-5 minutes'))->format('Y-m-d\TH:i:s.u\Z');
+        // Sessão ativa: o timeout agora é gerenciado pelo TTL do Redis.
+        // Como o RedisFake não implementa TTL real, a sessão permanece ativa
+        // e o callback deve ser processado normalmente.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 100,
             'source' => 'text',
-            'updated_at' => $recent,
         ]);
 
         $this->makeRouter()->route(ConversationInput::callback(
@@ -848,7 +850,7 @@ class ConversationRouterTest extends TestCase
     /**
      * Testa o parsing de um valor monetário semeando AWAITING_DATA e
      * despachando o input como resposta do usuário. O valor parsed é
-     * então lido do `draft` persistido no Firestore.
+     * então lido do `draft` persistido no WalletStore.
      *
      * Estratégia: usamos um draft que falta SÓ o amount, garantindo que
      * a sessão entre em AWAITING_DATA com awaiting_field='amount' e que
@@ -1015,12 +1017,14 @@ class ConversationRouterTest extends TestCase
         // defensivo esperado.
         //
         // O valor real deste teste é documentar que o caminho "Já estou
-        // processando..." não toca Firestore.
+        // processando..." não toca o banco.
         $this->seedSession(ConversationState::AWAITING_CONFIRMATION->value, $this->completeDto(), [
             'message_id_confirm' => 5001,
             'source' => 'text',
-            'processing' => true, // ← flag já em uso (concorrente)
         ]);
+
+        // Simula concorrente que já segurou o flag de processamento.
+        $this->store->tryAcquireSessionProcessingFlag(self::CHAT_ID);
 
         $this->makeRouter()->route(ConversationInput::callback(
             chatId: self::CHAT_ID,
@@ -1035,7 +1039,7 @@ class ConversationRouterTest extends TestCase
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
 
         // Nenhuma transação criada.
-        $this->assertCount(0, $this->firestoreGw->raw()['transactions'] ?? []);
+        $this->assertSame(0, Transaction::count());
     }
 
     public function test_state_machine_assertion_consulted_on_idle_to_awaiting_data(): void
@@ -1133,7 +1137,7 @@ class ConversationRouterTest extends TestCase
         ]);
 
         // Container bindings que o handler resolve via `app()`.
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->app->instance(WalletStore::class, $this->store);
         $this->app->instance(BotMessenger::class, $this->messenger);
 
         // Mocka Nutgram com `message()` retornando um Message com chat->id.
@@ -1377,8 +1381,7 @@ class ConversationRouterTest extends TestCase
         );
 
         // Transação foi persistida normalmente (não-bloqueante).
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
+        $this->assertSame(1, Transaction::count());
     }
 
     public function test_cancel_does_not_delete_edit_picker_after_r2(): void
@@ -1486,13 +1489,13 @@ class ConversationRouterTest extends TestCase
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
 
         // Session no longer has message_id_edit_picker key.
-        $this->assertArrayNotHasKey('message_id_edit_picker', $session);
+        $this->assertNull($session['message_id_edit_picker'] ?? null);
 
         // Session no longer has message_id_ask_edition key.
-        $this->assertArrayNotHasKey('message_id_ask_edition', $session);
+        $this->assertNull($session['message_id_ask_edition'] ?? null);
 
         // Session no longer has picker_consumed key.
-        $this->assertArrayNotHasKey('picker_consumed', $session);
+        $this->assertNull($session['picker_consumed'] ?? null);
 
         // R2: message_id_confirm mudou para X_new (não é mais 5001).
         $this->assertNotSame(5001, $session['message_id_confirm'], 'message_id_confirm deve ser X_new, não X_old');
@@ -1525,8 +1528,7 @@ class ConversationRouterTest extends TestCase
         ));
 
         // Callback aceito (não rejeitado pelo CT-047) → transação foi criada.
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions, 'Callback de Y deve ser aceito (P6)');
+        $this->assertSame(1, Transaction::count(), 'Callback de Y deve ser aceito (P6)');
     }
 
     public function test_stale_callback_in_awaiting_edition_is_annulled_not_rejected(): void
@@ -1675,10 +1677,9 @@ class ConversationRouterTest extends TestCase
 
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertArrayNotHasKey(
-            'awaiting_field',
-            $session,
-            'W-3: awaiting_field deve ser REMOVIDO, não apenas setado como null',
+        $this->assertNull(
+            $session['awaiting_field'] ?? null,
+            'W-3: awaiting_field deve ser limpo (null), não persistir valor stale',
         );
     }
 
@@ -1721,20 +1722,20 @@ class ConversationRouterTest extends TestCase
     |  - CT-021: Edição de labels funciona após sugestões.
     |  - CT-022: use_count de labels é incrementado após confirm.
     |
-    | A integração usa o InMemoryFirestoreGateway e InMemoryBotMessenger —
-    | nenhuma chamada real ao Telegram ou Firestore.
+    | A integração usa o WalletStore/banco de dados e InMemoryBotMessenger —
+    | nenhuma chamada real ao Telegram ou ao banco de dados.
     */
 
     /**
-     * Helper: popula o Firestore com 4 categorias padrão para que
+     * Helper: popula categorias padrão no banco de dados para que
      * SuggestCategory faça match contra elas (em vez de sempre cair em "Outros").
      */
     private function seedDefaultCategories(): void
     {
-        $this->firestore->createCategory('Alimentação', 'expense', isDefault: true);
-        $this->firestore->createCategory('Transporte', 'expense', isDefault: true);
-        $this->firestore->createCategory('Moradia', 'expense', isDefault: true);
-        $this->firestore->createCategory('Outros', 'expense', isDefault: true);
+        $this->store->createCategory('Alimentação', 'expense', isDefault: true);
+        $this->store->createCategory('Transporte', 'expense', isDefault: true);
+        $this->store->createCategory('Moradia', 'expense', isDefault: true);
+        $this->store->createCategory('Outros', 'expense', isDefault: true);
     }
 
     public function test_present_confirmation_enriches_null_category_with_suggestion(): void
@@ -1772,10 +1773,10 @@ class ConversationRouterTest extends TestCase
         $this->seedDefaultCategories();
         // Histórico: ifood e restaurante já usados (mas NÃO injetados automaticamente).
         for ($i = 0; $i < 3; $i++) {
-            $this->firestore->incrementLabelUse('ifood');
+            $this->store->incrementLabelUse('ifood');
         }
         for ($i = 0; $i < 2; $i++) {
-            $this->firestore->incrementLabelUse('restaurante');
+            $this->store->incrementLabelUse('restaurante');
         }
 
         $this->extractText->toReturn = TransactionData::fromArray([
@@ -1821,7 +1822,7 @@ class ConversationRouterTest extends TestCase
     {
         // Após F2: LLM labels são preservadas sem merge automático.
         $this->seedDefaultCategories();
-        $this->firestore->incrementLabelUse('ifood'); // histórico (não injetado)
+        $this->store->incrementLabelUse('ifood'); // histórico (não injetado)
 
         $this->extractText->toReturn = TransactionData::fromArray([
             'description' => 'Paguei 50 no iFood',
@@ -1847,7 +1848,7 @@ class ConversationRouterTest extends TestCase
     {
         // Após F2: labels vêm apenas do LLM ou entrada manual — sem sugestão automática.
         $this->seedDefaultCategories();
-        $this->firestore->incrementLabelUse('ifood');
+        $this->store->incrementLabelUse('ifood');
 
         $this->extractText->toReturn = TransactionData::fromArray([
             'description' => 'Paguei 50 no iFood',
@@ -1910,16 +1911,22 @@ class ConversationRouterTest extends TestCase
         ));
 
         // Labels criadas com use_count=1.
-        $labels = $this->firestoreGw->raw()['labels'] ?? [];
-        $this->assertSame(1, $labels['ifood']['use_count'] ?? 0);
-        $this->assertSame(1, $labels['restaurante']['use_count'] ?? 0);
+        $foldedIfood = TextNormalizer::fold(LabelFormatter::format('ifood'));
+        $labelIfood = Label::where('folded_name', $foldedIfood)->first();
+        $this->assertNotNull($labelIfood);
+        $this->assertSame(1, $labelIfood->use_count);
+
+        $foldedRest = TextNormalizer::fold(LabelFormatter::format('restaurante'));
+        $labelRest = Label::where('folded_name', $foldedRest)->first();
+        $this->assertNotNull($labelRest);
+        $this->assertSame(1, $labelRest->use_count);
     }
 
     public function test_confirm_increments_existing_label_use_count(): void
     {
         // CT-022 — segundo uso: increment acumula.
         $this->seedDefaultCategories();
-        $this->firestore->incrementLabelUse('ifood'); // pre-existente: use_count=1
+        $this->store->incrementLabelUse('ifood'); // pre-existente: use_count=1
 
         $dto = TransactionData::fromArray([
             'description' => 'Paguei 50',
@@ -1943,13 +1950,15 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 5001,
         ));
 
-        $labels = $this->firestoreGw->raw()['labels'] ?? [];
-        $this->assertSame(2, $labels['ifood']['use_count'] ?? 0, 'Deve incrementar de 1 → 2');
+        $folded = TextNormalizer::fold(LabelFormatter::format('ifood'));
+        $label = Label::where('folded_name', $folded)->first();
+        $this->assertNotNull($label);
+        $this->assertSame(2, $label->use_count, 'Deve incrementar de 1 → 2');
     }
 
     public function test_confirm_creates_new_category_if_not_exists(): void
     {
-        // CT-012: confirm com categoria que não existe → cria no Firestore.
+        // CT-012: confirm com categoria que não existe → cria no banco de dados.
         // Não popula default categories → "Hobbies" não existe.
         $dto = TransactionData::fromArray([
             'description' => 'Paguei 150 em material de pintura',
@@ -1972,10 +1981,10 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: 5001,
         ));
 
-        $categories = $this->firestoreGw->raw()['categories'] ?? [];
-        $this->assertArrayHasKey('hobbies', $categories, 'Categoria nova deve ser criada no confirm');
-        $this->assertSame('Hobbies', $categories['hobbies']['display_name']);
-        $this->assertSame('expense', $categories['hobbies']['default_type']);
+        $category = Category::where('slug', 'hobbies')->first();
+        $this->assertNotNull($category, 'Categoria nova deve ser criada no confirm');
+        $this->assertSame('Hobbies', $category->display_name);
+        $this->assertSame('expense', $category->default_type);
     }
 
     public function test_confirm_does_not_recreate_existing_category(): void
@@ -1983,10 +1992,10 @@ class ConversationRouterTest extends TestCase
         // Categoria já existe (default seed) → confirm NÃO deve sobrescrever.
         $this->seedDefaultCategories();
         // Marca a categoria com um use_count custom para garantir preservação.
-        $this->firestore->incrementLabelUse('alimentação'); // trick: use_count-like via doc
+        $this->store->incrementLabelUse('alimentação'); // trick: use_count-like via doc
 
-        $existing = $this->firestore->getCategory('Alimentação');
-        $before = $existing['use_count'] ?? 0;
+        $existing = $this->store->getCategory('Alimentação');
+        $before = $existing->use_count ?? 0;
         $this->assertSame(0, $before, 'Categoria seed começa com use_count=0');
 
         $dto = TransactionData::fromArray([
@@ -2012,9 +2021,9 @@ class ConversationRouterTest extends TestCase
 
         // Categoria continua existindo (id="alimentação") — use_count não foi
         // alterado pelo confirm (a versão atual não atualiza use_count da category).
-        $after = $this->firestore->getCategory('Alimentação');
+        $after = $this->store->getCategory('Alimentação');
         $this->assertNotNull($after);
-        $this->assertSame(0, $after['use_count'] ?? 0);
+        $this->assertSame(0, $after->use_count ?? 0);
     }
 
     public function test_present_confirmation_uses_category_from_extraction_when_provided(): void
@@ -2043,7 +2052,7 @@ class ConversationRouterTest extends TestCase
         // Aqui simulamos fazendo o gateway lançar — através de um stub que
         // substitui a incrementLabelUse.
         //
-        // Implementação: não mockamos o FirestoreService inteiro (classe final);
+        // Implementação: não mockamos o WalletStore inteiro;
         // em vez disso, validamos que o caminho normal funciona e logamos
         // o caso best-effort via inspeção do código (a lógica está em
         // trackUsageAfterConfirm com try/catch).
@@ -2073,12 +2082,13 @@ class ConversationRouterTest extends TestCase
         ));
 
         // Transação foi persistida (não houve erro fatal).
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions);
+        $this->assertSame(1, Transaction::count());
 
         // Label foi incrementada (caminho feliz deste teste).
-        $labels = $this->firestoreGw->raw()['labels'] ?? [];
-        $this->assertSame(1, $labels['label-que-vai-falhar']['use_count'] ?? 0);
+        $folded = TextNormalizer::fold(LabelFormatter::format('label-que-vai-falhar'));
+        $label = Label::where('folded_name', $folded)->first();
+        $this->assertNotNull($label);
+        $this->assertSame(1, $label->use_count);
     }
 
     /*
@@ -2239,8 +2249,7 @@ class ConversationRouterTest extends TestCase
             callbackMessageId: $newConfirmId, // X_new
         ));
 
-        $transactions = $this->firestoreGw->raw()['transactions'] ?? [];
-        $this->assertCount(1, $transactions, 'Confirm deve persistir a transação');
+        $this->assertSame(1, Transaction::count(), 'Confirm deve persistir a transação');
         $this->assertCount(1, $this->messenger->successes[self::CHAT_ID] ?? [], 'notifySuccess deve ser chamado');
     }
 
@@ -2270,10 +2279,9 @@ class ConversationRouterTest extends TestCase
         // O campo é limpo via clearFields — sessions legacy são sanitizadas.
         $session = $this->currentSession();
         $this->assertNotNull($session);
-        $this->assertArrayNotHasKey(
-            'message_id_ask_edition',
-            $session,
-            'R2: message_id_ask_edition depreciado — não deve estar na sessão após retry',
+        $this->assertNull(
+            $session['message_id_ask_edition'] ?? null,
+            'R2: message_id_ask_edition depreciado — não deve ter valor na sessão após retry',
         );
         $this->assertSame(ConversationState::AWAITING_EDITION->value, $session['state']);
         $this->assertSame(1, $session['retry_count'], 'retry_count deve ter sido incrementado e preservado');
@@ -2407,8 +2415,8 @@ class ConversationRouterTest extends TestCase
         // Sessão: campos limpos.
         $session = $this->currentSession();
         $this->assertSame(ConversationState::AWAITING_CONFIRMATION->value, $session['state']);
-        $this->assertArrayNotHasKey('message_id_edit_picker', $session, 'Y deve ser limpo da sessão');
-        $this->assertArrayNotHasKey('message_id_ask_edition', $session, 'Z deve ser limpo da sessão');
+        $this->assertNull($session['message_id_edit_picker'] ?? null, 'Y deve ser limpo da sessão');
+        $this->assertNull($session['message_id_ask_edition'] ?? null, 'Z deve ser limpo da sessão');
 
         // R2: NENHUM keyboard restaurado.
         $this->assertEmpty(
@@ -2638,9 +2646,9 @@ class ConversationRouterTest extends TestCase
     public function test_extraction_passes_catalog_to_text_extractor(): void
     {
         // T3.1: a extração de texto deve receber o catálogo de labels
-        // do Firestore via fetchLabelCatalog().
-        // Seed uma label no Firestore e verifica que o extrator a recebe.
-        $this->firestore->incrementLabelUse('Almoço');
+        // do banco de dados via fetchLabelCatalog().
+        // Seed uma label e verifica que o extrator a recebe.
+        $this->store->incrementLabelUse('Almoço');
 
         $capturedCatalog = null;
         $this->extractText = new class implements ExtractsText
@@ -2669,7 +2677,7 @@ class ConversationRouterTest extends TestCase
     public function test_extraction_passes_catalog_to_image_extractor(): void
     {
         // T3.1: a extração de foto também deve passar o catálogo.
-        $this->firestore->incrementLabelUse('Restaurante');
+        $this->store->incrementLabelUse('Restaurante');
 
         $capturedCatalog = null;
         $this->extractImage = new class implements ExtractsImage
@@ -2731,8 +2739,8 @@ class ConversationRouterTest extends TestCase
     {
         // T3.2: validateLabels com catálogo deve corrigir "almoco" → "Almoço"
         // (fuzzy match acima do threshold).
-        // Seed uma label no Firestore para o catálogo.
-        $this->firestore->incrementLabelUse('Almoço');
+        // Seed uma label para o catálogo.
+        $this->store->incrementLabelUse('Almoço');
 
         $router = $this->makeRouter();
 

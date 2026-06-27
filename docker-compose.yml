@@ -1,13 +1,15 @@
 # ============================================================================
 # Wallet Track — Docker Compose para desenvolvimento local
 # ----------------------------------------------------------------------------
+# Stack: FrankenPHP + MariaDB 11.8 + Redis 7.x
+#
 # Uso:
 #   docker compose up -d --build        # Sobe a aplicação
 #   docker compose logs -f app          # Acompanha logs
 #   docker compose exec app php artisan tinker
 #   docker compose exec app composer require vendor/package
 #   docker compose down                 # Para containers (preserva volumes)
-#   docker compose down -v              # ⚠️  Limpa vendor/storage/node_modules
+#   docker compose down -v              # ⚠️  Limpa vendor/storage/node_modules/mariadb_data/redis_data (perde dados de dev!)
 #
 # Aplicação disponível em http://localhost:8000
 # (Container escuta em :8080 para paridade com Cloud Run PORT=8080.)
@@ -18,7 +20,7 @@
 # ============================================================================
 
 services:
-  # Imagem base com extensões PHP compiladas (gRPC/protobuf).
+  # Imagem base com extensões PHP compiladas (pdo_mysql, redis, etc.).
   # Build isolado: só reconstrói quando docker/Dockerfile.base mudar.
   base:
     build:
@@ -40,6 +42,10 @@ services:
     depends_on:
       base:
         condition: service_completed_successfully
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8080"   # host 8000 → container 8080 (paridade Cloud Run PORT=8080)
     volumes:
@@ -59,12 +65,55 @@ services:
       LOG_CHANNEL: stderr
       LOG_LEVEL: debug
       PORT: "8080"    # paridade com Cloud Run (Caddyfile usa {$PORT:8080})
+      # Override de DB/Redis para o contexto Docker: .env aponta 127.0.0.1
+      # (para dev nativo), mas dentro do container os serviços são hostnames.
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_DATABASE: ${DB_DATABASE:-wallet_track}
+      DB_USERNAME: ${DB_USERNAME:-wallet}
+      DB_PASSWORD: ${DB_PASSWORD:-walletpass}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     healthcheck:
       test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 8080) ? 0 : 1);'"]
       interval: 15s
       timeout: 3s
       retries: 5
       start_period: 30s
+
+  mariadb:
+    image: mariadb:11.8
+    container_name: wallet-track-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
+      MARIADB_DATABASE: ${DB_DATABASE:-wallet_track}
+      MARIADB_USER: ${DB_USERNAME:-wallet}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-walletpass}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: wallet-track-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # Vite dev server (HMR). Opt-in via profile para não pesar o start padrão.
   vite:
@@ -86,3 +135,5 @@ volumes:
   vendor:
   storage:
   node_modules:
+  mariadb_data:
+  redis_data:

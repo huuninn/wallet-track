@@ -7,7 +7,7 @@ namespace App\Services\Google;
 /**
  * Abstração de escrita/leitura da planilha Google Sheets (M6).
  *
- * **Por que um gateway?** Pelo mesmo motivo do {@see FirestoreGateway}: o SDK
+ * **Por que um gateway?** Pelo mesmo princípio aplicado às demais integrações externas: o SDK
  * oficial (`Google\Service\Sheets`) expõe objetos `ValueRange`/resources com
  * encadeamento (`spreadsheets_values->get/append/update`), o que torna mockar
  * a API real frágil e acoplado à versão do `google/apiclient`.

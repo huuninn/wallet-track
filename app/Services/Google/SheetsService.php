@@ -10,9 +10,9 @@ use Google\Service\Exception as GoogleServiceException;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Camada de espelhamento Firestore → Google Sheets (M6).
+ * Camada de espelhamento WalletStore → Google Sheets (M6).
  *
- * Cada transação persistida no Firestore (M5) é espelhada como uma linha na
+ * Cada transação persistida no WalletStore (M5) é espelhada como uma linha na
  * planilha (spec §4). Esta classe contém toda a lógica de mapeamento
  * {@see TransactionData} → linha de 9 colunas, e depende apenas de
  * {@see SheetsGateway} (interface) — nunca do SDK bruto — o que a torna
@@ -91,12 +91,12 @@ final class SheetsService
      * fluxo conversacional pedindo esses dados), validar aqui evita gravar
      * uma linha "corrompida" — o caller deve garantir DTO completo antes.
      *
-     * @param  string  $firestoreId  UUID do documento Firestore (coluna G).
+     * @param  int  $txId  ID da transação no banco (banco de dados, coluna G).
      *
      * @throws \InvalidArgumentException Quando `$dto->amount` ou `$dto->type`
      *                                   são null (mesma regra de saveTransaction).
      */
-    public function appendTransaction(TransactionData $dto, string $firestoreId): void
+    public function appendTransaction(TransactionData $dto, int $txId): void
     {
         if ($dto->amount === null || $dto->type === null) {
             throw new \InvalidArgumentException(
@@ -108,11 +108,11 @@ final class SheetsService
 
         $this->ensureHeaders();
 
-        $this->gateway->appendRow($this->buildRow($dto, $firestoreId));
+        $this->gateway->appendRow($this->buildRow($dto, $txId));
     }
 
     /**
-     * Sincroniza a aba auxiliar "Categorias" a partir do catálogo do Firestore.
+     * Sincroniza a aba auxiliar "Categorias" a partir do catálogo do WalletStore.
      *
      * Escreve o cabeçalho `["Categoria","Tipo padrão"]` seguido de uma linha
      * por categoria (nome + tipo padrão). **Best-effort**: se a aba ainda não
@@ -158,7 +158,7 @@ final class SheetsService
      *
      * @return list<mixed>
      */
-    private function buildRow(TransactionData $dto, string $firestoreId): array
+    private function buildRow(TransactionData $dto, int $txId): array
     {
         return [
             $this->formatDate($dto->date),          // A — Data (ISO)
@@ -167,7 +167,7 @@ final class SheetsService
             $this->mapType($dto->type),              // D — Tipo
             (string) ($dto->category ?? ''),         // E — Categoria
             $this->formatLabels($dto->labels),       // F — Labels
-            $firestoreId,                            // G — ID Firestore
+            (string) $txId,                          // G — ID Firestore
             (string) ($dto->observations ?? ''),     // H — Observações
             $this->formatItems($dto->items),         // I — Itens (NOVO)
         ];

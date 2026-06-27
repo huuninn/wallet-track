@@ -9,6 +9,7 @@
 #   scripts/deploy.sh iam              Criar service account e conceder permissões
 #   scripts/deploy.sh registry         Criar repositório no Artifact Registry
 #   scripts/deploy.sh scheduler        Criar/atualizar job do Cloud Scheduler
+#   scripts/deploy.sh trigger          Provisionar trigger do Cloud Build (push to main)
 #   scripts/deploy.sh all              Executa secrets → iam → registry
 #   scripts/deploy.sh help             Mostra esta ajuda
 #
@@ -31,6 +32,17 @@ readonly AR_REPO="wallet-track"
 readonly SERVICE_NAME="wallet-track"
 readonly RUN_SA_NAME="wallet-track-run"
 readonly RUN_SA="${RUN_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# Cloud Build (trigger de deploy automatico)
+readonly CB_CONNECTION_NAME="github-wallet-track"
+readonly CB_REPO_NAME="wallet-track"
+readonly CB_TRIGGER_NAME="wallet-track-deploy"
+readonly CB_REPO_OWNER="huuninn"
+readonly CB_REPO_URI="https://github.com/huuninn/wallet-track.git"
+readonly CB_BUILD_CONFIG="cloudbuild.yaml"
+readonly CB_BRANCH_PATTERN="^main$"
+readonly CB_OAUTH_POLL_INTERVAL=5
+readonly CB_OAUTH_POLL_TIMEOUT=300
 
 # ---------------------------------------------------------------------------
 # Cores para output (desligadas se stdout não for TTY)
@@ -67,6 +79,170 @@ check_gcloud() {
         log "Configurando projeto gcloud para $PROJECT_ID..."
         gcloud config set project "$PROJECT_ID"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Validacao de dependencias opcionais
+# ---------------------------------------------------------------------------
+require_jq() {
+    if ! command -v jq &>/dev/null; then
+        err "jq não encontrado. Instale: sudo apt-get install jq (ou equivalente)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Provisionamento de Cloud Build: connection + repo link + trigger
+# ---------------------------------------------------------------------------
+
+provision_connection() {
+    log "Provisionando GitHub connection \"$CB_CONNECTION_NAME\"..."
+
+    local conn_json
+    conn_json=$(gcloud builds connections describe "$CB_CONNECTION_NAME" \
+        --region="$REGION" --project="$PROJECT_ID" --format=json 2>/dev/null || true)
+
+    if [[ -n "$conn_json" && "$conn_json" != *"NOT_FOUND"* ]]; then
+        local stage
+        stage=$(echo "$conn_json" | jq -r '.installationState.stage // empty')
+
+        case "$stage" in
+            ACTIVE)
+                ok "Connection \"$CB_CONNECTION_NAME\" já existe e está ativa — pulando."
+                return 0
+                ;;
+            PENDING*)
+                log "Connection existe mas aguarda autorização OAuth..."
+                wait_for_oauth "$conn_json"
+                return 0
+                ;;
+            FAILED)
+                err "Connection \"$CB_CONNECTION_NAME\" está FAILED." \
+                    "Delete e recrie:" \
+                    "  gcloud builds connections delete github $CB_CONNECTION_NAME --region=$REGION --project=$PROJECT_ID"
+                ;;
+            *)
+                warn "Estado inesperado: '$stage' — tentando continuar..."
+                return 0
+                ;;
+        esac
+    fi
+
+    log "Criando connection \"$CB_CONNECTION_NAME\"..."
+
+    if ! gcloud builds connections create github "$CB_CONNECTION_NAME" \
+            --region="$REGION" \
+            --project="$PROJECT_ID" 2>&1; then
+        err "Falha ao criar connection. Verifique permissões (roles/cloudbuild.connectionOwner)."
+    fi
+
+    conn_json=$(gcloud builds connections describe "$CB_CONNECTION_NAME" \
+        --region="$REGION" --project="$PROJECT_ID" --format=json 2>/dev/null || true)
+
+    wait_for_oauth "$conn_json"
+}
+
+wait_for_oauth() {
+    local conn_json="$1"
+
+    local oauth_url
+    oauth_url=$(echo "$conn_json" | jq -r '.installationState.actionUri // empty')
+
+    if [[ -z "$oauth_url" || "$oauth_url" == "null" ]]; then
+        oauth_url="https://github.com/apps/google-cloud-build/installations/new"
+    fi
+
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────────────────────┐"
+    echo "  │  ⚠  AUTORIZAÇÃO OAUTH NECESSÁRIA                                │"
+    echo "  │                                                                  │"
+    echo "  │  1. Acesse no navegador:                                         │"
+    echo "  │     ${oauth_url}"
+    echo "  │                                                                  │"
+    echo "  │  2. Instale o \"Cloud Build GitHub App\"                           │"
+    echo "  │     no repositório huuninn/wallet-track                           │"
+    echo "  │                                                                  │"
+    echo "  │  3. Volte aqui — o script detecta automaticamente                │"
+    echo "  │     quando a autorização estiver completa                        │"
+    echo "  └──────────────────────────────────────────────────────────────────┘"
+    echo ""
+
+    log "Aguardando autorização (timeout: ${CB_OAUTH_POLL_TIMEOUT}s, polling a cada ${CB_OAUTH_POLL_INTERVAL}s)..."
+
+    local elapsed=0
+    while [[ "$elapsed" -lt "$CB_OAUTH_POLL_TIMEOUT" ]]; do
+        sleep "$CB_OAUTH_POLL_INTERVAL"
+        elapsed=$((elapsed + CB_OAUTH_POLL_INTERVAL))
+
+        local current_json current_stage
+        current_json=$(gcloud builds connections describe "$CB_CONNECTION_NAME" \
+            --region="$REGION" --project="$PROJECT_ID" --format=json 2>/dev/null || true)
+        current_stage=$(echo "$current_json" | jq -r '.installationState.stage // empty')
+
+        case "$current_stage" in
+            ACTIVE)
+                ok "Connection \"$CB_CONNECTION_NAME\" autorizada e ativa!"
+                return 0
+                ;;
+            FAILED)
+                err "OAuth FAILED. Verifique permissões no GitHub e tente novamente."
+                ;;
+            *)
+                printf "  [...] estado: %s (%ds / %ds)\n" "$current_stage" "$elapsed" "$CB_OAUTH_POLL_TIMEOUT"
+                ;;
+        esac
+    done
+
+    err "Timeout (${CB_OAUTH_POLL_TIMEOUT}s) aguardando autorização OAuth." \
+        "  Autorize manualmente: ${oauth_url}" \
+        "  Depois re-execute: scripts/deploy.sh trigger"
+}
+
+provision_repo_link() {
+    log "Provisionando repository link \"$CB_REPO_NAME\"..."
+
+    if gcloud builds repos describe "$CB_REPO_NAME" \
+            --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+        ok "Repository link \"$CB_REPO_NAME\" já existe — pulando."
+        return 0
+    fi
+
+    log "Criando repository link para $CB_REPO_URI..."
+
+    if ! gcloud builds repos create "$CB_REPO_NAME" \
+            --region="$REGION" \
+            --project="$PROJECT_ID" \
+            --connection="$CB_CONNECTION_NAME" \
+            --remote-uri="$CB_REPO_URI" 2>&1; then
+        err "Falha ao criar repository link. Verifique se a connection está ativa."
+    fi
+
+    ok "Repository link \"$CB_REPO_NAME\" criado."
+}
+
+provision_trigger() {
+    log "Provisionando build trigger \"$CB_TRIGGER_NAME\"..."
+
+    if gcloud builds triggers describe "$CB_TRIGGER_NAME" \
+            --region="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+        ok "Trigger \"$CB_TRIGGER_NAME\" já existe — pulando."
+        return 0
+    fi
+
+    log "Criando trigger (branch: $CB_BRANCH_PATTERN, config: $CB_BUILD_CONFIG)..."
+
+    if ! gcloud builds triggers create github \
+            --name="$CB_TRIGGER_NAME" \
+            --region="$REGION" \
+            --project="$PROJECT_ID" \
+            --repo-name="$CB_REPO_NAME" \
+            --repo-owner="$CB_REPO_OWNER" \
+            --branch-pattern="$CB_BRANCH_PATTERN" \
+            --build-config="$CB_BUILD_CONFIG" \
+            --comment-control=COMMENTS_DISABLED 2>&1; then
+        err "Falha ao criar trigger. Verifique se o repository link existe e a connection está ativa."
+    fi
+
+    ok "Trigger \"$CB_TRIGGER_NAME\" criado."
 }
 
 # ---------------------------------------------------------------------------
@@ -118,10 +294,6 @@ cmd_secrets() {
 
         ok "Secret '$secret_name' criado com sucesso (12 chaves)."
     fi
-}
-        fi
-
-        # Caso especial: SA JSON é lido de arquivo, não de string inline
     log "Secret consolidado provisionado."
 }
 
@@ -291,6 +463,35 @@ cmd_scheduler() {
 }
 
 # ---------------------------------------------------------------------------
+# Subcomando: trigger
+# ---------------------------------------------------------------------------
+cmd_trigger() {
+    require_jq
+
+    provision_connection
+    provision_repo_link
+    provision_trigger
+
+    echo ""
+    log "============================================"
+    log "Cloud Build trigger provisionado!"
+    log "============================================"
+    echo ""
+    log "Recursos:"
+    log "  Connection:   ${CB_CONNECTION_NAME}"
+    log "  Repository:   ${CB_REPO_NAME} → ${CB_REPO_URI}"
+    log "  Trigger:      ${CB_TRIGGER_NAME} (branch: ${CB_BRANCH_PATTERN})"
+    echo ""
+    log "Console do Cloud Build:"
+    log "  https://console.cloud.google.com/cloud-build/triggers;region=${REGION}?project=${PROJECT_ID}"
+    echo ""
+    warn "Este subcomando NÃO está incluído em 'deploy.sh all'."
+    warn "Assume que 'deploy.sh all' já foi executado (secrets, IAM, registry)."
+    echo ""
+    log "Próximo passo: faça um push na main para disparar o primeiro build."
+}
+
+# ---------------------------------------------------------------------------
 # Subcomando: help
 # ---------------------------------------------------------------------------
 cmd_help() {
@@ -313,7 +514,7 @@ cmd_all() {
     log "============================================"
     echo ""
     log "Próximos passos:"
-    log "  1. Configure o trigger do Cloud Build (push to main)"
+    log "  1. ./scripts/deploy.sh trigger   (provisionar deploy automático)"
     log "  2. Push para main → build → deploy automático"
     log "  3. Após o primeiro deploy, execute: scripts/deploy.sh scheduler"
     echo ""
@@ -332,6 +533,7 @@ main() {
         iam)       cmd_iam ;;
         registry)  cmd_registry ;;
         scheduler) cmd_scheduler ;;
+        trigger)   cmd_trigger ;;
         all)       cmd_all ;;
         help|--help|-h) cmd_help ;;
         *)

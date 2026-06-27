@@ -6,7 +6,7 @@ namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\TransactionSummaryFormatter;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
 
@@ -73,11 +73,11 @@ final class UltimosHandler
         $services = app();
 
         try {
-            $firestore = $services->make(FirestoreService::class);
+            $store = $services->make(WalletStore::class);
             $messenger = $services->make(BotMessenger::class);
             $formatter = $services->make(TransactionSummaryFormatter::class);
 
-            $transactions = $firestore->listRecent($chatId, $n);
+            $transactions = $store->listRecent($chatId, $n);
             $shown = count($transactions);
 
             if ($shown === 0) {
@@ -116,7 +116,7 @@ final class UltimosHandler
      *  - `param` não numérico (inclui negativos) → fallback DEFAULT_LIMIT (5).
      *  - `param` numérico em [1, 50] → usa o valor exato.
      *
-     * @return int Valor final a passar para `FirestoreService::listRecent()`.
+     * @return int Valor final a passar para `WalletStore::listRecent()`.
      */
     private function resolveLimit(string $text): int
     {

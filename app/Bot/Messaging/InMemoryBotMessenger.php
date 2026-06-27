@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Bot\Messaging;
 
 use App\Dto\TransactionData;
-use App\Services\Google\InMemoryFirestoreGateway;
 use App\Services\Google\InMemorySheetsGateway;
 
 /**
@@ -16,8 +15,7 @@ use App\Services\Google\InMemorySheetsGateway;
  * para que o Router possa simular o "save/lookup" de `message_id_confirm`.
  *
  * Replica o padrão dos fakes já usados no projeto
- * ({@see InMemoryFirestoreGateway},
- * {@see InMemorySheetsGateway}): regra de negócio testada
+ * ({@see InMemorySheetsGateway}): regra de negócio testada
  * sem rede, em milissegundos, com asserções ricas sobre o que foi enviado.
  *
  * Estrutura dos registros:
@@ -41,7 +39,7 @@ final class InMemoryBotMessenger implements BotMessenger
     /** @var array<int|string, list<array{message_id: int, text: string}>> */
     public array $sentTexts = [];
 
-    /** @var array<int|string, list<array{message_id: int, draft: TransactionData, firestore_id: ?string}>> */
+    /** @var array<int|string, list<array{message_id: int, draft: TransactionData, tx_id: ?int}>> */
     public array $confirmations = [];
 
     /** @var array<int|string, list<array{message_id: int, field: string, prompt: string}>> */
@@ -122,13 +120,13 @@ final class InMemoryBotMessenger implements BotMessenger
         return $id;
     }
 
-    public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?string $firestoreId = null): int
+    public function sendConfirmationRequest(int|string $chatId, TransactionData $draft, ?int $txId = null): int
     {
         $id = $this->nextMessageId++;
         $this->confirmations[$chatId][] = [
             'message_id' => $id,
             'draft' => $draft,
-            'firestore_id' => $firestoreId,
+            'tx_id' => $txId,
         ];
 
         // Também registra como texto enviado (para asserção de conteúdo do resumo).

@@ -15,7 +15,7 @@ use App\Dto\SessionData;
 use App\Dto\TransactionData;
 use App\Enums\ConversationState;
 use App\Exceptions\ExtractionException;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Services\Parsing\ItemsParser;
 use App\Support\LabelFormatter;
 use App\Support\TextNormalizer;
@@ -27,9 +27,9 @@ use Throwable;
  * Roteador central da máquina de estados conversacional (M7.3 — M7.10 + M8).
  *
  * Recebe um {@see ConversationInput} (texto/foto/callback normalizado) e
- * decide o que fazer com base no estado atual da sessão Firestore do chat.
+ * decide o que fazer com base no estado atual da sessão do chat.
  * Toda mutação de sessão, todo envio de mensagem e toda chamada de extração
- * passam por aqui — nenhum handler Nutgram toca Firestore ou a SDK do LLM
+ * passam por aqui — nenhum handler Nutgram toca a persistência ou a SDK do LLM
  * diretamente. Esta é a peça que torna o bot conversacional: ela implementa
  * o fluxo IDLE → AWAITING_DATA → AWAITING_CONFIRMATION → AWAITING_EDITION
  * descrito em docs/02-especificacao-tecnica.md §7.
@@ -37,7 +37,7 @@ use Throwable;
  * Princípios de design:
  *
  *  - **Pura lógica, fácil de testar**: depende apenas de interfaces
- *    (ExtractsText/Image, SyncsSheet, BotMessenger, FirestoreService) e do
+ *    (ExtractsText/Image, SyncsSheet, BotMessenger, WalletStore) e do
  *    {@see StateMachine}. Pode ser instanciada em testes com stubs anonimos
  *    (ver ConversationRouterTest).
  *  - **NÃO captura \Exception em route()**: o TelegramWebhookController já
@@ -45,15 +45,14 @@ use Throwable;
  *    do webhook. Mas chamadas externas (extractText, extractImage) SÃO
  *    protegidas (ExtractionException) com fallback amigável, conforme o spec.
  *  - **Idempotência via `processing` flag**: a confirmação adquire o flag
- *    atomicamente (FirestoreService::tryAcquireSessionProcessingFlag); duplo
+ *    atomicamente (WalletStore::tryAcquireSessionProcessingFlag); duplo
  *    clique é bloqueado (CT-018).
  *  - **CT-047 (callback de keyboard antiga)**: validado PRIMEIRO em qualquer
  *    callback quando state=AWAITING_CONFIRMATION, comparando
  *    `callbackMessageId` com `message_id_confirm` E `message_id_edit_picker`
  *    da sessão (P6 — aceita X ou Y).
- *  - **Timeout 15min (CT-043/CT-018b)**: o primeiro passo de `route()` é
- *    carregar a sessão; se `updated_at` é mais antigo que
- *    `sessionTimeoutMinutes`, trata como expirada.
+ *  - **Timeout via Redis TTL**: a sessão expira automaticamente após o TTL
+ *    no Redis — não há mais verificação manual de timeout.
  *  - **Campos pedíveis amount/type/date**: o estado AWAITING_DATA guarda
  *    qual campo está em aberto (`awaiting_field`). Cada resposta é validada
  *    por um validador dedicado antes de atualizar o draft. Acima do limite
@@ -126,11 +125,6 @@ final class ConversationRouter
     private const int OBSERVATIONS_MAX_LENGTH = 1000;
 
     /**
-     * Janela (minutos) de validade da sessão — antes disso, considera expirada.
-     */
-    private readonly int $sessionTimeoutMinutes;
-
-    /**
      * Limite de retentativas de validação de campo pedível antes de desistir.
      */
     private readonly int $maxDataRetries;
@@ -166,16 +160,14 @@ final class ConversationRouter
         private readonly StateMachine $stateMachine,
         private readonly BotMessenger $messenger,
         private readonly TransactionSummaryFormatter $formatter,
-        private readonly FirestoreService $firestore,
+        private readonly WalletStore $store,
         private readonly ExtractsText $extractText,
         private readonly ExtractsImage $extractImage,
         private readonly SyncsSheet $syncSheet,
         private readonly SuggestCategory $suggestCategory,
         private readonly SuggestsLabels $suggestLabels,
-        int $sessionTimeoutMinutes,
         int $maxDataRetries,
     ) {
-        $this->sessionTimeoutMinutes = $sessionTimeoutMinutes;
         $this->maxDataRetries = $maxDataRetries;
         $this->itemsParser = new ItemsParser();
     }
@@ -205,7 +197,7 @@ final class ConversationRouter
     {
         return $this->wizardHandler ??= new WizardHandler(
             router: $this,
-            firestore: $this->firestore,
+            store: $this->store,
             messenger: $this->messenger,
             formatter: $this->formatter,
             suggestLabels: $this->suggestLabels,
@@ -229,16 +221,11 @@ final class ConversationRouter
     public function route(ConversationInput $input): void
     {
         $chatId = (string) $input->chatId;
-        $session = $this->firestore->getSession($chatId);
-        $state = ConversationState::fromSession($session['state'] ?? null);
-
-        // CT-018b / CT-043: sessão expirada por timeout.
-        if ($session !== null && $this->isExpired($session)) {
-            $this->handleExpiredSession($chatId);
-            // Após expirar, recarrega e re-roteia como IDLE (a sessão agora é null).
-            $session = null;
-            $state = ConversationState::IDLE;
-        }
+        $session = $this->store->getSession($chatId);
+        // M4: $session pode ser null (Redis retorna array vazio quando chave não existe).
+        // fromSession(null) já devolve IDLE, mas evitamos o warning de acesso a offset
+        // em null em PHP 8.x com a guarda explícita.
+        $state = ConversationState::fromSession($session !== null ? ($session['state'] ?? null) : null);
 
         // M9.3 (T-016): detecção de wizard `/nova` ativo. Se a sessão tem o
         // flag `_wizard_active=true` no draft, delegamos para o WizardHandler
@@ -349,7 +336,7 @@ final class ConversationRouter
             // Re-pergunta o próximo campo pedível.
             $next = $this->pickNextAwaitingField($merged, $session);
             $this->assertStateTransition($session, ConversationState::AWAITING_DATA->value);
-            $this->firestore->setSession(
+            $this->store->setSession(
                 $chatId,
                 new SessionData(
                     state: ConversationState::AWAITING_DATA->value,
@@ -384,7 +371,7 @@ final class ConversationRouter
         // Ainda falta — pede o próximo campo pedível.
         $next = $this->pickNextAwaitingField($newDraft, $session);
         $this->assertStateTransition($session, ConversationState::AWAITING_DATA->value);
-        $this->firestore->setSession(
+        $this->store->setSession(
             $chatId,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,
@@ -468,7 +455,7 @@ final class ConversationRouter
                 // Permitido pela tabela do {@see StateMachine} (linha 55).
                 $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
                 $pickerMessageId = $this->messenger->sendEditFieldPicker($chatId);
-                $this->firestore->setSession(
+                $this->store->setSession(
                     $chatId,
                     new SessionData(
                         state: ConversationState::AWAITING_CONFIRMATION->value,
@@ -490,7 +477,7 @@ final class ConversationRouter
 
                 $this->messenger->notifyCancelled($chatId);
                 $this->assertStateTransition($session, ConversationState::IDLE->value);
-                $this->firestore->clearSession($chatId);
+                $this->store->clearSession($chatId);
 
                 return;
             }
@@ -513,7 +500,7 @@ final class ConversationRouter
                     $this->messenger->askForEdition($chatId, $field);
 
                     $this->assertStateTransition($session, ConversationState::AWAITING_EDITION->value);
-                    $this->firestore->setSession(
+                    $this->store->setSession(
                         $chatId,
                         new SessionData(
                             state: ConversationState::AWAITING_EDITION->value,
@@ -546,7 +533,7 @@ final class ConversationRouter
         // Texto ou foto: assume "quero re-começar" — cancela e re-extrai.
         $this->messenger->notifyCancelled($chatId);
         $this->assertStateTransition($session, ConversationState::IDLE->value);
-        $this->firestore->clearSession($chatId);
+        $this->store->clearSession($chatId);
 
         if ($input->kind === InputKind::Photo) {
             $this->handlePhotoExtraction($chatId, (string) $input->photoFileId, 'image');
@@ -651,7 +638,7 @@ final class ConversationRouter
         // 3. Persiste sessão com message_id_confirm sobrescrito (D3: CT-047
         //    rejeita X_old automaticamente).
         $this->assertStateTransition($session, ConversationState::AWAITING_CONFIRMATION->value);
-        $this->firestore->setSession(
+        $this->store->setSession(
             $chatId,
             new SessionData(
                 state: ConversationState::AWAITING_CONFIRMATION->value,
@@ -704,10 +691,10 @@ final class ConversationRouter
         $messageId = $this->messenger->sendConfirmationRequest($chatId, $enriched);
 
         $this->assertStateTransition(
-            $this->firestore->getSession($chatId),
+            $this->store->getSession($chatId),
             ConversationState::AWAITING_CONFIRMATION->value,
         );
-        $this->firestore->setSession(
+        $this->store->setSession(
             $chatId,
             new SessionData(
                 state: ConversationState::AWAITING_CONFIRMATION->value,
@@ -790,10 +777,10 @@ final class ConversationRouter
         }
 
         $this->assertStateTransition(
-            $this->firestore->getSession($chatId),
+            $this->store->getSession($chatId),
             ConversationState::AWAITING_DATA->value,
         );
-        $this->firestore->setSession(
+        $this->store->setSession(
             $chatId,
             new SessionData(
                 state: ConversationState::AWAITING_DATA->value,
@@ -820,7 +807,7 @@ final class ConversationRouter
      * chamadas existentes (M7/M8) — callers que não passam `$session`
      * continuam no caminho original, sem nenhuma mudança de comportamento.
      *
-     * @param  array<string, mixed>  $session  Sessão Firestore (opcional — default vazio).
+     * @param  array<string, mixed>  $session  Sessão (opcional — default vazio).
      */
     private function pickNextAwaitingField(TransactionData $dto, array $session = []): ?string
     {
@@ -857,48 +844,6 @@ final class ConversationRouter
     }
 
     /**
-     * Trata sessão expirada por timeout: notifica, limpa, e o caller continua
-     * como IDLE (sessão = null).
-     */
-    private function handleExpiredSession(string $chatId): void
-    {
-        $this->messenger->notifyError(
-            $chatId,
-            "⏰ Sua sessão expirou ({$this->sessionTimeoutMinutes} min sem interação). Envie uma nova mensagem para começar.",
-        );
-        $currentSession = $this->firestore->getSession($chatId);
-        $this->assertStateTransition($currentSession, ConversationState::IDLE->value);
-        $this->firestore->clearSession($chatId);
-    }
-
-    /**
-     * Indica se a sessão está expirada (`updated_at` mais antigo que timeout).
-     *
-     * Sessões sem `updated_at` (corrompidas) são tratadas como expiradas
-     * (defensivo — não conseguimos calcular idade, então forçamos reset).
-     *
-     * @param  array<string, mixed>  $session
-     */
-    private function isExpired(array $session): bool
-    {
-        $updatedAt = $session['updated_at'] ?? null;
-
-        if (! is_string($updatedAt) || $updatedAt === '') {
-            return true;
-        }
-
-        try {
-            $timestamp = new DateTimeImmutable($updatedAt);
-        } catch (Throwable) {
-            return true;
-        }
-
-        $ageSeconds = time() - $timestamp->getTimestamp();
-
-        return $ageSeconds > ($this->sessionTimeoutMinutes * 60);
-    }
-
-    /**
      * Asserte que a transição de estado é legal antes de gravar (W-2 da revisão).
      *
      * Chamado antes de cada `firestore->setSession(state: $newState)` e
@@ -906,7 +851,7 @@ final class ConversationRouter
      * Lança `LogicException` se a transição for ilegal — bug de programação,
      * nunca input de usuário.
      *
-     * Sessão nula (sem doc no Firestore) é tratada como IDLE — entrada
+     * Sessão nula (sem doc na store) é tratada como IDLE — entrada
      * legítima em qualquer estado (já é legal per a tabela do
      * {@see StateMachine} para `IDLE → AWAITING_DATA` e
      * `IDLE → AWAITING_CONFIRMATION`).
@@ -1097,7 +1042,7 @@ final class ConversationRouter
     */
 
     /**
-     * Confirma a transação: persiste no Firestore e tenta sync com Sheets.
+     * Confirma a transação: persiste no banco e tenta sync com Sheets.
      *
      * Idempotência (CT-018): adquire o flag `processing` atomicamente. Se
      * outra chamada concorrente já pegou, apenas silenciamos e respondemos
@@ -1110,22 +1055,21 @@ final class ConversationRouter
      * **M8 — Tracking pós-confirm** (CT-012, CT-022): após `saveTransaction`
      * (mas antes do `clearSession`), incrementamos o `use_count` de cada
      * label e criamos a categoria se ainda não existir. Essas operações
-     * são **best-effort** (try/catch) — se a rede/Firestore falhar, o
+     * são **best-effort** (try/catch) — se a rede/banco falhar, o
      * usuário já recebeu o toast "Salvo!" e a transação está persistida.
      * A próxima sugestão vai simplesmente "começar do zero" nesse label
      * (até o próximo confirm).
      *
      * **Race condition** (dois confirms simultâneos na MESMA categoria):
-     * o `createCategory` é idempotente via `setDocument` (overwrite não
-     * destrutivo — recria o doc com o mesmo `use_count` se já existia;
-     * o `incrementLabelUse` é atômico via transaction. Nenhuma proteção
+     * o `createCategory` é idempotente via `firstOrCreate`;
+     * o `incrementLabelUse` é atômico. Nenhuma proteção
      * adicional é necessária.
      *
      * @param  array<string, mixed>  $session
      */
     private function handleConfirm(string $chatId, array $session, string $callbackId): void
     {
-        if (! $this->firestore->tryAcquireSessionProcessingFlag($chatId)) {
+        if (! $this->store->tryAcquireSessionProcessingFlag($chatId)) {
             // Duplo clique / callback concorrente — outro já está processando.
             $this->messenger->answerCallback($callbackId, 'Já estou processando...');
 
@@ -1147,7 +1091,7 @@ final class ConversationRouter
                 'Sua transação está com dados incompletos. Envie uma nova mensagem para começar.',
             );
             $this->assertStateTransition($session, ConversationState::IDLE->value);
-            $this->firestore->clearSession($chatId);
+            $this->store->clearSession($chatId);
 
             return;
         }
@@ -1157,7 +1101,7 @@ final class ConversationRouter
         // inesperados — o webhook controller também capturaria, mas
         // queremos responder com toast amigável antes.
         try {
-            $firestoreId = $this->firestore->saveTransaction($chatId, $dto);
+            $txId = $this->store->saveTransaction($chatId, $dto);
         } catch (Throwable $e) {
             Log::error('ConversationRouter: saveTransaction falhou', [
                 'chat_id' => $chatId,
@@ -1170,7 +1114,7 @@ final class ConversationRouter
                 'Tive um problema técnico ao salvar. Tente de novo em alguns instantes.',
             );
             $this->assertStateTransition($session, ConversationState::IDLE->value);
-            $this->firestore->clearSession($chatId);
+            $this->store->clearSession($chatId);
 
             return;
         }
@@ -1183,7 +1127,7 @@ final class ConversationRouter
 
         // 3. Tenta espelhar na planilha (best-effort).
         try {
-            $synced = $this->syncSheet->handle($dto, $firestoreId);
+            $synced = $this->syncSheet->handle($dto, $txId);
         } catch (Throwable $e) {
             // Bug de programação (ex.: DTO incompleto) — logamos mas NÃO
             // falhamos o confirm: a transação está persistida, o cron M9
@@ -1199,7 +1143,7 @@ final class ConversationRouter
         if (! $synced) {
             Log::warning('ConversationRouter: sync com Sheets falhou (cron M9 recuperará)', [
                 'chat_id' => $chatId,
-                'firestore_id' => $firestoreId,
+                'tx_id' => $txId,
             ]);
         }
 
@@ -1207,15 +1151,15 @@ final class ConversationRouter
         $this->messenger->notifySuccess($chatId, $dto);
         $this->messenger->answerCallback($callbackId, '✅ Salvo!');
         $this->assertStateTransition($session, ConversationState::IDLE->value);
-        $this->firestore->clearSession($chatId);
+        $this->store->clearSession($chatId);
     }
 
     /**
      * Tracking de uso de labels e persistência de categoria nova (M8).
      *
-     * - Para cada label do DTO: `firestore.incrementLabelUse($label)`
+     * - Para cada label do DTO: `store.incrementLabelUse($label)`
      *   (cria com use_count=1 se não existia; idempotente).
-     * - Se a categoria não existe: `firestore.createCategory(...)` com
+     * - Se a categoria não existe: `store.createCategory(...)` com
      *   `defaultType` derivado do `type` da transação.
      *
      * Ambos isolados em try/catch — uma falha não bloqueia a outra, e
@@ -1231,7 +1175,7 @@ final class ConversationRouter
             }
 
             try {
-                $this->firestore->incrementLabelUse($trimmed);
+                $this->store->incrementLabelUse($trimmed);
             } catch (Throwable $e) {
                 Log::warning('ConversationRouter: incrementLabelUse falhou (não bloqueia confirm)', [
                     'label' => $trimmed,
@@ -1251,9 +1195,9 @@ final class ConversationRouter
         $categoryTrim = trim($category);
 
         try {
-            if (! $this->firestore->categoryExists($categoryTrim)) {
+            if (! $this->store->categoryExists($categoryTrim)) {
                 $defaultType = $dto->type === 'income' ? 'income' : 'expense';
-                $this->firestore->createCategory($categoryTrim, $defaultType);
+                $this->store->createCategory($categoryTrim, $defaultType);
             }
         } catch (Throwable $e) {
             Log::warning('ConversationRouter: createCategory falhou (não bloqueia confirm)', [
@@ -1286,7 +1230,7 @@ final class ConversationRouter
         string $field,
         bool $isEdition,
     ): void {
-        $newCount = $this->firestore->incrementSessionRetry($chatId);
+        $newCount = $this->store->incrementSessionRetry($chatId);
 
         if ($newCount > $this->maxDataRetries) {
             $this->messenger->notifyError(
@@ -1296,7 +1240,7 @@ final class ConversationRouter
                     : 'Não consegui entender suas respostas. Envie uma nova mensagem para recomeçar — ou use /cancelar para limpar.',
             );
             $this->assertStateTransition($session, ConversationState::IDLE->value);
-            $this->firestore->clearSession($chatId);
+            $this->store->clearSession($chatId);
 
             return;
         }
@@ -1310,7 +1254,7 @@ final class ConversationRouter
             // `incrementSessionRetry()` acima.
             $this->messenger->askForEdition($chatId, $field);
 
-            $this->firestore->setSession(
+            $this->store->setSession(
                 $chatId,
                 new SessionData(
                     state: ConversationState::AWAITING_EDITION->value,
@@ -1684,10 +1628,10 @@ final class ConversationRouter
     }
 
     /**
-     * Busca o catálogo top-N de labels do usuário via Firestore.
+     * Busca o catálogo top-N de labels do usuário via WalletStore.
      *
      * O resultado é cacheado em memória (propriedade `$cachedLabelCatalog`)
-     * para evitar múltiplos queries ao Firestore dentro do mesmo request HTTP.
+     * para evitar múltiplos queries dentro do mesmo request HTTP.
      * O catálogo é imutável durante a vida de um request (labels são criadas
      * apenas no confirm, que encerra este Router).
      *
@@ -1695,7 +1639,7 @@ final class ConversationRouter
      * também precisa do catálogo para sugestão LLM quando o usuário pula a
      * etapa de labels. Evita duplicar o método em duas classes.
      *
-     * Best-effort: se o Firestore estiver indisponível, loga o warning
+     * Best-effort: se a store estiver indisponível, loga o warning
      * e retorna array vazio — a extração e validação continuam sem
      * catálogo (apenas sem benefício do fuzzy match).
      *
@@ -1709,7 +1653,7 @@ final class ConversationRouter
 
         try {
             $n = (int) config('labels.catalog_top_n', 15);
-            $docs = $this->firestore->getTopLabels($n);
+            $labels = $this->store->getTopLabels($n);
         } catch (Throwable $e) {
             Log::warning('ConversationRouter: getTopLabels falhou — extraindo sem catálogo', [
                 'exception' => $e::class,
@@ -1721,8 +1665,8 @@ final class ConversationRouter
         }
 
         $catalog = [];
-        foreach ($docs as $row) {
-            $name = (string) ($row['data']['name'] ?? $row['id']);
+        foreach ($labels as $label) {
+            $name = $label->name;
             if ($name !== '') {
                 $catalog[] = $name;
             }

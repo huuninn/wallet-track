@@ -2,7 +2,7 @@
 # ============================================================================
 # Wallet Track — Imagem base com extensões PHP compiladas
 # ----------------------------------------------------------------------------
-# Build isolado e reaproveitável: compila gRPC + protobuf (extensões C pesadas)
+# Build isolado e reaproveitável: compila extensões C (gmp, bcmath, etc.)
 # uma única vez. A imagem principal (Dockerfile) referencia esta via build arg.
 #
 # Rebuild necessário apenas quando:
@@ -19,8 +19,9 @@ RUN apt-get update \
         bcmath \
         intl \
         opcache \
-        grpc \
-        protobuf \
+        pdo_mysql \
+        pdo_sqlite \
+        redis \
         zip \
     && rm -rf /var/lib/apt/lists/*
 

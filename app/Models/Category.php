@@ -1,0 +1,42 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+/**
+ * @property int $id
+ * @property string $slug
+ * @property string $display_name
+ * @property string $default_type  // 'expense' | 'income'
+ * @property int $use_count
+ * @property bool $is_default
+ * @property \Carbon\CarbonImmutable|null $created_at
+ */
+class Category extends Model
+{
+    /** @use HasFactory<\Database\Factories\CategoryFactory> */
+    use HasFactory;
+
+    public const UPDATED_AT = null;
+
+    protected $fillable = [
+        'slug',
+        'display_name',
+        'default_type',
+        'use_count',
+        'is_default',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'use_count' => 'integer',
+            'is_default' => 'boolean',
+            'created_at' => 'immutable_datetime',
+        ];
+    }
+}

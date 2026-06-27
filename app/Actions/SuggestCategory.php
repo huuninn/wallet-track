@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Support\Stopwords;
 use App\Support\TextNormalizer;
+use Illuminate\Database\Eloquent\Collection;
 
 /**
  * Heurística PHP (sem LLM) para sugestão de categoria — M8.
@@ -25,7 +26,7 @@ use App\Support\TextNormalizer;
  *
  * O "cálculo de similaridade" usado aqui é a **distância de Levenshtein
  * normalizada** — a abordagem mais simples, robusta e suficiente para o
- * volume de uso (1 usuário, ~50-100 categorias no Firestore). Não usamos
+ * volume de uso (1 usuário, ~50-100 categorias no banco). Não usamos
  * embeddings nem similaridade semântica; o universo de categorias é
  * pequeno e finito.
  *
@@ -59,7 +60,7 @@ final class SuggestCategory
     public const string DEFAULT_CATEGORY = 'Outros';
 
     public function __construct(
-        private readonly FirestoreService $firestore,
+        private readonly WalletStore $store,
     ) {}
 
     /**
@@ -71,7 +72,7 @@ final class SuggestCategory
      */
     public function suggest(?string $extractedCategory, ?string $description): array
     {
-        $categories = $this->firestore->getCategories();
+        $categories = $this->store->getCategories();
 
         // 1) Categoria extraída presente → tenta match direto ou fuzzy.
         if ($extractedCategory !== null && trim($extractedCategory) !== '') {
@@ -94,10 +95,10 @@ final class SuggestCategory
      * Tenta encontrar a categoria mais similar (exata → fuzzy). Se nada
      * bater acima do threshold, devolve como nova.
      *
-     * @param  list<array{id: string, data: array<string, mixed>}>  $categories
+     * @param  Collection<int, \App\Models\Category>  $categories
      * @return array{name: string, display: string, isNew: bool}
      */
-    private function matchOrNew(string $extracted, array $categories): array
+    private function matchOrNew(string $extracted, Collection $categories): array
     {
         $extractedFold = TextNormalizer::fold($extracted);
 
@@ -109,7 +110,7 @@ final class SuggestCategory
         $bestScore = 0.0;
 
         foreach ($categories as $row) {
-            $nameFold = TextNormalizer::fold((string) ($row['data']['display_name'] ?? $row['id']));
+            $nameFold = TextNormalizer::fold($row->display_name);
             if ($nameFold === '') {
                 continue;
             }
@@ -125,7 +126,7 @@ final class SuggestCategory
         // Match perfeito (1.0) ou acima do threshold → aceita como existente.
         if ($best !== null && $bestScore >= self::FUZZY_THRESHOLD) {
             return $this->buildCategoryResult(
-                (string) ($best['data']['display_name'] ?? $best['id']),
+                $best->display_name,
                 $categories,
                 isNew: false,
             );
@@ -149,10 +150,10 @@ final class SuggestCategory
      * string toda). Isso evita que uma keyword curta (1 match perfeito)
      * seja descartada porque a descrição tem 10 outras palavras.
      *
-     * @param  list<array{id: string, data: array<string, mixed>}>  $categories
+     * @param  Collection<int, \App\Models\Category>  $categories
      * @return array{name: string, display: string, isNew: bool}|null
      */
-    private function inferFromDescription(string $description, array $categories): ?array
+    private function inferFromDescription(string $description, Collection $categories): ?array
     {
         $keywords = Stopwords::extractKeywords($description);
         if ($keywords === []) {
@@ -164,7 +165,7 @@ final class SuggestCategory
         $best = null;
 
         foreach ($categories as $row) {
-            $display = (string) ($row['data']['display_name'] ?? $row['id']);
+            $display = $row->display_name;
             $displayFold = TextNormalizer::fold($display);
             if ($displayFold === '') {
                 continue;
@@ -216,7 +217,7 @@ final class SuggestCategory
         }
 
         return $this->buildCategoryResult(
-            (string) ($best['data']['display_name'] ?? $best['id']),
+            $best->display_name,
             $categories,
             isNew: false,
         );
@@ -225,26 +226,26 @@ final class SuggestCategory
     /**
      * Monta o array de resultado final.
      *
-     * - `name` = id canônico (lowercase) — usado em lookups e como doc id.
+     * - `name` = id canônico (lowercase) — usado em lookups e como slug.
      * - `display` = rótulo legível (preserva capitalização do `display_name`
      *   quando a categoria existe; usa o input cru quando é nova).
      * - `isNew` = se é categoria nova (caller deve persistir).
      *
-     * @param  list<array{id: string, data: array<string, mixed>}>  $categories
+     * @param  Collection<int, \App\Models\Category>  $categories
      * @return array{name: string, display: string, isNew: bool}
      */
-    private function buildCategoryResult(string $input, array $categories, bool $isNew): array
+    private function buildCategoryResult(string $input, Collection $categories, bool $isNew): array
     {
         $display = trim($input);
         $name = mb_strtolower($display);
 
         // Se a categoria existe (input é o display_name de um doc), preserva
-        // o `display_name` original do Firestore para não criar variantes
+        // o `display_name` original do banco para não criar variantes
         // ortográficas ("Alimentação" vs "Alimentacao" no display).
         foreach ($categories as $row) {
-            $rowName = (string) $row['id'];
+            $rowName = $row->slug;
             if ($rowName === $name) {
-                $display = (string) ($row['data']['display_name'] ?? $rowName);
+                $display = $row->display_name;
 
                 return [
                     'name' => $rowName,

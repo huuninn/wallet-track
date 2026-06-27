@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Bot\Handlers;
 
 use App\Bot\Messaging\SessionMessageCleaner;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Properties\ParseMode;
@@ -23,11 +23,11 @@ use SergiX44\Nutgram\Telegram\Properties\ParseMode;
  * IDLE, descartando drafts/transações pendentes. Comportamento esperado pelos
  * CT-023a, CT-023b, CT-023c, CT-023f do plano de testes M9.
  *
- * Se a limpeza da sessão falhar (ex.: Firestore indisponível), o handler
+ * Se a limpeza da sessão falhar (ex.: store indisponível), o handler
  * registra o erro no log mas ainda envia a mensagem de boas-vindas — o
  * `/start` é considerado best-effort e nunca deve retornar 5xx para o
  * Telegram. Em caso de crash, o usuário pode tentar `/start` novamente ou
- * aguardar o timeout da sessão (15min).
+ * aguardar o timeout da sessão (Redis TTL).
  *
  * Ref.: docs/02-especificacao-tecnica.md §7 (comandos), docs/06-plano-implementacao.md §4.3 (M1.2/M1.5),
  *       docs/planos/m9-plano-tecnico.md (T-001, GAP-01).
@@ -61,8 +61,8 @@ HTML;
 
     /**
      * Invoca o handler: limpa a sessão do chat (GAP-01) e envia a
-     * mensagem de boas-vindas. Best-effort — não propaga exceções do
-     * Firestore para o Telegram.
+     * mensagem de boas-vindas. Best-effort — não propaga exceções da
+     * store para o Telegram.
      *
      * @param  Nutgram  $bot  Instância do bot injetada pelo BotLoader.
      */
@@ -76,18 +76,18 @@ HTML;
         if ($message !== null) {
             $chatId = (string) (int) $message->chat->id;
             try {
-                $firestore = app(FirestoreService::class);
+                $store = app(WalletStore::class);
 
                 // R1/R2: remove teclados inline de X e Y via SessionMessageCleaner
                 // (mantém os textos como histórico no chat). Z é prompt de texto
                 // puro sem teclado — ignorado por design. Nenhuma mensagem é deletada.
-                $session = $firestore->getSession($chatId);
+                $session = $store->getSession($chatId);
                 app(SessionMessageCleaner::class)->cleanup($chatId, $session);
 
-                $firestore->clearSession($chatId);
+                $store->clearSession($chatId);
             } catch (\Throwable $e) {
                 // Best-effort: loga e segue. O `/start` nunca pode quebrar
-                // a UX por falha de Firestore — o usuário ainda recebe a
+                // a UX por falha de store — o usuário ainda recebe a
                 // mensagem de boas-vindas.
                 Log::warning('StartHandler: clearSession falhou', [
                     'chat_id' => $chatId,

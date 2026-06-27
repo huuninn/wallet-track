@@ -20,11 +20,10 @@ use App\Bot\Messaging\SessionMessageCleaner;
 use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Conversation\ConversationRouter;
 use App\Conversation\StateMachine;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\ServiceProvider;
 use SergiX44\Nutgram\Nutgram;
-use Tests\Feature\Conversation\ConversationRouterTest;
 
 /**
  * Registra a camada conversacional (M7 + M8) no container.
@@ -41,7 +40,7 @@ use Tests\Feature\Conversation\ConversationRouterTest;
  *  - **M8 — Heurística**: {@see SuggestCategory} (ativa no fluxo
  *    principal) e {@see SuggestLabels} (deprecated — preservada para
  *    reuso futuro) são singletons que dependem apenas do
- *    {@see FirestoreService}.
+ *    {@see WalletStore}.
  *
  *  - **BotMessenger → NutgramBotMessenger**: a implementação concreta
  *    depende do singleton Nutgram, que por sua vez é registrado no
@@ -74,7 +73,7 @@ class ConversationServiceProvider extends ServiceProvider
         $this->app->bind(SyncsSheet::class, SyncSheet::class);
 
         // M8 — Heurística de labels e categoria. Ambas dependem só do
-        // FirestoreService (singleton) — o container auto-resolveria, mas o
+        // WalletStore (singleton) — o container auto-resolveria, mas o
         // bind explícito documenta a relação e simplifica substituições
         // em testes de integração.
         $this->app->singleton(SuggestCategory::class);
@@ -103,21 +102,21 @@ class ConversationServiceProvider extends ServiceProvider
         // StateMachine: puro, auto-resolvido (sem necessidade de bind explícito).
         $this->app->singleton(StateMachine::class);
 
-        // ConversationRouter: peça central do M7/M8. Encapsula as 11 dependências
+        // ConversationRouter: peça central do M7/M8. Encapsula as 10 dependências
         // (6 services/ações + formatter + state machine + 2 heurísticas M8
-        // + 2 ints da config).
+        // + 1 int da config). Timeout de sessão agora é gerenciado pelo
+        // Redis TTL (M4) — não há mais parâmetro sessionTimeoutMinutes.
         $this->app->singleton(ConversationRouter::class, function (Container $app): ConversationRouter {
             return new ConversationRouter(
                 stateMachine: $app->make(StateMachine::class),
                 messenger: $app->make(BotMessenger::class),
                 formatter: $app->make(TransactionSummaryFormatter::class),
-                firestore: $app->make(FirestoreService::class),
+                store: $app->make(WalletStore::class),
                 extractText: $app->make(ExtractsText::class),
                 extractImage: $app->make(ExtractsImage::class),
                 syncSheet: $app->make(SyncsSheet::class),
                 suggestCategory: $app->make(SuggestCategory::class),
                 suggestLabels: $app->make(SuggestsLabels::class),
-                sessionTimeoutMinutes: (int) $app->make('config')->get('conversation.timeout_minutes', 15),
                 maxDataRetries: (int) $app->make('config')->get('conversation.max_data_retries', 3),
             );
         });

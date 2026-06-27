@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use App\Support\TextNormalizer;
 use Illuminate\Console\Command;
 
 /**
- * Deduplica labels no Firestore usando {@see TextNormalizer::fold()}.
+ * Deduplica labels no banco usando {@see TextNormalizer::fold()}.
  *
  * Após a migração para folding (F1), labels previamente criadas com
  * acentuação/capitalização diferentes coexistem como documentos
@@ -25,7 +25,7 @@ use Illuminate\Console\Command;
  *    (cria folded + deleta antigo).
  *  - Para grupos com count == 1 e `id === fold(name)`: inalterado.
  *
- * ISOLAMENTO: opera SOMENTE na coleção `labels/`. `categories/` NUNCA
+ * ISOLAMENTO: opera SOMENTE na tabela `labels`. A tabela `categories` NUNCA
  * é referenciada — categorias preservam acentos via `normalizeName()`.
  *
  * Uso:
@@ -36,19 +36,19 @@ final class DeduplicateLabels extends Command
 {
     protected $signature = 'labels:deduplicate {--dry-run : Exibe o que seria feito, sem alterar}';
 
-    protected $description = 'Deduplica labels no Firestore (folding acento-insensível)';
+    protected $description = 'Deduplica labels no banco (folding acento-insensível)';
 
     public function handle(): int
     {
-        /** @var FirestoreService $firestore */
-        $firestore = app(FirestoreService::class);
+        /** @var WalletStore $store */
+        $store = app(WalletStore::class);
 
-        $docs = $firestore->listAllLabels();
+        $docs = $store->listAllLabels();
 
         // Agrupa por fold(name).
         $groups = [];
         foreach ($docs as $doc) {
-            $name = (string) ($doc['data']['name'] ?? $doc['id']);
+            $name = $doc->name;
             $key = TextNormalizer::fold($name);
             if ($key === '') {
                 continue;
@@ -60,7 +60,7 @@ final class DeduplicateLabels extends Command
 
         /*
          |--------------------------------------------------------------------------
-         | Fase 1 — Coleta de ações (somente leitura; NÃO escreve no Firestore)
+         | Fase 1 — Coleta de ações (somente leitura; NÃO escreve no banco de dados)
          |--------------------------------------------------------------------------
          | A separação leitura/escrita em duas fases é essencial para que a
          | confirmação interativa funcione corretamente: se as mutações fossem
@@ -78,42 +78,42 @@ final class DeduplicateLabels extends Command
                 $lastUsedAt = null;
 
                 foreach ($group as $doc) {
-                    $useCount += (int) ($doc['data']['use_count'] ?? 0);
-                    $at = $doc['data']['last_used_at'] ?? null;
+                    $useCount += (int) ($doc->use_count ?? 0);
+                    $at = $doc->last_used_at ?? null;
                     if ($at !== null && ($lastUsedAt === null || $at > $lastUsedAt)) {
                         $lastUsedAt = $at;
                     }
                 }
 
                 // Mantém o nome do primeiro doc como display name.
-                $displayName = (string) ($group[0]['data']['name'] ?? $group[0]['id']);
+                $displayName = $group[0]->name;
 
                 $actions[] = [
-                    'id_atual' => implode(', ', array_column($group, 'id')),
+                    'id_atual' => implode(', ', array_map(fn ($d) => $d->folded_name, $group)),
                     'id_canonico' => $canonicalKey,
                     'use_count_somado' => $useCount,
                     'acao' => 'consolidar',
                     // Metadados para replay da mutação na fase 2.
                     'display_name' => $displayName,
                     'last_used_at' => $lastUsedAt,
-                    'ids' => array_column($group, 'id'),
+                    'ids' => array_map(fn ($d) => $d->folded_name, $group),
                 ];
-            } elseif (count($group) === 1 && $group[0]['id'] !== $canonicalKey) {
+            } elseif (count($group) === 1 && $group[0]->folded_name !== $canonicalKey) {
                 // Documento único, mas id não é o folded — renomeia.
                 $doc = $group[0];
-                $useCount = (int) ($doc['data']['use_count'] ?? 0);
-                $lastUsedAt = $doc['data']['last_used_at'] ?? null;
-                $displayName = (string) ($doc['data']['name'] ?? $doc['id']);
+                $useCount = (int) ($doc->use_count ?? 0);
+                $lastUsedAt = $doc->last_used_at ?? null;
+                $displayName = $doc->name;
 
                 $actions[] = [
-                    'id_atual' => $doc['id'],
+                    'id_atual' => $doc->folded_name,
                     'id_canonico' => $canonicalKey,
                     'use_count_somado' => $useCount,
                     'acao' => 'renomear',
                     // Metadados para replay da mutação na fase 2.
                     'display_name' => $displayName,
                     'last_used_at' => $lastUsedAt,
-                    'ids' => [$doc['id']],
+                    'ids' => [$doc->folded_name],
                 ];
             }
             // count == 1 && id == key → inalterado, sem ação.
@@ -142,7 +142,7 @@ final class DeduplicateLabels extends Command
 
         /*
          |--------------------------------------------------------------------------
-         | Fase 2 — Confirmação + Execução (mutação no Firestore)
+         | Fase 2 — Confirmação + Execução (mutação no banco de dados)
          |--------------------------------------------------------------------------
          | O `confirm()` PRECEDE a execução. Se o usuário responder "no",
          | nenhuma escrita ocorreu — o comando termina sem efeitos colaterais.
@@ -153,19 +153,19 @@ final class DeduplicateLabels extends Command
             return self::SUCCESS;
         }
 
-        // Fase 3 — Aplicação: itera as ações coletadas e escreve no Firestore.
+        // Fase 3 — Aplicação: itera as ações coletadas e escreve no banco.
         foreach ($actions as $action) {
-            // Cria (ou sobrescreve) o documento canônico.
-            $firestore->setLabelDoc($action['id_canonico'], [
+            // Cria (ou sobrescreve) o registro canônico.
+            $store->upsertLabel($action['id_canonico'], [
                 'name' => $action['display_name'],
                 'use_count' => $action['use_count_somado'],
                 'last_used_at' => $action['last_used_at'],
             ]);
 
             // Remove os ids antigos (exceto o próprio canônico, se coincidir).
-            foreach ($action['ids'] as $oldId) {
-                if ($oldId !== $action['id_canonico']) {
-                    $firestore->deleteLabelDoc($oldId);
+            foreach ($action['ids'] as $oldFoldedName) {
+                if ($oldFoldedName !== $action['id_canonico']) {
+                    $store->deleteLabelByFoldedName($oldFoldedName);
                 }
             }
         }

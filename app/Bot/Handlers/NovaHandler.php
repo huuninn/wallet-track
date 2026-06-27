@@ -10,7 +10,7 @@ use App\Conversation\WizardHandler;
 use App\Dto\SessionData;
 use App\Enums\ConversationState;
 use App\Enums\WizardStep;
-use App\Services\Google\FirestoreService;
+use App\Services\Store\WalletStore;
 use Illuminate\Support\Facades\Log;
 use SergiX44\Nutgram\Nutgram;
 
@@ -80,13 +80,13 @@ final class NovaHandler
 
         $chatId = (string) (int) $message->chat->id;
         $services = app();
-        $firestore = $services->make(FirestoreService::class);
+        $store = $services->make(WalletStore::class);
         $messenger = $services->make(BotMessenger::class);
         $cleaner = $services->make(SessionMessageCleaner::class);
 
         // Decisão #2: /nova durante AWAITING_CONFIRMATION → limpar sessão
         // anterior e iniciar wizard (descartar pendente). CT-025l.
-        $existingSession = $firestore->getSession($chatId);
+        $existingSession = $store->getSession($chatId);
         if ($existingSession !== null
             && ($existingSession['state'] ?? null) === ConversationState::AWAITING_CONFIRMATION->value
         ) {
@@ -99,7 +99,7 @@ final class NovaHandler
         $cleaner->cleanup($chatId, $existingSession);
 
         try {
-            $firestore->clearSession($chatId);
+            $store->clearSession($chatId);
         } catch (\Throwable $e) {
             // Best-effort: a limpeza pode falhar se já não existir; seguimos
             // mesmo assim. Log apenas para diagnóstico.
@@ -113,7 +113,7 @@ final class NovaHandler
         // que o ConversationRouter::route() detecta para delegar ao WizardHandler.
         // `source='wizard'` é usado no confirm para o SyncSheet.
         try {
-            $firestore->setSession(
+            $store->setSession(
                 $chatId,
                 new SessionData(
                     state: ConversationState::AWAITING_DATA->value,

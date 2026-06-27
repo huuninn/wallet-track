@@ -34,22 +34,4 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Cron endpoints (M9.9)
-    |--------------------------------------------------------------------------
-    |
-    | Token de autenticação server-to-server para endpoints cron
-    | (atualmente: `GET /cron/sync-pending`). O Cloud Scheduler envia este
-    | token no header `X-Cron-Token`; o middleware `VerifyCronToken`
-    | compara via `hash_equals` (timing-safe).
-    |
-    | **Em produção**: gerar com `openssl rand -hex 32` (256 bits de entropia)
-    | e armazenar no Secret Manager — NUNCA commitar o valor real.
-    */
-    'cron' => [
-        'secret_token' => env('CRON_SECRET_TOKEN'),
-    ],
-
 ];

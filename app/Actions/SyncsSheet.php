@@ -8,10 +8,10 @@ use App\Conversation\ConversationRouter;
 use App\Dto\TransactionData;
 
 /**
- * Abstração do sincronismo Firestore → Google Sheets (M7.3).
+ * Abstração do sincronismo WalletStore → Google Sheets (M7.3).
  *
  * Desacopla o {@see ConversationRouter} da implementação
- * concreta ({@see SyncSheet}, que orquestra SheetsService + FirestoreService),
+ * concreta ({@see SyncSheet}, que orquestra SheetsService + WalletStore),
  * permitindo que os testes do Router substituam por stubs determinísticos.
  *
  * O contrato da implementação concreta é preservado:
@@ -25,11 +25,11 @@ use App\Dto\TransactionData;
 interface SyncsSheet
 {
     /**
-     * Espelha a transação na planilha e atualiza o status de sync no Firestore.
+     * Espelha a transação na planilha e atualiza o status de sync no WalletStore.
      *
      * @param  TransactionData  $dto  DTO completo (amount/type já validados).
-     * @param  string  $firestoreId  ID do documento em `transactions/`.
+     * @param  int  $txId  ID da transação no banco de dados.
      * @return bool `true` em sucesso, `false` em falha esperada de I/O.
      */
-    public function handle(TransactionData $dto, string $firestoreId): bool;
+    public function handle(TransactionData $dto, int $txId): bool;
 }

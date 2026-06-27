@@ -7,15 +7,18 @@ namespace Tests\Feature\Commands;
 use App\Bot\Handlers\CategoriasHandler;
 use App\Bot\Messaging\BotMessenger;
 use App\Bot\Messaging\InMemoryBotMessenger;
+use App\Dto\SessionData;
 use App\Enums\ConversationState;
-use App\Services\Google\FirestoreService;
-use App\Services\Google\InMemoryFirestoreGateway;
+use App\Models\Category;
+use App\Services\Store\WalletStore;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use SergiX44\Nutgram\Nutgram;
 use SergiX44\Nutgram\Telegram\Types\Chat\Chat;
 use SergiX44\Nutgram\Telegram\Types\Message\Message;
+use Tests\Support\WithWalletStore;
 use Tests\TestCase;
 
 /**
@@ -32,13 +35,14 @@ use Tests\TestCase;
 #[CoversClass(CategoriasHandler::class)]
 class CategoriasHandlerTest extends TestCase
 {
+    use RefreshDatabase;
+    use WithWalletStore;
+
     private const string CHAT_ID = '12345';
 
     private const int CHAT_ID_INT = 12345;
 
-    private InMemoryFirestoreGateway $gateway;
-
-    private FirestoreService $firestore;
+    private WalletStore $store;
 
     private InMemoryBotMessenger $messenger;
 
@@ -46,11 +50,11 @@ class CategoriasHandlerTest extends TestCase
     {
         parent::setUp();
 
-        $this->gateway = new InMemoryFirestoreGateway;
-        $this->firestore = new FirestoreService($this->gateway);
+        $this->setUpWalletStore();
+
         $this->messenger = new InMemoryBotMessenger;
 
-        $this->app->instance(FirestoreService::class, $this->firestore);
+        $this->bindStoreToContainer();
         $this->app->instance(BotMessenger::class, $this->messenger);
     }
 
@@ -73,7 +77,7 @@ class CategoriasHandlerTest extends TestCase
     }
 
     /**
-     * Popula a coleção `categories` com a configuração dada.
+     * Popula a tabela `categories` com a configuração dada.
      *
      * @param  list<array{display_name: string, use_count?: int, is_default?: bool}>  $categories
      */
@@ -81,12 +85,12 @@ class CategoriasHandlerTest extends TestCase
     {
         foreach ($categories as $cat) {
             $name = mb_strtolower($cat['display_name']);
-            $this->gateway->setDocument(FirestoreService::COLLECTION_CATEGORIES, $name, [
+            Category::factory()->create([
+                'slug' => $name,
                 'display_name' => $cat['display_name'],
                 'default_type' => 'expense',
                 'use_count' => (int) ($cat['use_count'] ?? 0),
                 'is_default' => (bool) ($cat['is_default'] ?? false),
-                'created_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
             ]);
         }
     }
@@ -217,21 +221,16 @@ class CategoriasHandlerTest extends TestCase
         // CT-029f: handler é stateless — não toca a sessão.
         $this->seedCategories([['display_name' => 'Outros', 'is_default' => true]]);
 
-        $this->gateway->setDocument(
-            FirestoreService::COLLECTION_SESSIONS,
-            self::CHAT_ID,
-            [
-                'state' => ConversationState::AWAITING_DATA->value,
-                'awaiting_field' => 'amount',
-                'draft' => ['description' => 'Almoço'],
-                'updated_at' => gmdate('Y-m-d\TH:i:s.u\Z'),
-            ],
-        );
+        $this->store->setSession(self::CHAT_ID, new SessionData(
+            state: ConversationState::AWAITING_DATA->value,
+            awaitingField: 'amount',
+            draft: ['description' => 'Almoço'],
+        ));
 
         $bot = $this->makeBotMock();
         (new CategoriasHandler)($bot);
 
-        $session = $this->firestore->getSession(self::CHAT_ID);
+        $session = $this->store->getSession(self::CHAT_ID);
         $this->assertNotNull($session, 'Sessão deve permanecer após /categorias (CT-029f)');
         $this->assertSame('awaiting_data', $session['state']);
         $this->assertSame('amount', $session['awaiting_field']);
