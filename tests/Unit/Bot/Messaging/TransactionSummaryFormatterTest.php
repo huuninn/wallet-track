@@ -243,8 +243,8 @@ class TransactionSummaryFormatterTest extends TestCase
 
         $this->assertStringContainsString('📝 <b>Observações:</b>', $out);
         $this->assertStringContainsString('Cliente: João, mesa 5', $out);
-        // Observações devem aparecer após a Data (última linha fixa).
-        $this->assertStringContainsString("📅 <b>Data:</b> 15/06/2026\n📝 <b>Observações:</b>", $out);
+        // Observações devem aparecer antes da Data (nova ordem: obs → items → data).
+        $this->assertStringContainsString("📝 <b>Observações:</b> Cliente: João, mesa 5\n📅 <b>Data:</b> 15/06/2026", $out);
     }
 
     public function test_summary_omits_observations_when_null(): void
@@ -545,5 +545,245 @@ class TransactionSummaryFormatterTest extends TestCase
 
         $this->assertStringNotContainsString('#C&A', $out);
         $this->assertStringContainsString('#C&amp;A', $out);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | M-ITENS-4 — Testes de items no summary() e fieldChangeMessage
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_summary_with_empty_items_omits_items_block(): void
+    {
+        // CT-150 / AC-029: items=[] → bloco "🛒 Itens:" NÃO aparece.
+        $dto = new TransactionData(
+            description: 'Aluguel',
+            amount: 1500.00,
+            type: 'expense',
+            category: 'Moradia',
+            date: '2026-06-15',
+            items: [],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringNotContainsString('🛒 <b>Itens:</b>', $out);
+    }
+
+    public function test_summary_with_single_complete_item(): void
+    {
+        // CT-151 / AC-053: 1 item completo → formato PT-BR com R$.
+        $dto = new TransactionData(
+            description: 'Mercado',
+            amount: 65.80,
+            type: 'expense',
+            category: 'Alimentação',
+            date: '2026-06-15',
+            items: [
+                ['name' => 'Arroz', 'qty' => 2.0, 'unitPrice' => 32.90, 'subtotal' => 65.80],
+            ],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('🛒 <b>Itens:</b>', $out);
+        $this->assertStringContainsString('1. Arroz (x2 — R$ 32,90 = R$ 65,80)', $out);
+    }
+
+    public function test_summary_with_name_only_item(): void
+    {
+        // Item só-nome → sem parênteses.
+        $dto = new TransactionData(
+            description: 'Mercado',
+            amount: 10.00,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            items: [
+                ['name' => 'Detergente', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('🛒 <b>Itens:</b>', $out);
+        $this->assertStringContainsString('1. Detergente', $out);
+        // Não deve ter parênteses de qty/preço.
+        $this->assertStringNotContainsString('Detergente (', $out);
+    }
+
+    public function test_summary_with_decimal_qty_uses_comma(): void
+    {
+        // CT-152 / AC-054: qty decimal → vírgula PT-BR.
+        $dto = new TransactionData(
+            description: 'Queijo',
+            amount: 15.00,
+            type: 'expense',
+            category: 'Alimentação',
+            date: '2026-06-15',
+            items: [
+                ['name' => 'Queijo', 'qty' => 1.5, 'unitPrice' => 10.00, 'subtotal' => 15.00],
+            ],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('1. Queijo (x1,5 — R$ 10,00 = R$ 15,00)', $out);
+    }
+
+    public function test_summary_with_exactly_10_items_shows_all_without_more_message(): void
+    {
+        // CT-134 / AC-027: 10 itens → todos exibidos, sem "... e mais".
+        $items = [];
+        for ($i = 1; $i <= 10; $i++) {
+            $items[] = ['name' => "Item {$i}", 'qty' => 1.0, 'unitPrice' => (float) $i, 'subtotal' => (float) $i];
+        }
+
+        $dto = new TransactionData(
+            description: 'Compra grande',
+            amount: 55.00,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            items: $items,
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('🛒 <b>Itens:</b>', $out);
+        // Todos os 10 numerados.
+        $this->assertStringContainsString('1.', $out);
+        $this->assertStringContainsString('10.', $out);
+        // Sem mensagem de "e mais".
+        $this->assertStringNotContainsString('e mais', $out);
+    }
+
+    public function test_summary_with_11_items_shows_10_plus_singular_more(): void
+    {
+        // CT-135 / AC-028: 11 itens → 10 + "... e mais 1 item." (singular).
+        $items = [];
+        for ($i = 1; $i <= 11; $i++) {
+            $items[] = ['name' => "Item {$i}", 'qty' => 1.0, 'unitPrice' => (float) $i, 'subtotal' => (float) $i];
+        }
+
+        $dto = new TransactionData(
+            description: 'Compra grande',
+            amount: 66.00,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            items: $items,
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('🛒 <b>Itens:</b>', $out);
+        $this->assertStringContainsString('<i>... e mais 1 item.</i>', $out);
+        // Item 11 não aparece individualmente.
+        $this->assertStringNotContainsString('11.', $out);
+    }
+
+    public function test_summary_with_12_items_shows_10_plus_plural_more(): void
+    {
+        // CT-136 / AC-026: 12 itens → 10 + "... e mais 2 itens." (plural).
+        $items = [];
+        for ($i = 1; $i <= 12; $i++) {
+            $items[] = ['name' => "Item {$i}", 'qty' => 1.0, 'unitPrice' => (float) $i, 'subtotal' => (float) $i];
+        }
+
+        $dto = new TransactionData(
+            description: 'Compra grande',
+            amount: 78.00,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            items: $items,
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringContainsString('🛒 <b>Itens:</b>', $out);
+        $this->assertStringContainsString('<i>... e mais 2 itens.</i>', $out);
+    }
+
+    public function test_summary_escapes_html_in_item_name(): void
+    {
+        // CT-149 / AC-045: name com HTML/JS → escapado no Telegram.
+        $dto = new TransactionData(
+            description: 'Teste XSS',
+            amount: 10.00,
+            type: 'expense',
+            category: 'Outros',
+            date: '2026-06-15',
+            items: [
+                ['name' => '<script>alert(1)</script>', 'qty' => 1.0, 'unitPrice' => 10.00, 'subtotal' => 10.00],
+            ],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        $this->assertStringNotContainsString('<script>', $out);
+        $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $out);
+    }
+
+    public function test_summary_items_sorted_same_as_sheets(): void
+    {
+        // CT-133 / AC-025: ordenação consistente com Sheets (subtotal ASC + fallback).
+        $dto = new TransactionData(
+            description: 'Mercado',
+            amount: 90.00,
+            type: 'expense',
+            category: 'Alimentação',
+            date: '2026-06-15',
+            items: [
+                ['name' => 'Item P', 'qty' => 1.0, 'unitPrice' => 20.00, 'subtotal' => 20.00],
+                ['name' => 'Item Q', 'qty' => 1.0, 'unitPrice' => 5.00, 'subtotal' => 5.00],
+                ['name' => 'Item R', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+            ],
+        );
+
+        $out = $this->formatter->summary($dto);
+
+        // Subtotal ASC: Q (5.00) antes de P (20.00), sem-subtotal R ao final.
+        $this->assertStringContainsString('1. Item Q (x1 — R$ 5,00 = R$ 5,00)', $out);
+        $this->assertStringContainsString('2. Item P (x1 — R$ 20,00 = R$ 20,00)', $out);
+        $this->assertStringContainsString('3. Item R', $out);
+    }
+
+    public function test_format_field_value_items_returns_count(): void
+    {
+        // CT-158: formatFieldValue('items', [...]) → "3 itens".
+        $items = [
+            ['name' => 'A', 'qty' => 1.0, 'unitPrice' => 10.00, 'subtotal' => 10.00],
+            ['name' => 'B', 'qty' => 2.0, 'unitPrice' => 5.00, 'subtotal' => 10.00],
+            ['name' => 'C', 'qty' => null, 'unitPrice' => null, 'subtotal' => null],
+        ];
+
+        // Testamos via fieldChangeMessage que usa formatFieldValue internamente.
+        $msg = $this->formatter->fieldChangeMessage('items', [], $items);
+
+        $this->assertStringContainsString('sem itens', $msg);
+        $this->assertStringContainsString('3 itens', $msg);
+    }
+
+    public function test_format_field_value_empty_items_returns_sem_itens(): void
+    {
+        $msg = $this->formatter->fieldChangeMessage('items', ['some old'], []);
+
+        $this->assertStringContainsString('sem itens', $msg);
+    }
+
+    public function test_field_change_verb_for_items_is_alterados(): void
+    {
+        // CT-158: verbo "alterados" para items.
+        $msg = $this->formatter->fieldChangeMessage('items', [], [
+            ['name' => 'A', 'qty' => 1.0, 'unitPrice' => 10.00, 'subtotal' => 10.00],
+        ]);
+
+        $this->assertStringContainsString('alterados', $msg);
+        $this->assertStringContainsString('🛒', $msg);
+        $this->assertStringContainsString('Itens', $msg);
+        $this->assertStringContainsString('de', $msg);
+        $this->assertStringContainsString('para', $msg);
     }
 }

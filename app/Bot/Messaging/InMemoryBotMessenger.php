@@ -53,6 +53,14 @@ final class InMemoryBotMessenger implements BotMessenger
     /** @var array<int|string, list<array{message_id: int}>> */
     public array $fieldPickers = [];
 
+    /**
+     * Callback_data dos botões do último picker enviado por chat.
+     * Espelha a estrutura do NutgramBotMessenger para asserção em testes (CT-124).
+     *
+     * @var array<int|string, list<string>>
+     */
+    public array $fieldPickerCallbacks = [];
+
     /** @var array<int|string, list<array{message_id: int, text: string}>> */
     public array $editedMessages = [];
 
@@ -146,6 +154,17 @@ final class InMemoryBotMessenger implements BotMessenger
         $id = $this->nextMessageId++;
         $this->fieldPickers[$chatId][] = ['message_id' => $id];
         $this->sentTexts[$chatId][] = ['message_id' => $id, 'text' => '✏️ Qual campo você quer editar?'];
+
+        // Espelha os callbacks do NutgramBotMessenger para asserção em testes.
+        $this->fieldPickerCallbacks[$chatId] = [
+            'edit:amount',
+            'edit:type',
+            'edit:date',
+            'edit:description',
+            'edit:category',
+            'edit:observations',
+            'edit:items',
+        ];
 
         return $id;
     }

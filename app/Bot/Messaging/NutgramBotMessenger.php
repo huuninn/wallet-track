@@ -104,6 +104,9 @@ final class NutgramBotMessenger implements BotMessenger
             ->addRow(
                 InlineKeyboardButton::make('🏷 Categoria', callback_data: 'edit:category'),
                 InlineKeyboardButton::make('📝 Observações', callback_data: 'edit:observations'),
+            )
+            ->addRow(
+                InlineKeyboardButton::make('🛒 Itens', callback_data: 'edit:items'),
             );
 
         return $this->messageId(

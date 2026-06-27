@@ -7,6 +7,7 @@ namespace App\Bot\Messaging;
 use App\Dto\TransactionData;
 use App\Services\Google\SheetsService;
 use App\Support\CategoryEmojiMap;
+use App\Support\ItemsSorter;
 
 /**
  * Formatação humanizada do resumo de um {@see TransactionData} para exibição
@@ -23,6 +24,9 @@ use App\Support\CategoryEmojiMap;
  */
 final class TransactionSummaryFormatter
 {
+    public function __construct(
+        private readonly ItemsSorter $sorter = new ItemsSorter,
+    ) {}
     /**
      * Map type interno → rótulo em PT-BR (espelha {@see SheetsService}).
      */
@@ -68,6 +72,7 @@ final class TransactionSummaryFormatter
         'description' => '💸',
         'category' => '🏷',
         'observations' => '📝',
+        'items' => '🛒',
     ];
 
     private const array FIELD_LABELS_DISPLAY = [
@@ -77,6 +82,7 @@ final class TransactionSummaryFormatter
         'description' => 'Descrição',
         'category' => 'Categoria',
         'observations' => 'Observações',
+        'items' => 'Itens',
     ];
 
     private const array FIELD_CHANGE_VERB = [
@@ -86,6 +92,7 @@ final class TransactionSummaryFormatter
         'description' => 'alterada',
         'category' => 'alterada',
         'observations' => 'alteradas',
+        'items' => 'alterados',
     ];
 
     /**
@@ -118,11 +125,18 @@ final class TransactionSummaryFormatter
             $lines[] = "🏷️ <b>Labels:</b> {$labelsStr}";
         }
 
-        $lines[] = "{$E['date']} <b>{$L['date']}:</b> ".$this->formatDate($dto->date);
-
         if ($dto->observations !== null && $dto->observations !== '') {
             $lines[] = "{$E['observations']} <b>{$L['observations']}:</b> ".$this->escape($dto->observations);
         }
+
+        // Bloco de items (após observações, antes da data).
+        $itemsBlock = $this->formatItemsBlock($dto->items);
+        if ($itemsBlock !== '') {
+            $lines[] = '';
+            $lines[] = $itemsBlock;
+        }
+
+        $lines[] = "{$E['date']} <b>{$L['date']}:</b> ".$this->formatDate($dto->date);
 
         return implode("\n", $lines);
     }
@@ -355,6 +369,7 @@ final class TransactionSummaryFormatter
             'amount' => $this->formatAmount($value !== null && is_numeric($value) ? (float) $value : null),
             'type' => $this->formatType(is_string($value) ? $value : null),
             'date' => $this->formatDate(is_string($value) ? $value : null),
+            'items' => $this->formatItemsCount($value),
             default => $this->escape(is_string($value) && $value !== '' ? $value : null),
         };
     }
@@ -369,5 +384,112 @@ final class TransactionSummaryFormatter
         }
 
         return htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    /**
+     * Monta o bloco HTML de items para o resumo do Telegram.
+     *
+     * Trunca em ITEMS_MAX_DISPLAY (10), exibindo "... e mais N itens" para o resto.
+     * Ordenação por subtotal crescente (mesma regra do Sheets — D-P4=c).
+     *
+     * Escapa HTML em todos os nomes (defesa contra XSS/injeção no Telegram).
+     *
+     * @param  list<array{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}>  $items
+     */
+    private function formatItemsBlock(array $items): string
+    {
+        if ($items === []) {
+            return '';
+        }
+
+        $ordered = $this->sorter->sort($items);
+        $display = array_slice($ordered, 0, TransactionData::ITEMS_MAX_DISPLAY);
+        $remaining = count($ordered) - count($display);
+
+        $lines = ['🛒 <b>Itens:</b>'];
+        $i = 1;
+        foreach ($display as $item) {
+            $lines[] = $i.'. '.$this->formatItemLineHtml($item);
+            $i++;
+        }
+
+        if ($remaining > 0) {
+            $noun = $remaining === 1 ? 'item' : 'itens';
+            $lines[] = "<i>... e mais {$remaining} {$noun}.</i>";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Formata UMA linha de item para o Telegram (HTML).
+     *
+     * 4 variantes (mesma lógica do SheetsService::formatItemLine):
+     *   1. qty + unitPrice + subtotal: "Nome (x2 — R$ 32,90 = R$ 65,80)"
+     *   2. unitPrice + subtotal (sem qty): "Nome (R$ 32,90 = R$ 65,80)"
+     *   3. Só subtotal: "Nome (R$ 65,80)"
+     *   4. Só name: "Nome"
+     *
+     * Diferente do SheetsService: aplica htmlspecialchars no name (escape XSS
+     * para Telegram parse_mode=HTML), e NÃO aplica escapeFormula (fórmulas não
+     * são interpretadas pelo Telegram).
+     *
+     * qty inteiro → sem decimais; qty decimal → vírgula PT-BR.
+     * unit/sub → number_format com vírgula decimal e ponto de milhar.
+     * Travessão — (U+2014).
+     *
+     * @param  array{name:string,qty:float|null,unitPrice:float|null,subtotal:float|null}  $item
+     */
+    private function formatItemLineHtml(array $item): string
+    {
+        $name = htmlspecialchars($item['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        $qty = $item['qty'];
+        $unit = $item['unitPrice'];
+        $sub = $item['subtotal'];
+
+        if ($qty !== null && $unit !== null && $sub !== null) {
+            $qtyStr = ($qty == (int) $qty)
+                ? (string) (int) $qty
+                : rtrim(rtrim(number_format($qty, 2, ',', ''), '0'), ',');
+
+            return sprintf(
+                '%s (x%s — R$ %s = R$ %s)',
+                $name,
+                $qtyStr,
+                number_format($unit, 2, ',', '.'),
+                number_format($sub, 2, ',', '.'),
+            );
+        }
+
+        if ($unit !== null && $sub !== null) {
+            return sprintf(
+                '%s (R$ %s = R$ %s)',
+                $name,
+                number_format($unit, 2, ',', '.'),
+                number_format($sub, 2, ',', '.'),
+            );
+        }
+
+        if ($sub !== null) {
+            return sprintf('%s (R$ %s)', $name, number_format($sub, 2, ',', '.'));
+        }
+
+        return $name;
+    }
+
+    /**
+     * Formata a contagem de items para mensagem de feedback de alteração.
+     *
+     * Ex.: 3 itens, 1 item, sem itens.
+     */
+    private function formatItemsCount(mixed $value): string
+    {
+        if (! is_array($value) || $value === []) {
+            return 'sem itens';
+        }
+        $n = count($value);
+
+        return $n.' '.($n === 1 ? 'item' : 'itens');
     }
 }
