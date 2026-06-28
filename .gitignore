@@ -71,9 +71,6 @@ Thumbs.db
 /docs/infra-pessoal.md
 /docs/planos/
 
-# --- Docker local (volumes/overrides não oficiais) ---
-docker-compose.override.yml
-
 # --- Build artifacts ---
 dist/
 build/

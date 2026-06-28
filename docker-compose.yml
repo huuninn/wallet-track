@@ -74,6 +74,9 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-walletpass}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      # Mesmo padrão dos overrides de DB/Redis: força o path do container,
+      # independente do .env do host.
+      GOOGLE_SERVICE_ACCOUNT_JSON_PATH: /app/wallet-track-499719-54b725c0bb5d.json
     healthcheck:
       test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 8080) ? 0 : 1);'"]
       interval: 15s
