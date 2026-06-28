@@ -173,6 +173,57 @@ final class ConversationRouter
     }
 
     /**
+     * Reseta o estado mutável por-request para isolar conversas entre
+     * {@see chat_id}s distintos no mesmo worker Octane long-lived.
+     *
+     * Este método é chamado pelo listener
+     * {@see \App\Listeners\ResetConversationRouter} a cada evento
+     * {@see \Laravel\Octane\Events\RequestReceived}, garantindo que
+     * nenhum estado de uma request "vaze" para a request seguinte
+     * dentro do mesmo processo PHP.
+     *
+     * **O que é resetado:**
+     *
+     *  1. {@see ConversationRouter::$wizardHandler} — o handler do wizard
+     *     `/nova` é lazy e carrega referência ao `ConversationRouter`
+     *     (self), ao `WalletStore` (stateless) e ao `BotMessenger`
+     *     (stateless). Instâncias de wizard do request anterior são
+     *     descartadas para evitar que o wizard de um chat_id interfira
+     *     no wizard de outro.
+     *  2. {@see ConversationRouter::$cachedLabelCatalog} — o cache em
+     *     memória do catálogo de labels (top-N do usuário) é populado
+     *     por `fetchLabelCatalog()` e reutilizado dentro do mesmo
+     *     request. Como o catálogo é específico por `chat_id` (dados
+     *     no banco de dados/Redis são segregados por `chat_id`), o cache
+     *     deve ser invalidado a cada request para evitar servir labels
+     *     de um usuário para outro.
+     *
+     * **O que NÃO é resetado:**
+     *
+     *  - Dependências injetadas via constructor ({@see StateMachine},
+     *    {@see WalletStore}, {@see BotMessenger}, {@see ExtractsText},
+     *    {@see ExtractsImage}, {@see SyncsSheet},
+     *    {@see SuggestCategory}, {@see SuggestsLabels}) — estas são
+     *    stateless (apenas orquestram chamadas a serviços externos)
+     *    ou têm estado próprio isolado por `chat_id` via Redis.
+     *  - {@see ConversationRouter::$maxDataRetries} — config imutável
+     *    injetada via constructor.
+     *  - {@see ConversationRouter::$itemsParser} — parser stateless,
+     *    sem estado interno acumulativo.
+     *
+     * **Atenção ao adicionar novas propriedades mutáveis:**
+     * se uma propriedade nova for adicionada a esta classe no futuro
+     * e ela mantiver estado entre requests (cache, lazy-loading,
+     * acumuladores), **este método DEVE ser atualizado** para incluir
+     * o reset dessa propriedade. Revise esta docblock como checklist.
+     */
+    public function resetState(): void
+    {
+        $this->wizardHandler = null;
+        $this->cachedLabelCatalog = null;
+    }
+
+    /**
      * Expõe o limite de retentativas configurado (W-C — M-ITENS-7).
      *
      * Usado pelo {@see WizardHandler} que precisa compartilhar o mesmo
@@ -722,7 +773,7 @@ final class ConversationRouter
      *  2. Imutável: devolve um novo {@see TransactionData} (helper
      *     `withCategory`).
      *
-     * Falhas da heurística (ex.: Firestore indisponível para buscar
+     * Falhas da heurística (ex.: banco de dados indisponível para buscar
      * categorias) são capturadas localmente — uma exceção aqui
      * não pode impedir o usuário de confirmar uma transação. O log
      * warning fica disponível para diagnóstico.
@@ -846,8 +897,8 @@ final class ConversationRouter
     /**
      * Asserte que a transição de estado é legal antes de gravar (W-2 da revisão).
      *
-     * Chamado antes de cada `firestore->setSession(state: $newState)` e
-     * `firestore->clearSession()` (cuja transição implícita é `* → IDLE`).
+     * Chamado antes de cada `repositório->setSession(state: $newState)` e
+     * `repositório->clearSession()` (cuja transição implícita é `* → IDLE`).
      * Lança `LogicException` se a transição for ilegal — bug de programação,
      * nunca input de usuário.
      *
@@ -1096,7 +1147,7 @@ final class ConversationRouter
             return;
         }
 
-        // 1. Persiste no Firestore. saveTransaction exige amount+type (já
+        // 1. Persiste no banco de dados. saveTransaction exige amount+type (já
         // garantido por isComplete), mas defensivamente capturamos erros
         // inesperados — o webhook controller também capturaria, mas
         // queremos responder com toast amigável antes.

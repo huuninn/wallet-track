@@ -283,7 +283,6 @@ cmd_secrets() {
           CRON_SECRET_TOKEN: $cron,
           GOOGLE_SERVICE_ACCOUNT_JSON: $sa_json,
           GOOGLE_CLOUD_PROJECT_ID: "wallet-track-499719",
-          FIRESTORE_DATABASE_ID: "wallet-track-db",
           GOOGLE_SHEETS_SPREADSHEET_ID: "1rGNN0XOOYwDvMYDpFwU1a2ozQXPhAk8P2l8Xjnk9a14",
           GOOGLE_SHEETS_SHEET_NAME: "Transações",
           GOOGLE_SHEETS_CATEGORIES_SHEET_NAME: "Categorias"
@@ -292,7 +291,7 @@ cmd_secrets() {
           --replication-policy=automatic \
           --data-file=-
 
-        ok "Secret '$secret_name' criado com sucesso (12 chaves)."
+        ok "Secret '$secret_name' criado com sucesso (11 chaves)."
     fi
     log "Secret consolidado provisionado."
 }
@@ -342,18 +341,6 @@ cmd_iam() {
         ok "Permissão secretAccessor concedida para '$secret_name'."
     done
 
-    # Datastore user (Firestore em Native mode)
-    log "Concedendo roles/datastore.user (Firestore)..."
-    if gcloud projects get-iam-policy "$PROJECT_ID" 2>/dev/null \
-        | grep -q "serviceAccount:${RUN_SA}.*roles/datastore.user"; then
-        ok "Permissão datastore.user já existe — pulando."
-    else
-        gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-            --member="serviceAccount:${RUN_SA}" \
-            --role="roles/datastore.user" \
-            --quiet
-        ok "Permissão datastore.user concedida."
-    fi
 
     # Cloud Run invoker (necessário para Cloud Scheduler chamar o serviço)
     # Com --allow-unauthenticated, esta permissão é opcional — mas documentamos.

@@ -18,7 +18,6 @@ use Laravel\Octane\Listeners\EnsureUploadedFilesAreValid;
 use Laravel\Octane\Listeners\EnsureUploadedFilesCanBeMoved;
 use Laravel\Octane\Listeners\FlushOnce;
 use Laravel\Octane\Listeners\FlushTemporaryContainerInstances;
-use Laravel\Octane\Listeners\FlushUploadedFiles;
 use Laravel\Octane\Listeners\ReportException;
 use Laravel\Octane\Listeners\StopWorkerIfNecessary;
 use Laravel\Octane\Octane;
@@ -38,7 +37,7 @@ return [
     |
     */
 
-    'server' => env('OCTANE_SERVER', 'roadrunner'),
+    'server' => env('OCTANE_SERVER', 'frankenphp'),
 
     /*
     |--------------------------------------------------------------------------
@@ -68,12 +67,14 @@ return [
         WorkerStarting::class => [
             EnsureUploadedFilesAreValid::class,
             EnsureUploadedFilesCanBeMoved::class,
+            \App\Listeners\LogOctaneWorkerBooted::class,
         ],
 
         RequestReceived::class => [
             ...Octane::prepareApplicationForNextOperation(),
             ...Octane::prepareApplicationForNextRequest(),
-            //
+            \App\Listeners\ResetNutgramState::class,
+            \App\Listeners\ResetConversationRouter::class,
         ],
 
         RequestHandled::class => [
@@ -81,7 +82,8 @@ return [
         ],
 
         RequestTerminated::class => [
-            // FlushUploadedFiles::class,
+            // FlushUploadedFiles removido: o bot não processa file uploads via Laravel.
+            // Reativar (e reimportar) apenas se houver upload de arquivos no futuro.
         ],
 
         TaskReceived::class => [
@@ -105,8 +107,8 @@ return [
         OperationTerminated::class => [
             FlushOnce::class,
             FlushTemporaryContainerInstances::class,
-            // DisconnectFromDatabases::class,
-            // CollectGarbage::class,
+            DisconnectFromDatabases::class,
+            CollectGarbage::class,
         ],
 
         WorkerErrorOccurred::class => [
@@ -132,6 +134,14 @@ return [
 
     'warm' => [
         ...Octane::defaultServicesToWarm(),
+        \Illuminate\Database\Connection::class,
+        \Illuminate\Redis\Connections\Connection::class,
+        \SergiX44\Nutgram\Nutgram::class,
+        // Pré-resolvido para performance (dependências: StateMachine, WalletStore, BotMessenger,
+        // ExtractsText/Image, SyncsSheet, SuggestCategory, SuggestsLabels).
+        // Em dev sem credenciais Google, a resolução pode falhar se alguma Action depende delas.
+        \App\Conversation\ConversationRouter::class,
+        \Illuminate\Cache\Repository::class,
     ],
 
     'flush' => [

@@ -1,6 +1,6 @@
 # Wallet Track
 
-> Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extração por IA, validação, confirmação inline e gravação em Google Sheets + Firestore.
+> Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extração por IA, validação, confirmação inline e gravação em Google Sheets + MariaDB.
 
 ![Status](https://img.shields.io/badge/status-em%20planejamento-yellow)
 ![Stack](https://img.shields.io/badge/stack-PHP%208.4%20%2B%20Laravel%2013-blue)
@@ -15,7 +15,7 @@ Assistente pessoal de registro financeiro operado via Telegram. Você envia:
 - **Texto livre** — *"Paguei R$ 47,50 no almoço de hoje"* — e o bot extrai tipo, valor, data, categoria, labels via **DeepSeek**.
 - **Foto de nota fiscal** — e o bot lê com **Gemini 2.5 Flash** (OCR multimodal) e extrai os campos.
 
-O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados são persistidos em **Google Sheets** (visualização) e **Firestore** (fonte de verdade + heurística de labels).
+O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados são persistidos em **Google Sheets** (visualização) e **MariaDB** (fonte de verdade + heurística de labels).
 
 ### Funcionalidades
 
@@ -26,7 +26,7 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 - ✅ Wizard manual `/nova` (fallback determinístico, 6 etapas)
 - ✅ Comandos: `/start`, `/help`, `/nova`, `/cancelar`, `/ultimos [n]`, `/categorias`, `/sync`
 - ✅ Sincronização pendente via Cloud Scheduler (cron a cada 5 min)
-- ✅ Notificação de falha definitiva única (campo `notified_at` no Firestore)
+- ✅ Notificação de falha definitiva única (campo `notified_at` no banco de dados)
 - ✅ Timeout de sessão (15 min)
 - ✅ Idempotência de confirmação
 - ✅ Whitelist de chat_id (uso pessoal, 1 usuário)
@@ -43,7 +43,7 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 | IA Texto | DeepSeek `deepseek-v4-flash` (via `openai-php/client`) |
 | IA Imagem | Gemini `gemini-2.5-flash` (via `google-gemini-php/client`) |
 | Sheets | Google Sheets API + Service Account |
-| Persistência | Cloud Firestore (Native mode) |
+| Persistência | MariaDB 11.8 |
 | Deploy | Google Cloud Run (512MB, 1 vCPU, timeout 300s) |
 | Agendamento | Cloud Scheduler (cron 5min) |
 | Logs | Cloud Logging (stderr estruturado) |
@@ -109,13 +109,13 @@ Antes de iniciar a implementação (M0), o usuário precisa providenciar os segu
 | Google Cloud Project ID | https://console.cloud.google.com |
 | Google Service Account JSON | IAM → Service Accounts → Create Key |
 | Google Sheet ID | URL da planilha (`/d/<ID>/edit`) |
-| Firestore Database | Native mode, no mesmo projeto GCP |
+| MariaDB Database | Serviço de banco de dados relacional |
 
 ### Configurações GCP
 
 - Projeto com billing habilitado
-- APIs habilitadas: Cloud Run, Cloud Build, Cloud Scheduler, Firestore, Secret Manager, Sheets
-- Service Account com permissões de Sheets Editor (nível da planilha) + Cloud Datastore User (nível do projeto)
+- APIs habilitadas: Cloud Run, Cloud Build, Cloud Scheduler, Secret Manager, Sheets
+- Service Account com permissões de Sheets Editor (nível da planilha) + Acesso ao banco de dados MariaDB configurado
 - Planilha Google Sheets criada e **compartilhada** com o email da Service Account
 
 ### Ambiente local
@@ -172,7 +172,7 @@ php artisan test
 │       ├─ Texto:  DeepSeek  → JSON → valida → confirma       │
 │       └─ Imagem: Gemini    → JSON → valida → confirma       │
 │                    ↓                                        │
-│     Confirmação: Firestore (sync_status=pending) + Sheets   │
+│     Confirmação: banco de dados (sync_status=pending) + Sheets   │
 │                    ↓                                        │
 │     Cron 5min: recupera pendentes (sync_status=synced)     │
 └─────────────────────────────────────────────────────────────┘

@@ -50,7 +50,7 @@ final readonly class ConversationInput
         /**
          * ID do chat Telegram (de onde veio o update).
          * Aceita int|string para compatibilidade com o gateway (que usa
-         * string como id de documento Firestore).
+         * string como ID de registro no banco de dados).
          */
         public int|string $chatId,
         public InputKind $kind,

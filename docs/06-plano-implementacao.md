@@ -1,5 +1,7 @@
 # 06 — Plano de Implementação
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > **Plano técnico** aprovado pelo usuário. Decompõe as especificações + plano de testes em **11 milestones (M0–M10)** com dependências, tarefas, riscos, critérios de aceitação e estimativa de esforço (~27 dev-dias).
 
 ---

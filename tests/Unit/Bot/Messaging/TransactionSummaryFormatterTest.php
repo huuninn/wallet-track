@@ -6,6 +6,8 @@ namespace Tests\Unit\Bot\Messaging;
 
 use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Dto\TransactionData;
+use App\Models\Transaction;
+use Illuminate\Support\Collection;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
@@ -32,16 +34,46 @@ class TransactionSummaryFormatterTest extends TestCase
     }
 
     /**
-     * @return list<array{id: string, data: array<string, mixed>}>
+     * Cria uma Collection de instâncias Transaction preenchidas com dados
+     * de teste, sem tocar o banco de dados.
+     *
+     * As instâncias são "descaracterizadas": nunca persistidas, sem eventos
+     * de saving/observers/ciclo de vida Eloquent — servem como value-objects
+     * para alimentar listRow(), que apenas lê propriedades e a relação labels.
+     *
+     * Usamos setRawAttributes para que valores brutos contornem o caminho
+     * de escrita dos casts (ex.: immutable_date → fromDateTime() → DB
+     * connection). Na leitura, isStandardDateFormat('YYYY-MM-DD') bate
+     * antes de getDateFormat(), então strings ISO rodam sem DB.
+     *
+     * @param  list<array<string, mixed>>  $dataList
+     * @return Collection<int, Transaction>
      */
-    private function makeTransactions(array $dataList): array
+    private function makeTransactions(array $dataList): Collection
     {
-        $out = [];
+        $transactions = [];
         foreach ($dataList as $i => $data) {
-            $out[] = ['id' => "tx-{$i}", 'data' => $data];
+            $tx = new Transaction();
+
+            $tx->setRawAttributes([
+                'id' => $i + 1,
+                'description' => $data['description'] ?? '',
+                'amount' => $data['amount'] ?? 0.0,
+                'type' => $data['type'] ?? '',
+                'category' => $data['category'] ?? null,
+                'date' => $data['date'] ?? null,
+            ]);
+
+            $labelNames = $data['labels'] ?? [];
+            $tx->setRelation('labels', collect(array_map(
+                fn(string $name): array => ['name' => $name],
+                $labelNames,
+            )));
+
+            $transactions[] = $tx;
         }
 
-        return $out;
+        return collect($transactions);
     }
 
     public function test_list_summary_with_multiple_transactions(): void
@@ -109,7 +141,7 @@ class TransactionSummaryFormatterTest extends TestCase
     public function test_list_summary_empty_returns_friendly_message(): void
     {
         // CT-027a: lista vazia → apenas cabeçalho com contagem zero.
-        $out = $this->formatter->listSummary([], 0);
+        $out = $this->formatter->listSummary(collect([]), 0);
 
         $this->assertStringContainsString('Últimas 0 transações', $out);
         // Sem linhas numeradas.

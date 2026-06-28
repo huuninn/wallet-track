@@ -313,6 +313,29 @@ final class WalletStoreTest extends TestCase
         $this->assertNull($tx->processing_since);
     }
 
+    public function test_update_sync_status_updates_updated_at_timestamp(): void
+    {
+        $id = $this->store->saveTransaction('chat-ts', $this->makeDto([
+            'description' => 'Transação timestamp',
+        ]));
+
+        $tx = Transaction::find($id);
+        $this->assertNotNull($tx, 'Transação deve ser persistida');
+
+        $before = $tx->updated_at;
+
+        // Garante ao menos 1 segundo de diferença.
+        usleep(1_100_000);
+
+        $this->store->updateSyncStatus($id, WalletStore::SYNC_SYNCED);
+
+        $after = $tx->fresh()->updated_at;
+
+        $this->assertNotNull($before);
+        $this->assertNotNull($after);
+        $this->assertTrue($after->greaterThan($before), 'updated_at deve ser atualizado após updateSyncStatus');
+    }
+
     public function test_update_sync_status_to_failed_increments_attempts(): void
     {
         $tx = Transaction::factory()->create([
@@ -389,6 +412,39 @@ final class WalletStoreTest extends TestCase
         $this->assertSame(0, Transaction::where('chat_id', 'chat-A')->first()->sync_attempts);
         $this->assertSame(0, Transaction::where('chat_id', 'chat-B')->first()->sync_attempts);
         $this->assertSame(1, Transaction::where('chat_id', 'chat-C')->first()->sync_attempts);
+    }
+
+    /**
+     * Regressão: transações com sync_attempts=0 e sync_error_message=null
+     * DEVEM ser contadas (não ignoradas). MySQL retorna "0 rows affected"
+     * quando o UPDATE não altera valores — o método usa count() antes do
+     * update() para evitar esse falso-zero.
+     */
+    public function test_reset_pending_sync_attempts_counts_even_when_already_zero(): void
+    {
+        Transaction::factory()->create([
+            'chat_id' => 'chat-A',
+            'sync_status' => WalletStore::SYNC_PENDING,
+            'sync_attempts' => 0,
+            'sync_error_message' => null,
+        ]);
+        Transaction::factory()->create([
+            'chat_id' => 'chat-A',
+            'sync_status' => WalletStore::SYNC_PENDING,
+            'sync_attempts' => 0,
+            'sync_error_message' => null,
+        ]);
+        // Não-pendente (deve ser ignorada).
+        Transaction::factory()->create([
+            'chat_id' => 'chat-A',
+            'sync_status' => WalletStore::SYNC_SYNCED,
+            'sync_attempts' => 0,
+        ]);
+
+        $affected = $this->store->resetPendingSyncAttempts('chat-A');
+
+        // Mesmo com attempts já zerados, o count deve retornar 2 (não 0).
+        $this->assertSame(2, $affected, 'Deve contar transações mesmo com sync_attempts=0');
     }
 
     public function test_list_pending_sync_filters_attempts_below_3(): void

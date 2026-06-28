@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\Log;
  * Colunas da aba principal (linha 1 = cabeçalho, linha 2+ = dados):
  *
  *   A Data | B Descrição | C Valor | D Tipo | E Categoria | F Labels |
- *   G ID Firestore | H Observações | I Itens
+ *   G ID Transação | H Observações | I Itens
  *
  * **Formatação visual** (FORMAT de data/moeda, freeze linha 1) é M10 (polish).
  * Aqui apenas garantimos o cabeçalho textual via {@see ensureHeaders()}.
@@ -38,7 +38,7 @@ final class SheetsService
         'Tipo',
         'Categoria',
         'Labels',
-        'ID Firestore',
+        'ID Transação',
         'Observações',
         'Itens',
     ];
@@ -167,7 +167,7 @@ final class SheetsService
             $this->mapType($dto->type),              // D — Tipo
             (string) ($dto->category ?? ''),         // E — Categoria
             $this->formatLabels($dto->labels),       // F — Labels
-            (string) $txId,                          // G — ID Firestore
+            (string) $txId,                          // G — ID Transação
             (string) ($dto->observations ?? ''),     // H — Observações
             $this->formatItems($dto->items),         // I — Itens (NOVO)
         ];

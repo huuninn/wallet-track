@@ -1,3 +1,12 @@
+# ============================================================================
+# ⚠️ DEV-ONLY / REFERÊNCIA HISTÓRICA — NÃO USADO EM PRODUÇÃO
+# ----------------------------------------------------------------------------
+# Em produção, o Caddyfile é gerado automaticamente pelo Laravel Octane
+# (StartFrankenPhpCommand) com base em config/octane.php + o worker script
+# public/frankenphp-worker.php. Modificações aqui NÃO têm efeito em prod.
+# Este arquivo permanece apenas como referência para docker-compose legado.
+# ============================================================================
+
 {
 	frankenphp
 	admin off

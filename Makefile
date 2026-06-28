@@ -92,8 +92,8 @@ setup: build up  ## Build + up (uso: primeira vez)
 key:  ## Regenera a APP_KEY
 	docker compose exec app php artisan key:generate
 
-migrate:  ## No-op (M11: sem DB relacional; estado no Firestore)
-	@echo "✔ No-op: app não usa DB relacional (estado no Firestore)."
+migrate:  ## Roda as migrations do banco de dados (MariaDB)
+	docker compose exec app php artisan migrate --force
 
 tinker:  ## Abre o Tinker (REPL do Laravel)
 	docker compose exec app php artisan tinker

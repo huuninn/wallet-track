@@ -96,11 +96,9 @@ RUN composer dump-autoload --no-dev --optimize --no-scripts
 #    Secret Manager em RUNTIME. Rodar config:cache aqui quebraria a app em
 #    produção (APP_KEY null, tokens vazios, credenciais ausentes).
 #
-# ⚠️ NÃO usamos `route:cache` — o projeto usa closure na rota
-#    /cron/sync-pending (/health usa controller invokable desde M10)
-#    e route:cache serializa closures como null, quebrando-as.
-#    Mantemos as rotas interpretadas a cada request (custo
-#    negligenciável em concurrency=1 com opcache ativo).
+# ⚠️ NÃO usamos `route:cache` — mantemos a proibição por hardening
+#    (evitar regressão se closures forem reintroduzidas) e porque o ganho
+#    com opcache + concurrency=1 no Octane é negligenciável.
 #
 
 
@@ -147,35 +145,28 @@ ENV PHP_OPCACHE_ENABLE=1 \
     PHP_OPCACHE_MAX_ACCELERATED_FILES=20000 \
     PHP_OPCACHE_VALIDATE_TIMESTAMPS=0
 
-# ---------------------------------------------------------------------------
-# Caddyfile para FrankenPHP servir a aplicação Laravel.
-# O bloco global `frankenphp` INICIA o runtime PHP embutido (necessário para
-# `php_server`). Sem ele, Caddy responde "FrankenPHP is not running" (500).
-# A porta 8080 atende ao critério de aceitação do M0 e paridade com o
-# PORT=8080 que o Cloud Run injeta. Em dev, docker-compose mapeia
-# host:8000 → container:8080.
-# Arquivo separado (não heredoc) para compatibilidade com o Docker daemon do
-# Cloud Build (não suporta a sintaxe COPY << do BuildKit).
-# Substitui o Caddyfile default da imagem FrankenPHP (que habilita HTTPS
-# em :443 — não queremos em Cloud Run, que já faz TLS termination).
-# ---------------------------------------------------------------------------
-COPY docker/Caddyfile /etc/caddy/Caddyfile
+# O Octane gera o Caddyfile internamente (via FrankenPHP adapter),
+# configurando o worker sobre public/frankenphp-worker.php.
+# docker/Caddyfile permanece no repo apenas como referência/dev-only.
 
 # Variáveis de runtime (sobrescritas pelo Cloud Run / .env em produção).
 ENV APP_ENV=production \
     APP_DEBUG=false \
     SESSION_DRIVER=file \
+    CACHE_STORE=redis \
     LOG_CHANNEL=stderr \
     LOG_LEVEL=info \
     SERVER_NAME=:8080 \
-    OCTANE_SERVER=frankenphp
+    OCTANE_SERVER=frankenphp \
+    OCTANE_MAX_REQUESTS=1000
 
 EXPOSE 8080
 
 # ---------------------------------------------------------------------------
 # Startup: entrypoint lê /secrets/env.json (Secret Manager via volume mount),
-# exporta env vars e executa FrankenPHP (Caddy + runtime PHP embutido),
-# servindo a aplicação Laravel a partir de /app/public na porta 8080.
+# exporta env vars e executa `php artisan octane:start --server=frankenphp`.
+# O Octane gera o Caddyfile internamente, sobe os workers sobre
+# public/frankenphp-worker.php e escuta na porta definida por $PORT (8080).
 #
 # Fallback: se /secrets/env.json não existir (dev local), assume que as
 # env vars já foram injetadas pelo docker-compose ou manualmente.
@@ -224,8 +215,7 @@ ENV PHP_OPCACHE_VALIDATE_TIMESTAMPS=1 \
     PHP_OPCACHE_MEMORY_CONSUMPTION=128 \
     PHP_OPCACHE_MAX_ACCELERATED_FILES=20000
 
-# Copia o Caddyfile (mesmo do runtime; FrankenPHP escuta em :8080).
-COPY docker/Caddyfile /etc/caddy/Caddyfile
+# O Octane gera o Caddyfile internamente (dispensamos o COPY do Caddyfile).
 
 # Variáveis de ambiente para dev local (sobrescritas pelo docker-compose env_file).
 ENV APP_ENV=local \

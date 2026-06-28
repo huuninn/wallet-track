@@ -30,7 +30,6 @@ declare -a PLANNED_PACKAGES=(
   "openai-php/client|^0.20"
   "google-gemini-php/client|^2.7"
   "google/apiclient|^2.15"
-  "google/cloud-firestore|^1.0"
 )
 
 # --- Extensões PHP que DEVEM estar declaradas em composer.json -------------

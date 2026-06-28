@@ -57,7 +57,7 @@ class CategoryEmojiMapTest extends TestCase
     public function test_get_is_case_sensitive(): void
     {
         // A busca é case-sensitive: a categoria é o `display_name` exato
-        // do Firestore. "alimentação" minúscula NÃO é reconhecida —
+        // do banco de dados. "alimentação" minúscula NÃO é reconhecida —
         // preserva o nome original (spec §6.3).
         $this->assertSame('📦', CategoryEmojiMap::get('alimentação'));
         $this->assertSame('📦', CategoryEmojiMap::get('ALIMENTAÇÃO'));

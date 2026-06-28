@@ -9,7 +9,7 @@ use App\Conversation\StateMachine;
 /**
  * Estados da máquina de estados conversacional do Wallet Track (M7.1).
  *
- * Cada chat tem uma sessão Firestore (`sessions/{chat_id}`) cujo campo
+ * Cada chat tem uma sessão no banco de dados (tabela `sessions`, chave `chat_id`) cujo campo
  * `state` armazena o valor (string) deste enum. O {@see StateMachine}
  * valida que as transições entre estados seguem o fluxo legal descrito em
  * docs/06-plano-implementacao.md §7 (M7.2).
@@ -24,7 +24,7 @@ use App\Conversation\StateMachine;
  *  - AWAITING_EDITION     → esperando o usuário digitar novo valor para um
  *                           campo editável (após clicar "Editar").
  *
- * Backed string para serialização trivial em Firestore (campo `state`).
+ * Backed string para serialização trivial no banco de dados (campo `state`).
  */
 enum ConversationState: string
 {
@@ -41,7 +41,7 @@ enum ConversationState: string
     case AWAITING_EDITION = 'awaiting_edition';
 
     /**
-     * Desserializa a partir do valor guardado na sessão Firestore.
+     * Desserializa a partir do valor guardado na sessão no banco de dados.
      *
      * O campo `state` é gravado como string; chamadas como
      * `ConversationState::from($session['state'])` seriam frágeis se um
