@@ -239,6 +239,64 @@ Documentação completa: [`docs/M9-COMPLETO.md`](./docs/M9-COMPLETO.md).
 
 ---
 
+## Dev Isolado
+
+O projeto suporta **dois ambientes Docker simultâneos** no mesmo host: **prod** (porta 8000) e **dev** (porta 8001), com containers, volumes e bancos de dados completamente isolados.
+
+### Subir o ambiente dev
+
+```bash
+# Primeira vez (build + up + migrate)
+make setup-dev
+
+# Ou passo a passo
+make build-dev    # constrói imagens (reusa wallet-track:dev de prod)
+make up-dev       # sobe containers dev (porta 8001)
+make migrate-dev  # roda migrations no banco dev (wallet_track_dev)
+```
+
+A aplicação fica disponível em **http://localhost:8001**. Os containers dev são:
+
+| Container | Porta host |
+|-----------|-----------|
+| `wallet-track-dev` (app) | 8001 |
+| `wallet-track-dev-mariadb` | 13306 |
+| `wallet-track-dev-redis` | 16379 |
+
+### Alternar entre prod e dev
+
+Os túneis ngrok são **mutuamente exclusivos** (1 agente ngrok por vez). Sempre encerre o túnel ativo antes de alternar:
+
+```bash
+# Se prod está com túnel ativo:
+make tunnel-down      # encerra ngrok prod (porta 8000)
+
+# Agora pode subir o túnel dev:
+make tunnel-up-dev    # ngrok na porta 8001, webhook registrado no bot dev
+```
+
+### Comandos disponíveis
+
+```bash
+make help | grep dev   # lista todos os alvos -dev
+```
+
+Principais: `up-dev`, `down-dev`, `fresh-dev`, `restart-dev`, `logs-dev`, `ps-dev`,
+`shell-dev`, `artisan-dev cmd="..."`, `composer-dev cmd="..."`, `migrate-dev`,
+`tinker-dev`, `test-dev`, `pint-dev`, `tunnel-up-dev`, `tunnel-down-dev`.
+
+### Troubleshooting
+
+| Problema | Solução |
+|----------|---------|
+| Porta 4040 já em uso | `pkill ngrok` — ngrok antigo travado |
+| Conflito de project name | `docker compose -p wallet-track-dev ps` — verifique se containers antigos existem |
+| Database `wallet_track` em vez de `wallet_track_dev` | O `.env` do Docker Compose pode sobrescrever `DB_DATABASE`; verifique `.env` do host |
+| Volumes de prod afetados | Volumes dev usam sufixo `_dev` — nunca tocam `mariadb_data`, `storage` etc. |
+| `vendor/autoload.php` não encontrado na primeira execução | `make composer-dev cmd="install"` (já automatizado em `make setup-dev`) |
+
+> **Nota:** O arquivo `docker-compose.override.yml` foi removido. O `GOOGLE_SERVICE_ACCOUNT_JSON_PATH` agora é injetado diretamente no `docker-compose.yml` e `docker-compose.dev.yml`.
+
 ## Licença
 
 Projeto pessoal. Sem licença pública no momento.

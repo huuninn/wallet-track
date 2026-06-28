@@ -1,0 +1,77 @@
+# ============================================================================
+# Wallet Track — docker-compose.dev.yml
+# ----------------------------------------------------------------------------
+# Override mergeable com docker-compose.yml. Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   # ou via Makefile: make up-dev (define COMPOSE_PROJECT_NAME=wallet-track-dev
+#   # e usa COMPOSE_DEV_FLAGS=-f docker-compose.yml -f docker-compose.dev.yml)
+#
+# Isolamento TOTAL de prod: container names distintos, portas distintas (8001/
+# 13306/16379), volumes com sufixo _dev, env_file = .env.dev. Pode rodar junto
+# com prod.
+#
+# Diferenças em relação ao prod:
+#   - Porta host 8001 (em vez de 8000)
+#   - MariaDB e Redis expostos no host (13306, 16379) para debug
+#   - Volumes *_dev (não toca em mariadb_data/storage de prod)
+#   - env_file = .env.dev (bot, planilha e Firestore dev separados)
+#   - DB database = wallet_track_dev (separado de wallet_track de prod)
+# ============================================================================
+
+services:
+  app:
+    container_name: wallet-track-dev
+    env_file:
+      - .env.dev
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      LOG_CHANNEL: stack
+      LOG_STACK: single
+      LOG_LEVEL: debug
+      PORT: "8080"
+      # Valores fixos (não interpolados) para garantir isolamento do .env de prod.
+      # Docker Compose interpola ${VAR} antes de carregar env_file, portanto
+      # placeholders como ${DB_DATABASE:-wallet_track_dev} resolvem contra o
+      # .env do host (prod) e violariam o isolamento semântico.
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_DATABASE: wallet_track_dev
+      DB_USERNAME: wallet
+      DB_PASSWORD: walletpass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Path da Service Account dentro do container (mesmo padrão do prod).
+      GOOGLE_SERVICE_ACCOUNT_JSON_PATH: /app/wallet-track-499719-54b725c0bb5d.json
+    ports:
+      - "8001:8080"
+    volumes:
+      - ./:/app
+      - vendor_dev:/app/vendor
+      - storage_dev:/app/storage
+
+  mariadb:
+    container_name: wallet-track-dev-mariadb
+    environment:
+      # Valores fixos (não interpolados) para garantir isolamento do .env de prod.
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: wallet_track_dev
+      MARIADB_USER: wallet
+      MARIADB_PASSWORD: walletpass
+    ports:
+      - "13306:3306"
+    volumes:
+      - mariadb_data_dev:/var/lib/mysql
+
+  redis:
+    container_name: wallet-track-dev-redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis_data_dev:/data
+
+volumes:
+  vendor_dev:
+  storage_dev:
+  mariadb_data_dev:
+  redis_data_dev:
