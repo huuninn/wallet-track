@@ -24,7 +24,7 @@ class WizardStepTest extends TestCase
     public function test_values_are_sequential_starting_at_one(): void
     {
         // Os values devem ser 1, 2, 3, 4, 5, 6 (sem gaps) — qualquer
-        // mudança aqui exige revisão de Firestore (campo _wizard_step).
+        // mudança aqui exige revisão do banco de dados (campo _wizard_step no draft da sessão).
         $this->assertSame(1, WizardStep::TYPE->value);
         $this->assertSame(2, WizardStep::AMOUNT->value);
         $this->assertSame(3, WizardStep::DESCRIPTION->value);

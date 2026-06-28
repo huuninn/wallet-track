@@ -23,7 +23,7 @@ use RuntimeException;
  * Esta é a abstração que o M10 (Secret Manager) completa: em produção,
  * injetaremos o conteúdo JSON via variável de ambiente ou via fetch do
  * Secret Manager em runtime. Aqui em M5 apenas normalizamos o conteúdo
- * recebido em array PHP pronto para `FirestoreClient(['keyFile' => $array])`.
+ * recebido em array PHP pronto para clientes Google (Sheets API).
  */
 final class GoogleCredentials
 {

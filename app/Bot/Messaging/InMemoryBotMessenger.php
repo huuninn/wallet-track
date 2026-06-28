@@ -21,7 +21,7 @@ use App\Services\Google\InMemorySheetsGateway;
  * Estrutura dos registros:
  *
  *  - $sentTexts[$chatId][]        = ['message_id' => int, 'text' => string]
- *  - $confirmations[$chatId][]    = ['message_id' => int, 'draft' => TransactionData, 'firestore_id' => ?string]
+ *  - $confirmations[$chatId][]    = ['message_id' => int, 'draft' => TransactionData, 'transaction_id' => ?string]
  *  - $fieldAsks[$chatId][]        = ['message_id' => int, 'field' => string, 'prompt' => string]
  *  - $editionAsks[$chatId][]      = ['message_id' => int, 'field' => string]
  *  - $fieldPickers[$chatId][]     = ['message_id' => int]

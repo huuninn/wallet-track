@@ -28,9 +28,9 @@ use App\Dto\TransactionData;
  * ```
  *
  * O `ConversationRouter` armazena o step atual no campo `draft._wizard_step`
- * (int) e o flag `draft._wizard_active` (bool) na sessão Firestore.
+ * (int) e o flag `wizard_active` (bool) na sessão no banco de dados.
  *
- * Backed int para serialização trivial no Firestore (campo `_wizard_step`).
+ * Backed int para serialização trivial no banco de dados (campo `wizard_step`).
  */
 enum WizardStep: int
 {

@@ -51,7 +51,7 @@ use Throwable;
  *
  * Exit code:
  *  - `0` (SUCCESS) → execução OK, mesmo com falhas parciais (recuperáveis).
- *  - `1` (FAILURE) → erro de infraestrutura (Firestore/Sheets indisponíveis,
+ *  - `1` (FAILURE) → erro de infraestrutura (banco de dados/Sheets indisponíveis,
  *    timeout, etc.) — o orquestrador (cron) deve re-tentar.
  */
 final class SyncPendingTransactions extends Command
@@ -77,7 +77,7 @@ final class SyncPendingTransactions extends Command
         {--chat-id= : Processa apenas transações deste chat (uso do /sync manual)}
         {--limit= : Limite de transações por execução (default: 20)}
         {--time-budget= : Orçamento de tempo em segundos (default: 90). Para antes de iniciar nova transação se restar < 5s.}
-        {--dry-run : Lista as transações que SERIAM processadas, sem tocar Firestore/Sheets}
+        {--dry-run : Lista as transações que SERIAM processadas, sem tocar banco de dados/Sheets}
         {--format= : Formato de saída (text|json, default: text)}';
 
     /**
@@ -92,7 +92,7 @@ final class SyncPendingTransactions extends Command
      * instanciar o command no boot para descobrir sua assinatura — e
      * `SyncsSheet` → `SyncSheet` → `SheetsService` exige credenciais Google
      * válidas. Resolver tardiamente em `handle()` evita que rodar QUALQUER
-     * outro command (`firestore:seed-categories`, `telegram:set-webhook`)
+     * outro command (`db:seed`, `telegram:set-webhook`)
      * force a inicialização do Sheets client.
      *
      * O `BotMessenger` é resolvido opcionalmente — null no cron (sem chat
@@ -227,7 +227,7 @@ final class SyncPendingTransactions extends Command
     }
 
     /**
-     * Dry-run: lista os IDs que SERIAM processados, sem tocar Firestore/Sheets.
+     * Dry-run: lista os IDs que SERIAM processados, sem tocar banco de dados/Sheets.
      *
      * Útil para diagnóstico e smoke tests em produção (responde "o que o
      * próximo cron vai fazer?" sem efeitos colaterais).
@@ -271,10 +271,10 @@ final class SyncPendingTransactions extends Command
      * **Comportamento de erros**:
      *
      *  - **Erros de negócio** (DTO inválido, falha de I/O do Sheets): são
-     *    capturados DENTRO deste método, registrados em Firestore via
+     *    capturados DENTRO deste método, registrados no banco de dados via
      *    `markSyncFailed`, e retornados como `synced=false` — o loop em
      *    `handle()` continua com a próxima transação.
-     *  - **Erros de infraestrutura** (Firestore completamente indisponível,
+     *  - **Erros de infraestrutura** (banco de dados completamente indisponível,
      *    timeout, etc.) NÃO são capturados — propagam para `handle()` e
      *    MATAM o loop. O orquestrador (Cloud Scheduler) vê exit≠0 e
      *    re-tenta a execução completa na próxima rodada.
@@ -283,7 +283,7 @@ final class SyncPendingTransactions extends Command
      * `processOne()` SEM try/catch externo, porque a única falha que
      * ESCAPA é justamente a de infraestrutura — o caller decide se vale
      * a pena continuar (decidimos que NÃO vale: melhor abortar e re-tentar
-     * do que iterar em cima de Firestore quebrado).
+     * do que iterar em cima do banco de dados quebrado).
      */
     private function processOne(
         WalletStore $store,

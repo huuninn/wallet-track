@@ -40,7 +40,7 @@ use App\Services\Gemini\GeminiService;
  * Esta classe é consumida como defesa em profundidade pelos extratores
  * ({@see DeepSeekService}, {@see GeminiService})
  * e pela action de sugestão ({@see SuggestLabelsLLM}), garantindo
- * que toda label que chega ao Firestore está no formato canônico,
+ * que toda label que chega ao banco de dados está no formato canônico,
  * independentemente do comportamento do LLM.
  *
  * @see TextNormalizer Para a operação complementar de dedup (fold).
@@ -89,7 +89,7 @@ final class LabelFormatter
      *  - `"pix"`        → `"Pix"`       (não é acrônimo → P1)
      *  - `"pizza 🍕"`   → `"Pizza 🍕"`  (emoji preservado)
      *
-     * @param  string  $label  Label bruta (do LLM, do usuário ou do Firestore).
+     * @param  string  $label  Label bruta (do LLM, do usuário ou do banco de dados).
      * @return string Label formatada no padrão canônico, ou string vazia.
      */
     public static function format(string $label): string

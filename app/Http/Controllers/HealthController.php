@@ -74,6 +74,7 @@ final class HealthController extends Controller
             'timestamp' => now()->toIso8601String(),
             'version' => $debug ? App::version() : null,
             'app' => $debug ? config('app.name') : null,
+            'octane' => $this->isOctaneRuntime(),
         ];
 
         // 2. Modo verbose: inclui checks detalhados + ping ao banco de dados/Redis.
@@ -195,6 +196,25 @@ final class HealthController extends Controller
                 'error' => $e->getMessage(),
             ];
         }
+    }
+
+    /**
+     * Detecta se o request está sendo servido por um worker do Laravel Octane.
+     *
+     * O comando `php artisan octane:start --server=frankenphp` injeta a env var
+     * `LARAVEL_OCTANE=1` no processo do worker (StartFrankenPhpCommand). No modo
+     * `php_server` legacy (Caddyfile externo sem Octane) esta variável é ausente,
+     * portanto o método retorna `false`.
+     *
+     * A triple-check (`$_ENV` → `$_SERVER` → `getenv`) cobre diferentes SAPIs do PHP
+     * e garante detecção confiável independentemente da configuração `variables_order`.
+     *
+     * Uso: confirmar via `/health` que o hardening de ativação do Octane está em
+     * vigor e detectar regressão para o modo php_server legacy.
+     */
+    private function isOctaneRuntime(): bool
+    {
+        return ($_ENV['LARAVEL_OCTANE'] ?? $_SERVER['LARAVEL_OCTANE'] ?? getenv('LARAVEL_OCTANE')) === '1';
     }
 
     // -----------------------------------------------------------------

@@ -49,6 +49,27 @@ class HealthControllerTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // M5 — Octane safety: campo `octane` no health response
+    // -----------------------------------------------------------------
+
+    /**
+     * Valida que o campo `octane` está presente no response do `/health`
+     * e reporta `false` em ambiente de teste (sem o env var `LARAVEL_OCTANE`).
+     *
+     * Este campo é a verificação de que o hardening de ativação do Octane
+     * (M1/M2) está em vigor — em produção com FrankenPHP + Octane, o valor
+     * será `true`, confirmando que os listeners de reset de estado estão
+     * ativos.
+     */
+    public function test_health_endpoint_reports_octane_runtime_status(): void
+    {
+        $response = $this->getJson('/health');
+
+        $response->assertOk();
+        $response->assertJsonPath('octane', false);
+    }
+
+    // -----------------------------------------------------------------
     // CT-M10-H2: Env var crítica ausente → 503, status: degraded
     // -----------------------------------------------------------------
 

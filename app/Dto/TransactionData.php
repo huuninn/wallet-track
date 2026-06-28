@@ -25,11 +25,11 @@ final readonly class TransactionData
     public const int DESCRIPTION_MAX_LENGTH = 500;
 
     /**
-     * Limite de segurança para armazenamento Firestore (defesa contra LLM
+     * Limite de segurança para armazenamento no banco de dados (defesa contra LLM
      * descontrolado ou usuário colando lista gigante). Acima disso, trunca
      * preservando os primeiros N itens.
      *
-     * Decisão P6=a: sem limite de armazenamento no Firestore. O teto aqui é
+     * Decisão P6=a: sem limite de armazenamento no banco de dados. O teto aqui é
      * puramente sanitização — 200 itens é um valor pragmático que cobre
      * qualquer cupom fiscal real sem explodir o documento.
      */
@@ -180,7 +180,7 @@ final readonly class TransactionData
 
     /**
      * Indica se o DTO está completo o suficiente para persistência em
-     * Firestore (schema `transactions/` exige os quatro campos).
+     * banco de dados (tabela `transactions` exige os quatro campos).
      *
      * Campos avaliados: `amount`, `type`, `description`, `date`. Os demais
      * (`category`, `labels`, `observations`) são opcionais no schema.
@@ -206,7 +206,7 @@ final readonly class TransactionData
 
     /**
      * Serializa o DTO como array snake_case para persistência no campo
-     * `draft` da sessão Firestore (`sessions/{chat_id}.draft`).
+     * `draft` da sessão no banco de dados (`sessions` com chave `chat_id`).
      *
      * Round-trip com {@see fromDraftArray()}: o que entra sai idêntico.
      * Campos null são omitidos para economizar espaço e deixar o draft

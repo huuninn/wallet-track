@@ -1,5 +1,7 @@
 # Especificação Técnica: M9 — Comandos Auxiliares (Fase 2)
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > **Status:** Fase 2 — Especificação Técnica executável.
 > **Data:** 19/06/2026
 > **Base:** Plano de implementação §12 + Clarificações (#5, #6, #7) + Especificação Técnica §5–§7.

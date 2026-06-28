@@ -40,7 +40,7 @@ final readonly class CategoryEmojiMap
      *
      * Alinhado com a spec §6.3 (9 categorias padrão do Wallet Track). A
      * busca é case-sensitive: a categoria é o `display_name` exato lido
-     * do Firestore. Categorias personalizadas fora desta tabela recebem
+     * do banco de dados. Categorias personalizadas fora desta tabela recebem
      * o fallback (consultar {@see self::get()}).
      *
      * @var array<string, string>

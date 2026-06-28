@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Carbon\CarbonImmutable;
+use Database\Factories\LabelFactory;
+use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -13,22 +16,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * @property string $folded_name
  * @property string $name
  * @property int $use_count
- * @property \Carbon\CarbonImmutable|null $last_used_at
- * @property \Carbon\CarbonImmutable|null $created_at
+ * @property CarbonImmutable|null $last_used_at
+ * @property CarbonImmutable|null $created_at
  */
+#[Fillable(['folded_name', 'name', 'use_count', 'last_used_at'])]
 class Label extends Model
 {
-    /** @use HasFactory<\Database\Factories\LabelFactory> */
+    /** @use HasFactory<LabelFactory> */
     use HasFactory;
 
     public const UPDATED_AT = null;
-
-    protected $fillable = [
-        'folded_name',
-        'name',
-        'use_count',
-        'last_used_at',
-    ];
 
     protected function casts(): array
     {

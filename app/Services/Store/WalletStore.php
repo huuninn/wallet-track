@@ -105,8 +105,7 @@ final class WalletStore
      */
     public function getTransaction(int $id): ?Transaction
     {
-        return Transaction::with(['items' => fn ($q) => $q->orderBy('position'), 'labels'])
-            ->find($id);
+        return Transaction::withItemsAndLabels()->find($id);
     }
 
     /**
@@ -116,7 +115,7 @@ final class WalletStore
      */
     public function listRecent(string $chatId, int $limit = 10, ?string $type = null): Collection
     {
-        $query = Transaction::with(['items' => fn ($q) => $q->orderBy('position'), 'labels'])
+        $query = Transaction::withItemsAndLabels()
             ->where('chat_id', $chatId)
             ->orderBy('date', 'desc')
             ->limit($limit);
@@ -138,7 +137,6 @@ final class WalletStore
                 'sync_status' => $status,
                 'processing' => false,
                 'processing_since' => null,
-                'updated_at' => now(),
             ];
 
             if ($errorMessage !== null) {
@@ -146,10 +144,10 @@ final class WalletStore
                 $fields['sync_last_attempt_at'] = now();
             }
 
-            DB::table('transactions')->where('id', $id)->update($fields);
+            Transaction::where('id', $id)->update($fields);
 
             if ($errorMessage !== null) {
-                DB::table('transactions')->where('id', $id)->increment('sync_attempts');
+                Transaction::where('id', $id)->increment('sync_attempts');
             }
         });
     }
@@ -160,17 +158,35 @@ final class WalletStore
      */
     public function resetPendingSyncAttempts(?string $chatId = null): int
     {
-        $query = DB::table('transactions')->where('sync_status', self::SYNC_PENDING);
+        $query = Transaction::where('sync_status', self::SYNC_PENDING);
 
         if ($chatId !== null) {
             $query->where('chat_id', $chatId);
         }
 
-        return $query->update([
-            'sync_attempts' => 0,
-            'sync_error_message' => null,
-            'updated_at' => now(),
-        ]);
+        // ⚠️ Conta ANTES de atualizar: MySQL/MariaDB retorna "0 rows
+        // affected" quando todos os valores do UPDATE já coincidem com o
+        // estado atual da linha (ex.: sync_attempts já é 0). O Laravel
+        // não usa CLIENT_FOUND_ROWS, então o driver reporta apenas linhas
+        // efetivamente alteradas — não as que deram match no WHERE.
+        // O caller (SyncHandler, cron) precisa do número REAL de pendentes,
+        // não do número de linhas efetivamente alteradas.
+        //
+        // Nota: count e update não são atômicos — entre os dois, novas
+        // transações podem ser criadas (count defasado para baixo) ou
+        // terem sync_status alterado por outro processo (count defasado
+        // para cima). Para o caso de uso atual (reset via cron ou /sync),
+        // essa imprecisão é aceitável.
+        $count = (clone $query)->count();
+
+        if ($count > 0) {
+            $query->update([
+                'sync_attempts' => 0,
+                'sync_error_message' => null,
+            ]);
+        }
+
+        return $count;
     }
 
     /**
@@ -182,7 +198,7 @@ final class WalletStore
      */
     public function listPendingSync(?string $chatId = null, int $limit = 100): Collection
     {
-        $query = Transaction::with(['items' => fn ($q) => $q->orderBy('position'), 'labels'])
+        $query = Transaction::withItemsAndLabels()
             ->where('sync_status', self::SYNC_PENDING)
             ->where('sync_attempts', '<', 3)
             ->orderBy('created_at', 'asc')
@@ -204,16 +220,14 @@ final class WalletStore
      */
     public function markSyncStarted(int $id, int $staleLockSeconds = 600): bool
     {
-        $affected = DB::table('transactions')
-            ->where('id', $id)
+        $affected = Transaction::where('id', $id)
             ->where(function ($q) use ($staleLockSeconds): void {
                 $q->where('processing', false)
-                  ->orWhere('processing_since', '<', now()->subSeconds($staleLockSeconds));
+                    ->orWhere('processing_since', '<', now()->subSeconds($staleLockSeconds));
             })
             ->update([
                 'processing' => true,
                 'processing_since' => now(),
-                'updated_at' => now(),
             ]);
 
         return $affected > 0;
@@ -224,12 +238,11 @@ final class WalletStore
      */
     public function markSyncSuccess(int $id, string $spreadsheetRowId): void
     {
-        DB::table('transactions')->where('id', $id)->update([
+        Transaction::where('id', $id)->update([
             'sync_status' => self::SYNC_SYNCED,
             'spreadsheet_row_id' => $spreadsheetRowId,
             'processing' => false,
             'processing_since' => null,
-            'updated_at' => now(),
         ]);
     }
 
@@ -238,11 +251,10 @@ final class WalletStore
      */
     public function requeuePendingSync(int $id): void
     {
-        DB::table('transactions')->where('id', $id)->update([
+        Transaction::where('id', $id)->update([
             'sync_status' => self::SYNC_PENDING,
             'processing' => false,
             'processing_since' => null,
-            'updated_at' => now(),
         ]);
     }
 
@@ -268,11 +280,10 @@ final class WalletStore
                 'sync_last_attempt_at' => now(),
                 'processing' => false,
                 'processing_since' => null,
-                'updated_at' => now(),
             ];
 
             // Carimba notified_at apenas na 1ª transição para failed.
-            if (empty($tx->notified_at)) {
+            if ($tx->notified_at === null) {
                 $fields['notified_at'] = now();
             }
 
@@ -326,13 +337,7 @@ final class WalletStore
         // Converte todos os valores para string (Redis exige)
         $stringMerge = [];
         foreach ($merge as $field => $value) {
-            if (is_bool($value)) {
-                $stringMerge[$field] = $value ? '1' : '0';
-            } elseif (is_int($value) || is_float($value)) {
-                $stringMerge[$field] = (string) $value;
-            } else {
-                $stringMerge[$field] = (string) $value;
-            }
+            $stringMerge[$field] = is_bool($value) ? ($value ? '1' : '0') : (string) $value;
         }
 
         if (! empty($stringMerge)) {
@@ -409,9 +414,7 @@ final class WalletStore
      */
     public function getCategory(string $name): ?Category
     {
-        $slug = mb_strtolower(trim($name));
-
-        return Category::where('slug', $slug)->first();
+        return Category::where('slug', $this->buildSlug($name))->first();
     }
 
     /**
@@ -419,7 +422,7 @@ final class WalletStore
      */
     public function categoryExists(string $name): bool
     {
-        return $this->getCategory($name) !== null;
+        return Category::where('slug', $this->buildSlug($name))->exists();
     }
 
     /**
@@ -428,7 +431,7 @@ final class WalletStore
     public function createCategory(string $displayName, string $defaultType, bool $isDefault = false): void
     {
         Category::firstOrCreate(
-            ['slug' => mb_strtolower(trim($displayName))],
+            ['slug' => $this->buildSlug($displayName)],
             [
                 'display_name' => $displayName,
                 'default_type' => $defaultType,
@@ -436,6 +439,14 @@ final class WalletStore
                 'is_default' => $isDefault,
             ],
         );
+    }
+
+    /**
+     * Constrói o slug de categoria (case-insensitive, trimmed).
+     */
+    private function buildSlug(string $name): string
+    {
+        return mb_strtolower(trim($name));
     }
 
     // === LABELS (banco de dados) ===

@@ -11,7 +11,7 @@ use LogicException;
  * Tabela de transições legais da máquina de estados conversacional (M7.2).
  *
  * O {@see ConversationRouter} consulta {@see canTransition()} antes de
- * efetivamente gravar um novo `state` na sessão Firestore — isso protege
+ * efetivamente gravar um novo `state` na sessão no banco de dados — isso protege
  * contra bugs sutis onde um callback inesperado poderia pular de
  * AWAITING_EDITION direto para persistência, por exemplo.
  *

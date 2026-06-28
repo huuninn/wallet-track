@@ -1,5 +1,7 @@
 # M9 — Comandos Auxiliares: COMPLETO
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > **Milestone:** M9 (Comandos Auxiliares)
 > **Status:** ✅ **Entregue em 19/06/2026**
 > **Versão proposta:** `v0.9.0-M9`

@@ -1,5 +1,7 @@
 # Wallet Track — Runbook de Operacoes (M10)
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 Runbook para operacao do Wallet Track em producao no Google Cloud Run.
 Atualizado em 2026-06-24.
 
@@ -21,20 +23,19 @@ Atualizado em 2026-06-24.
           +---------------+---------------+
           |               |               |
           v               v               v
-   +------------+  +-----------+  +--------------+
-   | Firestore   |  | Sheets    |  | Secret Mgr   |
-   | (Native)    |  | (Google)  |  | (7 secrets)  |
-   +------------+  +-----------+  +--------------+
-          |
-          v
-   +------------+  +-----------+  +------------+
-   | DeepSeek   |  | Gemini    |  | Scheduler  |
-   | (API Key)  |  | (API Key) |  | (cron 5min)|
-   +------------+  +-----------+  +------------+
+    +-----------+  +-----------+  +--------------+
+    | MariaDB    |  | Sheets    |  | Secret Mgr   |
+    | 11.8       |  | (Google)  |  | (7 secrets)  |
+    +-----------+  +-----------+  +--------------+
+
+    +------------+  +-----------+  +------------+
+    | DeepSeek   |  | Gemini    |  | Scheduler  |
+    | (API Key)  |  | (API Key) |  | (cron 5min)|
+    +------------+  +-----------+  +------------+
 ```
 
 - **Cloud Run**: servico HTTP (FrankenPHP + Laravel) exposto publicamente (`--allow-unauthenticated`)
-- **Firestore**: banco NoSQL Native mode (`wallet-track-db`), unica fonte de verdade
+- **MariaDB**: banco relacional (MariaDB 11.8), fonte de verdade principal
 - **Sheets**: planilha Google sincronizada periodicamente (sync pending a cada 5 min)
 - **Secret Manager**: 7 secrets (SA JSON, tokens, API keys, APP_KEY) — montados como volume ou env vars
 - **Cloud Scheduler**: dispara `GET /cron/sync-pending` com header `X-Cron-Token`
@@ -57,7 +58,7 @@ gcloud config set project wallet-track-499719
 
 O script cria:
 - 7 secrets no Secret Manager (interativo — pede valores nao encontrados no `.env`)
-- Service account `wallet-track-run` com permissoes de Secret Manager, Firestore e Cloud Run
+- Service account `wallet-track-run` com permissoes de Secret Manager e Cloud Run
 - Repositorio Docker `wallet-track` no Artifact Registry (`southamerica-east1`)
 
 ### 2.2 Provisionar trigger de build automatico
@@ -183,7 +184,7 @@ gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' \
 
 **Causas**:
 - Min-instances=0 → container precisa iniciar do zero
-- gRPC (Firestore) inicializa conexao no primeiro request
+- Conexao com MariaDB (DNS + TCP handshake) no primeiro request
 - Composer autoload (mitigado por `--optimize` no build)
 - Templates Blade (mitigado por `view:cache` no build)
 
@@ -201,21 +202,20 @@ gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' \
 
 **Solucao**: Re-deploy (push to main) — o pipeline registra o webhook com o secret token correto.
 
-### 5.5 Firestore connection error
+### 5.5 Erro de conexao com MariaDB
 
-**Sintoma**: Logs mostram "Falha ao inicializar FirestoreClient".
+**Sintoma**: Logs mostram "SQLSTATE[HY000] [2002] Connection refused" ou "Target Machine actively refused".
 
 **Causas**:
-- `/secrets/sa.json` nao montado ou vazio → verificar `--set-secrets` no deploy
-- Service account sem permissao `roles/datastore.user`
-- Projeto GCP errado (`GOOGLE_CLOUD_PROJECT_ID`)
-- Banco de dados `wallet-track-db` em Datastore mode (deveria ser Native mode)
+- Host do banco incorreto ou inacessivel → verificar `DB_HOST` no Secret Manager
+- Credenciais erradas → verificar `DB_USERNAME` e `DB_PASSWORD`
+- Banco de dados inexistente → verificar `DB_DATABASE`
+- Firewall bloqueando porta 3306 (se banco externo ao GCP)
 
 **Verificacao**:
 ```bash
-# Checar se o volume mount esta configurado
-gcloud run services describe wallet-track --region=southamerica-east1 \
-  --format='yaml(spec.template.spec.containers[0].volumeMounts)'
+# Testar conectividade a partir do Cloud Run (via Cloud Shell ou VM)
+mysql -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE" -e "SELECT 1"
 ```
 
 ---
@@ -300,7 +300,7 @@ SVC_URL=$(gcloud run services describe wallet-track --region=southamerica-east1 
 # Modo padrao (sem rede)
 curl -s "${SVC_URL}/health" | jq .
 
-# Modo verbose (com Firestore ping) — requer APP_DEBUG=true em runtime
+# Modo verbose (com database ping) — requer APP_DEBUG=true em runtime
 curl -s "${SVC_URL}/health?verbose=1" | jq .
 ```
 
@@ -380,8 +380,7 @@ Cloud Run com `concurrency=1` significa que cada instancia processa **apenas 1
 requisicao por vez**. Isso e intencional:
 
 - O bot e de uso pessoal (1 usuario)
-- Evita race conditions ao ler/escrever no Firestore (o SDK nao e thread-safe
-  para operacoes de read-modify-write em paralelo)
+- Evita race conditions em operações de leitura/escrita no banco de dados
 - Simplifica o modelo mental: nao ha requisicoes simultaneas competindo por estado
 
 ### 9.4 Cold start
@@ -391,7 +390,7 @@ a instancia. A proxima requisicao sofre um cold start (~2-5s):
 
 1. Cloud Run puxa a imagem do Artifact Registry (cache de borda reduz latencia)
 2. Container inicia (FrankenPHP sobe Caddy + PHP runtime)
-3. Primeiro request inicializa conexao gRPC com Firestore
+3. Primeiro request inicializa conexão TCP com MariaDB (pool de conexões)
 
 O Telegram tem timeout de webhook generoso (varios segundos) e retenta em caso de
 falha, entao cold starts ocasionais nao causam perda de mensagens.
@@ -402,10 +401,10 @@ O Google Sheets usa uma service account **diferente** do Cloud Run:
 `google-sheet-202@wallet-track-499719.iam.gserviceaccount.com`.
 
 Esta SA tem permissao `roles/editor` diretamente na planilha (compartilhada via
-Google Drive). Ela nao acessa Firestore nem Secret Manager — apenas escreve na
+Google Drive). Ela nao acessa o banco de dados nem Secret Manager — apenas escreve na
 planilha durante a sincronizacao.
 
-A SA do Cloud Run (`wallet-track-run`) acessa Firestore, mas nao precisa de
+A SA do Cloud Run (`wallet-track-run`) acessa MariaDB, mas nao precisa de
 permissao no Sheets (a sincronizacao usa a SA dedicada de Sheets).
 
 ### 9.6 Coluna de Itens na planilha (feature items)

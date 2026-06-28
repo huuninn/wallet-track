@@ -1,5 +1,7 @@
 # 01 — Análise de Negócio
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > **Fase 1 do pipeline de especificação.** Aprovada pelo usuário com as decisões consolidadas abaixo.
 
 ---

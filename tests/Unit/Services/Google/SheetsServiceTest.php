@@ -23,7 +23,7 @@ use Tests\TestCase;
  *
  * Cobertura:
  *   - ensureHeaders: escreve cabeçalho em sheet vazia; é idempotente.
- *   - appendTransaction: monta a row de 8 colunas na ordem correta, com todas
+ *   - appendTransaction: monta a row de 9 colunas na ordem correta, com todas
  *     as conversões (data ISO preservada, amount numérico, type map,
  *     labels→vírgula, nulls→vazio) e chama ensureHeaders antes.
  *   - appendTransaction lança InvalidArgumentException com amount/type null.
@@ -76,7 +76,7 @@ class SheetsServiceTest extends TestCase
     {
         return [
             'Data', 'Descrição', 'Valor', 'Tipo', 'Categoria',
-            'Labels', 'ID Firestore', 'Observações', 'Itens',
+            'Labels', 'ID Transação', 'Observações', 'Itens',
         ];
     }
 
@@ -114,7 +114,7 @@ class SheetsServiceTest extends TestCase
 
     public function test_append_transaction_builds_nine_column_row_in_correct_order(): void
     {
-        $this->service->appendTransaction($this->dto(), 'fs-id-123');
+        $this->service->appendTransaction($this->dto(), 123);
 
         $rows = $this->gateway->rows();
 
@@ -131,7 +131,7 @@ class SheetsServiceTest extends TestCase
         $this->assertSame('Despesa', $row[3]);                 // D — Tipo expense→Despesa
         $this->assertSame('Alimentação', $row[4]);             // E — Categoria
         $this->assertSame('almoço, restaurante', $row[5]);     // F — Labels (vírgula)
-        $this->assertSame('fs-id-123', $row[6]);               // G — ID Firestore
+        $this->assertSame('123', $row[6]);                     // G — ID Transação (convertido para string)
         $this->assertSame('', $row[7]);                        // H — Observações null→vazio
         $this->assertSame('', $row[8]);                        // I — Itens (vazio quando items=[])
     }
@@ -142,7 +142,7 @@ class SheetsServiceTest extends TestCase
         // DD/MM/AAAA". Enviar ISO é universal (interpretado em qualquer locale).
         $this->service->appendTransaction(
             $this->dto(['date' => '2026-01-09']),
-            'fs',
+            1,
         );
 
         $this->assertSame('2026-01-09', $this->gateway->rows()[1][0]);
@@ -152,7 +152,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['amount' => 100.0]),
-            'fs',
+            2,
         );
 
         $value = $this->gateway->rows()[1][2];
@@ -187,7 +187,7 @@ class SheetsServiceTest extends TestCase
 
         $this->service->appendTransaction(
             $this->dto(['date' => '2026-13-45']),
-            'fs-invalid',
+            3,
         );
 
         $row = $this->gateway->rows()[1];
@@ -206,7 +206,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['date' => '2026-02-30']),
-            'fs-fev30',
+            4,
         );
 
         $this->assertSame('', $this->gateway->rows()[1][0]);
@@ -221,7 +221,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['date' => '2026-1-9']),
-            'fs-noncanonical',
+            5,
         );
 
         $this->assertSame('', $this->gateway->rows()[1][0]);
@@ -231,7 +231,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['type' => 'income']),
-            'fs-2',
+            6,
         );
 
         $row = $this->gateway->rows()[1];
@@ -243,7 +243,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['labels' => []]),
-            'fs-3',
+            7,
         );
 
         $this->assertSame('', $this->gateway->rows()[1][5]);
@@ -254,7 +254,7 @@ class SheetsServiceTest extends TestCase
         // Labels são formatados com vírgula + espaço (F4).
         $this->service->appendTransaction(
             $this->dto(['labels' => ['#vip', 'promo']]),
-            'fs-4',
+            8,
         );
 
         $this->assertSame('#vip, promo', $this->gateway->rows()[1][5]);
@@ -266,7 +266,7 @@ class SheetsServiceTest extends TestCase
         // (CWE-1236: prevenção de CSV/formula injection no Google Sheets).
         $this->service->appendTransaction(
             $this->dto(['labels' => ['=SUM(A1:A10)', '+malicious', '-drop', '@mention']]),
-            'fs-formula',
+            9,
         );
 
         $this->assertSame(
@@ -279,7 +279,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['observations' => null]),
-            'fs-5',
+            10,
         );
 
         $this->assertSame('', $this->gateway->rows()[1][7]);
@@ -289,7 +289,7 @@ class SheetsServiceTest extends TestCase
     {
         $this->service->appendTransaction(
             $this->dto(['observations' => 'pago em dinheiro']),
-            'fs-6',
+            11,
         );
 
         $this->assertSame('pago em dinheiro', $this->gateway->rows()[1][7]);
@@ -300,12 +300,15 @@ class SheetsServiceTest extends TestCase
         // Sheet vazia: appendTransaction deve escrever o cabeçalho primeiro.
         $this->assertNull($this->gateway->getHeaderRow());
 
-        $this->service->appendTransaction($this->dto(), 'fs');
+        $this->service->appendTransaction($this->dto(), 12);
 
         $rows = $this->gateway->rows();
 
         $this->assertSame($this->expectedHeaders(), $rows[0]);
         $this->assertCount(2, $rows); // cabeçalho + 1 transação
+
+        // Coluna G: ID da transação como string (buildRow faz (string) $txId).
+        $this->assertSame('12', $rows[1][6]);
     }
 
     public function test_append_transaction_does_not_rewrite_existing_header(): void
@@ -313,7 +316,7 @@ class SheetsServiceTest extends TestCase
         // Cabeçalho já existe: append apenas adiciona a linha de dados.
         $this->gateway->writeHeaderRow($this->expectedHeaders());
 
-        $this->service->appendTransaction($this->dto(), 'fs');
+        $this->service->appendTransaction($this->dto(), 13);
 
         $rows = $this->gateway->rows();
 
@@ -334,7 +337,7 @@ class SheetsServiceTest extends TestCase
 
         $this->service->appendTransaction(
             $this->dto(['amount' => null]),
-            'fs',
+            14,
         );
     }
 
@@ -345,7 +348,7 @@ class SheetsServiceTest extends TestCase
 
         $this->service->appendTransaction(
             $this->dto(['type' => null]),
-            'fs',
+            15,
         );
     }
 
@@ -354,7 +357,7 @@ class SheetsServiceTest extends TestCase
         try {
             $this->service->appendTransaction(
                 $this->dto(['amount' => null]),
-                'fs',
+                16,
             );
         } catch (\InvalidArgumentException) {
             // esperado
@@ -451,7 +454,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-items-1');
+        $this->service->appendTransaction($dto, 456);
 
         $row = $this->gateway->rows()[1];
         $this->assertCount(9, $row);
@@ -462,7 +465,7 @@ class SheetsServiceTest extends TestCase
     {
         $dto = $this->dto(['items' => []]);
 
-        $this->service->appendTransaction($dto, 'fs-empty-items');
+        $this->service->appendTransaction($dto, 457);
 
         $row = $this->gateway->rows()[1];
         $this->assertSame('', $row[8]);
@@ -476,7 +479,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-complete');
+        $this->service->appendTransaction($dto, 458);
 
         $row = $this->gateway->rows()[1];
         // Formato: "1. Arroz (x2 — R$ 32,90 = R$ 65,80)"
@@ -494,7 +497,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-name-only');
+        $this->service->appendTransaction($dto, 459);
 
         $row = $this->gateway->rows()[1];
         $this->assertSame('1. Detergente', $row[8]);
@@ -508,7 +511,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-decimal-qty');
+        $this->service->appendTransaction($dto, 460);
 
         $row = $this->gateway->rows()[1];
         // qty 1.5 → "x1,5" (vírgula PT-BR).
@@ -526,7 +529,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-sorted');
+        $this->service->appendTransaction($dto, 461);
 
         $row = $this->gateway->rows()[1];
         $lines = explode("\n", $row[8]);
@@ -552,7 +555,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-mixed');
+        $this->service->appendTransaction($dto, 462);
 
         $row = $this->gateway->rows()[1];
         $lines = explode("\n", $row[8]);
@@ -578,7 +581,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-pipe');
+        $this->service->appendTransaction($dto, 463);
 
         $row = $this->gateway->rows()[1];
         $this->assertSame('1. Coca-Cola | 2L', $row[8]);
@@ -597,7 +600,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-formula-items');
+        $this->service->appendTransaction($dto, 464);
 
         $row = $this->gateway->rows()[1];
         $lines = explode("\n", $row[8]);
@@ -620,7 +623,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-newline-formula');
+        $this->service->appendTransaction($dto, 465);
 
         $row = $this->gateway->rows()[1];
         // W2: escapeFormula agora aplica escape por linha.
@@ -638,7 +641,7 @@ class SheetsServiceTest extends TestCase
             ],
         ]);
 
-        $this->service->appendTransaction($dto, 'fs-newline-equals');
+        $this->service->appendTransaction($dto, 466);
 
         $row = $this->gateway->rows()[1];
         $lines = explode("\n", $row[8]);

@@ -1,5 +1,7 @@
 # 02 — Especificação Técnica
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore como tecnologia de armazenamento atual são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB) e as coleções Firestore `transactions`, `categories`, `labels` e `sessions` correspondem agora às tabelas homônimas no MariaDB. A seção 5 (Modelo de Dados Firestore) é mantida como referência histórica do schema da época.
+>
 > **Fase 2 do pipeline.** Versão consolidada integrando a Revisão v2 (Laravel 13 + Gemini OCR). Aprovada pelo usuário.
 
 ---
@@ -61,12 +63,12 @@ Gemini (AI Studio):
 │                               │  └───────────────────────────┘  │  │
 │  ┌──────────┐                 │                                  │  │
 │  │  Google  │◄──── REST ─────►│  ┌───────────────────────────┐  │  │
-│  │  Sheets  │                 │  │  Firestore Client         │  │  │
+│  │  Sheets  │                 │  │  WalletStore (Eloquent)   │  │  │
 │  └──────────┘                 │  └───────────────────────────┘  │  │
 │                               └─────────────────────────────────┘  │
 │  ┌──────────┐    ┌──────────┐                                      │
-│  │ Firestore│    │  Secret  │  ← Service Account JSON              │
-│  │ (NoSQL)  │    │ Manager  │                                      │
+│  │ MariaDB  │    │  Secret  │  ← Service Account JSON              │
+│  │ 11.8     │    │ Manager  │                                      │
 │  └──────────┘    └──────────┘                                      │
 │                                                                     │
 │  ┌──────────────┐                                                   │
@@ -135,11 +137,11 @@ Para 1 único usuário, volume baixo:
 | D | **Tipo** | `Despesa` / `Receita` | `Despesa` | ✅ |
 | E | **Categoria** | Texto | `Alimentação` | ✅ |
 | F | **Labels** | Hashtags separadas por espaço | `#almoço #japonês` | ❌ |
-| G | **ID Firestore** | UUID | `abc123-def456` | ✅ |
+| G | **ID Transação** | INTEGER | `42` | ✅ |
 | H | **Observações** | Texto | `Pago com cartão` | ❌ |
 | I | **Itens** | Texto (multiline, numerado) | `1. Feijão (x2 — R$ 8,50 = R$ 17,00)\n2. Arroz 5kg (x1 — R$ 32,90 = R$ 32,90)` | ❌ |
 
-> **Correção M-ITENS-7:** a documentação anterior estava divergente do código (colunas G/H/I trocadas). A tabela acima reflete a implementação real: G=ID Firestore, H=Observações, I=Itens. A coluna "Origem" (`source`) não é exposta na planilha (rastreada internamente no Firestore).
+> **Atualização pós-migração MariaDB:** a coluna G agora é `ID Transação` (INTEGER do MariaDB, não mais UUID do Firestore). A coluna "Origem" (`source`) não é exposta na planilha (rastreada internamente no banco de dados).
 
 **Coluna I — Itens (detalhamento item-nível):**
 - Cada transação pode ter 0 ou mais itens descritivos (produtos de um cupom fiscal, por exemplo).
@@ -167,6 +169,8 @@ Para 1 único usuário, volume baixo:
 ---
 
 ## 5. Modelo de Dados Firestore
+
+> **⚠️ Esta seção é mantida apenas como referência histórica.** O modelo foi migrado para MariaDB/Eloquent — veja as migrations em `database/migrations/` e o `WalletStore` em `app/Services/Store/WalletStore.php`.
 
 ```
 firestore

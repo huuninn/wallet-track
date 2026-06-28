@@ -7,16 +7,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Unreleased]
 
-### Added
-- M9 — Comandos auxiliares: `/nova` (wizard 6 etapas), `/ultimos`, `/categorias`, `/sync`
-- Comando Artisan `transactions:sync-pending` para sincronização manual/automática
-- Rota `GET /cron/sync-pending` autenticada via `X-Cron-Token` para execução via Cloud Scheduler
-- Middleware `App\Http\Middleware\VerifyCronToken` (timing-safe via `hash_equals`)
-- Campo `notified_at` no Firestore para garantir notificação única de falha
-- 9 testes de smoke (`#[Group('smoke')]`) cobrindo happy path de todos os handlers/commands/routes novos
-- ~80 novos testes PHPUnit (521 totais, 0 falhas) — M9 adiciona cobertura para CT-023 a CT-061
-
 ### Changed
+- Renomeação do cabeçalho da coluna G da planilha de "ID Firestore" → "ID Transação" (o ID agora é inteiro do MariaDB, não UUID do Firestore)
+- Reativação do target `migrate` do Makefile (app agora usa MariaDB; executa `docker compose exec app php artisan migrate --force`)
+- Remoção da verificação de `google/cloud-firestore` do gate de viabilidade (`bin/check-viability.sh`)
+- Higienização de comentários/docblocks em código ativo e documentação: referências ao Firestore como tecnologia atual substituídas por "banco de dados" ou "MariaDB"; referências históricas preservadas
 - `StartHandler` agora reseta sessão para IDLE em qualquer estado (resolve GAP-01)
 - `CancelarHandler` detecta IDLE e responde "Nada para cancelar" (resolve GAP-02)
 - `HelpHandler` marca todos os 7 comandos do M9 como ativos (resolve GAP-03)
@@ -24,8 +19,17 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - `ConversationRouter::presentConfirmation` limpa campos `_wizard_*` ao chegar na confirmação
 - `TransactionData::withField` aceita `labels` (necessário para o wizard)
 
+### Added
+- M9 — Comandos auxiliares: `/nova` (wizard 6 etapas), `/ultimos`, `/categorias`, `/sync`
+- Comando Artisan `transactions:sync-pending` para sincronização manual/automática
+- Rota `GET /cron/sync-pending` autenticada via `X-Cron-Token` para execução via Cloud Scheduler
+- Middleware `App\Http\Middleware\VerifyCronToken` (timing-safe via `hash_equals`)
+- Campo `notified_at` no banco de dados (MariaDB) para garantir notificação única de falha
+- 9 testes de smoke (`#[Group('smoke')]`) cobrindo happy path de todos os handlers/commands/routes novos
+- ~80 novos testes PHPUnit (521 totais, 0 falhas) — M9 adiciona cobertura para CT-023 a CT-061
+
 ### Fixed
-- Race condition `/sync` × cron: lock atômico via `FirestoreService::markSyncStarted` (campo `processing`)
+- Race condition `/sync` × cron: lock atômico via `WalletStore::markSyncStarted` (campo `processing`)
 - Reset de `sync_attempts` em `/sync` dá "mais 3 chances" ao usuário (Decisão Portão 2 #7)
 
 ### Security

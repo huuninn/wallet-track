@@ -1,5 +1,7 @@
 # Plano de Testes Manuais — Milestone M9: Comandos Auxiliares
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > **Projeto:** Wallet Track — bot Telegram de controle financeiro pessoal
 > **Versão:** 1.0 — 2026-06-19
 > **Escopo:** `/start`, `/help`, `/nova`, `/cancelar`, `/ultimos [n]`, `/categorias`, `/sync`, `transactions:sync-pending`, `GET /cron/sync-pending`

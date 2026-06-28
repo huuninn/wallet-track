@@ -1,5 +1,7 @@
 # 03 — Plano de Testes Manuais
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > 47 casos de teste cobrindo fluxos felizes, edge cases, segurança e resiliência. Nota: os casos de OCR (CT-007 a CT-010) foram atualizados para refletir o uso do **Gemini** (em vez de Google Cloud Vision) conforme Revisão v2.
 
 ---

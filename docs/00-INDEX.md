@@ -1,8 +1,10 @@
 # Wallet Track — Índice de Documentação
 
+> **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+
 > **README principal:** [`../README.md`](../README.md) — visão geral, quick start, comandos, stack.
 
-Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extração por IA, validação, confirmação inline e gravação em Google Sheets + Firestore.
+Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extração por IA, validação, confirmação inline e gravação em Google Sheets + MariaDB.
 
 ---
 
@@ -41,7 +43,7 @@ Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extra�
 ## Resumo Executivo
 
 ### O que é
-Assistente de registro de despesas/receitas operado via Telegram. O usuário envia informações de um gasto (texto livre ou foto de nota fiscal) para um bot. O sistema extrai e interpreta os dados, valida, sugere labels, confirma com o usuário e persiste em planilha Google Sheets + Firestore.
+Assistente de registro de despesas/receitas operado via Telegram. O usuário envia informações de um gasto (texto livre ou foto de nota fiscal) para um bot. O sistema extrai e interpreta os dados, valida, sugere labels, confirma com o usuário e persiste em planilha Google Sheets + MariaDB.
 
 ### Stack Final
 - **PHP 8.4** + **Laravel 13.x** + **FrankenPHP** + **Octane**
@@ -50,12 +52,12 @@ Assistente de registro de despesas/receitas operado via Telegram. O usuário env
 - **IA Texto**: DeepSeek `deepseek-v4-flash` (via `openai-php/client`)
 - **IA Imagem/OCR**: Gemini `gemini-2.5-flash` (via Google AI Studio, `google-gemini-php/client`)
 - **Planilha**: Google Sheets API (Service Account)
-- **Persistência**: Firestore (NoSQL)
+- **Persistência**: MariaDB 11.8
 
 ### Fluxo Principal
 ```
 Texto/foto → IA extrai JSON → valida campos → sugere labels
-         → usuário confirma (inline keyboard) → grava Firestore + Google Sheets
+         → usuário confirma (inline keyboard) → grava banco de dados + Google Sheets
               ↓ (a cada 5 min, via Cloud Scheduler)
          /cron/sync-pending → processa pendentes → atualiza Sheets
 ```
@@ -138,7 +140,7 @@ wallet-track/
 │   ├── Dto/                           # TransactionData
 │   ├── Enums/                         # ConversationState, WizardStep
 │   ├── Http/Middleware/               # ValidateTelegramWebhook, VerifyCronToken
-│   └── Services/Google/               # FirestoreService, InMemoryFirestoreGateway
+│   └── Services/Google/               # WalletStore (Eloquent/MariaDB)
 ├── tests/                             # 521 testes PHPUnit
 │   ├── Feature/
 │   │   ├── Commands/                  # 7 handler tests
@@ -154,4 +156,4 @@ wallet-track/
 
 ## Pré-requisitos antes de implementar
 
-Consulte a seção **"Pré-requisitos antes de começar"** no [Plano de Implementação](./06-plano-implementacao.md#6-pré-requisitos-antes-de-começar-m0). Inclui: Telegram Bot Token, Chat ID, DeepSeek API Key, Gemini API Key, Google Cloud Project + Service Account, Firestore, planilha Google Sheets.
+Consulte a seção **"Pré-requisitos antes de começar"** no [Plano de Implementação](./06-plano-implementacao.md#6-pré-requisitos-antes-de-começar-m0). Inclui: Telegram Bot Token, Chat ID, DeepSeek API Key, Gemini API Key, Google Cloud Project + Service Account, MariaDB, planilha Google Sheets.

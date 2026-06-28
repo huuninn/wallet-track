@@ -9,7 +9,9 @@ set -e
 #    (ex.: dev local), assume que as env vars já foram injetadas.
 #    PHP é usado em vez de jq porque valores podem conter newlines (SA JSON).
 # 2. Cria diretórios de storage/cache/bootstrap necessários.
-# 3. Executa o FrankenPHP (Caddy + runtime PHP embutido).
+# 3. Inicia o servidor Laravel Octane (FrankenPHP) via `php artisan octane:start`.
+#    O Octane gera o Caddyfile internamente e sobe os workers sobre
+#    public/frankenphp-worker.php, substituindo o modo php_server legacy.
 # ---------------------------------------------------------------------------
 
 ENV_JSON="${GOOGLE_SECRETS_MOUNT_PATH:-/secrets}/env.json"
@@ -33,4 +35,9 @@ do
     [ -d "$dir" ] || mkdir -p "$dir"
 done
 
-exec frankenphp run --config /etc/caddy/Caddyfile --adapter caddyfile
+exec php artisan octane:start \
+    --server=frankenphp \
+    --host=0.0.0.0 \
+    --port="${PORT:-8080}" \
+    --max-requests="${OCTANE_MAX_REQUESTS:-1000}" \
+    --workers="${OCTANE_WORKERS:-1}"

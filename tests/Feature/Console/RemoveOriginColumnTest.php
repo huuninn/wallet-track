@@ -32,7 +32,7 @@ class RemoveOriginColumnTest extends TestCase
         // Popula a gateway com um cabeçalho de 9 colunas + 1 linha de dados.
         $this->gateway->writeHeaderRow([
             'Data', 'Descrição', 'Valor', 'Tipo', 'Categoria',
-            'Labels', 'Origem', 'ID Firestore', 'Observações',
+            'Labels', 'Origem', 'ID Transação', 'Observações',
         ]);
         $this->gateway->appendRow([
             '2026-06-15', 'Teste', 50.0, 'Despesa', 'Outros',
@@ -63,7 +63,7 @@ class RemoveOriginColumnTest extends TestCase
         // Agora são 8 colunas — a coluna "Origem" (índice 6) foi removida.
         $row = $this->gateway->rows()[1];
         $this->assertCount(8, $row);
-        // ID Firestore (antes índice 7) agora está em índice 6.
+        // ID Transação (antes índice 7) agora está em índice 6.
         $this->assertSame('abc123', $row[6]);
     }
 }
