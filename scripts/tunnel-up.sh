@@ -94,6 +94,7 @@ WEBHOOK_URL="${TUNNEL_URL}/webhook/telegram"
 # ----------------------------------------------------------------------------
 echo "==> Atualizando TELEGRAM_WEBHOOK_URL no .env → $WEBHOOK_URL"
 sed -i.bak -E "s|^TELEGRAM_WEBHOOK_URL=.*|TELEGRAM_WEBHOOK_URL=${WEBHOOK_URL}|" .env
+rm -f .env.bak
 
 echo "==> Recriando container para aplicar novo env_file..."
 docker compose up -d --force-recreate app >/dev/null
@@ -102,11 +103,15 @@ echo "==> Limpando cache de config..."
 docker compose exec -T app php artisan config:clear >/dev/null
 
 echo -n "==> Aguardando app"
+HEALTH_OK=false
 for _ in $(seq 1 30); do
-  docker compose exec -T app php -r 'exit(@fsockopen("127.0.0.1", 8000) ? 0 : 1);' >/dev/null 2>&1 \
-    && { echo " ✓"; break; }
+  docker compose exec -T app php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' >/dev/null 2>&1 \
+    && { echo " ✓"; HEALTH_OK=true; break; }
   echo -n "."; sleep 1
 done
+if [ "$HEALTH_OK" = "false" ]; then
+  echo " ⚠ app não respondeu em 30s (verifique \`docker compose logs app\`)"
+fi
 
 echo "==> Registrando webhook no Telegram..."
 docker compose exec -T app php artisan telegram:set-webhook
