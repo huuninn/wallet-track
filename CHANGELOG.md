@@ -37,6 +37,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - Resposta 401 genérica (`{"status":"error"}`) — não revela se o token está faltando ou inválido
 - Rota adicionada à exclusion list CSRF em `bootstrap/app.php`
 
+### Removed
+- `database/migrations/0001_01_01_000002_create_jobs_table.php` (criava `jobs`, `job_batches`, `failed_jobs` — todas dead, queue nunca foi despachada)
+- `config/queue.php` (sem queue, sem config)
+- `php artisan queue:listen` do script `dev` em `composer.json` (com ajuste dos `--names` para 3 serviços: `server,logs,vite`)
+
 ## [0.8.0] - 2026-XX-XX
 
 ### Added
