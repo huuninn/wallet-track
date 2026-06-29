@@ -25,7 +25,21 @@ options:
 
 steps:
   # ---------------------------------------------------------------------------
-  # Step 1: Build Docker image (usa cache do Artifact Registry)
+  # Step 1a: Build base image (extensões PHP compiladas — cache entre builds)
+  # ---------------------------------------------------------------------------
+  - id: 'build-base'
+    name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker build \
+          -f docker/Dockerfile.base \
+          -t wallet-track-base:latest \
+          .
+
+  # ---------------------------------------------------------------------------
+  # Step 1b: Build Docker image (usa cache do Artifact Registry)
   # ---------------------------------------------------------------------------
   - id: 'build'
     name: 'gcr.io/cloud-builders/docker'
@@ -35,6 +49,7 @@ steps:
       - |
         docker build \
           --target runtime \
+          --build-arg BASE_IMAGE=wallet-track-base:latest \
           --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:${BUILD_ID} \
           --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/app:latest \
           .

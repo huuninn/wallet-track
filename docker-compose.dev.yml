@@ -43,7 +43,7 @@ services:
       REDIS_PORT: "6379"
       # Path da Service Account dentro do container (mesmo padrão do prod).
       GOOGLE_SERVICE_ACCOUNT_JSON_PATH: /app/wallet-track-499719-54b725c0bb5d.json
-    ports:
+    ports: !override
       - "8001:8080"
     volumes:
       - ./:/app

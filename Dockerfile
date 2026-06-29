@@ -10,42 +10,19 @@
 # ============================================================================
 
 # ----------------------------------------------------------------------------
-# Estágio base — imagem oficial FrankenPHP com PHP 8.4 (Debian Bookworm)
+# Estágio base — imagem base pré-construída com extensões PHP já compiladas
 # ----------------------------------------------------------------------------
-# O ARG BASE_IMAGE permite que docker-compose injete uma imagem pré-construída
-# (docker/Dockerfile.base) com as extensões PHP já compiladas, evitando rebuild
-# completo em cada `docker compose build`. Em builds standalone (Cloud Build),
-# o default aponta diretamente para a imagem oficial FrankenPHP.
-ARG BASE_IMAGE=dunglas/frankenphp:1.4-php8.4-bookworm
+# O ARG BASE_IMAGE é REQUIRED (sem default) — toda extensão PHP vem da imagem
+# base, garantindo single source of truth. Veja docker/Dockerfile.base para a
+# lista de extensões (gmp, bcmath, intl, opcache, pcntl, pdo_mysql, pdo_sqlite,
+# redis, zip). Build local (docker compose) e Cloud Build devem construir a
+# base primeiro e injetá-la via --build-arg BASE_IMAGE=wallet-track-base:latest.
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS base
 
-# Extensões PHP obrigatórias ao projeto (plano §M1.3 + composer.json ext-*).
-# `install-php-extensions` é um helper já presente na imagem FrankenPHP.
-# Notas:
-#  - pdo_mysql: driver MariaDB/MySQL (pdo_mysql) para persistência de transações, categorias e labels
-#  - redis: extensão phpredis para sessões conversacionais e cache
-#  - intl: normalização Unicode (heurística de labels)
-#  - gmp/bcmath: aritmética precisa (cálculos de valores)
-#  - pdo_sqlite: banco usado por testes unitários
-#  - opcache: performance em worker mode
-#  - zip: Composer / uploads
-
-# Atualizamos índices apt explicitamente para evitar listas obsoletas no cache
-# da imagem base (que pode estar defasado no momento do pull).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends jq \
-    && install-php-extensions \
-        gmp \
-        bcmath \
-        intl \
-        opcache \
-        pdo_mysql \
-        pdo_sqlite \
-        redis \
-        zip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Diretório da aplicação (padrão FrankenPHP: /app, document root /app/public)
+# Diretório da aplicação (padrão FrankenPHP: /app, document root /app/public).
+# Herdado da imagem base; redeclarado para garantir consistência caso a imagem
+# base mude esse padrão.
 ENV APP_DIR=/app
 WORKDIR ${APP_DIR}
 
@@ -194,19 +171,13 @@ FROM base AS dev
 COPY --from=composer:2.8 /usr/bin/composer /usr/bin/composer
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --global --add safe.directory '*'
 
-# Instala TODAS as dependências (incluindo require-dev: phpunit, pint, etc.).
-COPY composer.json composer.lock ./
-RUN composer install \
-        --no-interaction \
-        --no-scripts \
-        --no-autoloader \
-        --prefer-dist
-
-# Copia o código da aplicação e gera autoload completo (com dev classes).
+# Copia o código da aplicação. vendor/ é populado pelo volume
+# `vendor_dev` (docker-compose.yml) e via `make composer-dev` — o conteúdo
+# da imagem seria shadowado pelo bind-mount.
 COPY . .
-RUN composer dump-autoload --optimize --no-scripts
 
 # Configuração PHP para dev: revalida timestamps do opcache a cada request
 # (reflete alterações de código sem rebuild da imagem).
