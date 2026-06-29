@@ -2055,7 +2055,7 @@ class ConversationRouterTest extends TestCase
         // Implementação: não mockamos o WalletStore inteiro;
         // em vez disso, validamos que o caminho normal funciona e logamos
         // o caso best-effort via inspeção do código (a lógica está em
-        // trackUsageAfterConfirm com try/catch).
+        // trackLabelUsage com try/catch).
 
         $this->seedDefaultCategories();
 

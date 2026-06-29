@@ -6,6 +6,7 @@ namespace Tests\Unit\Bot\Messaging;
 
 use App\Bot\Messaging\TransactionSummaryFormatter;
 use App\Dto\TransactionData;
+use App\Models\Category;
 use App\Models\Transaction;
 use Illuminate\Support\Collection;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -60,9 +61,22 @@ class TransactionSummaryFormatterTest extends TestCase
                 'description' => $data['description'] ?? '',
                 'amount' => $data['amount'] ?? 0.0,
                 'type' => $data['type'] ?? '',
-                'category' => $data['category'] ?? null,
                 'date' => $data['date'] ?? null,
             ]);
+
+            // Categoria: ghost model (não persistido) para a relação BelongsTo.
+            $categoryName = $data['category'] ?? null;
+            if ($categoryName !== null && $categoryName !== '') {
+                $category = new Category();
+                $category->setRawAttributes([
+                    'id' => $i + 1,
+                    'display_name' => $categoryName,
+                    'slug' => mb_strtolower($categoryName),
+                ]);
+                $tx->setRelation('category', $category);
+            } else {
+                $tx->setRelation('category', null);
+            }
 
             $labelNames = $data['labels'] ?? [];
             $tx->setRelation('labels', collect(array_map(

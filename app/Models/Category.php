@@ -9,6 +9,7 @@ use Database\Factories\CategoryFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * @property int $id
@@ -34,5 +35,15 @@ class Category extends Model
             'is_default' => 'boolean',
             'created_at' => 'immutable_datetime',
         ];
+    }
+
+    /**
+     * Transações que usam esta categoria.
+     *
+     * @return HasMany<Transaction>
+     */
+    public function transactions(): HasMany
+    {
+        return $this->hasMany(Transaction::class);
     }
 }

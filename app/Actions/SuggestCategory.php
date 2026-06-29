@@ -18,9 +18,11 @@ use Illuminate\Database\Eloquent\Collection;
  *  - **Match exato** ("Alimentação" == "alimentação") → categoria existente.
  *  - **Fuzzy match acima do threshold** ("Alimentaçao" → "Alimentação") →
  *    categoria existente (corrige typo do LLM ou do usuário).
- *  - **Match abaixo do threshold** → devolve com `isNew: true`, e o caller
- *    decide se cria a categoria nova (ConversationRouter em handleConfirm
- *    chama `createCategory` se `! categoryExists`).
+ *  - **Match abaixo do threshold** → devolve com `isNew: true`.
+ *    O caller (ConversationRouter::enrichDtoWithSuggestions) aplica
+ *    o display ao DTO. A criação efetiva da categoria só ocorre
+ *    dentro de WalletStore::saveTransaction() via firstOrCreate,
+ *    garantindo que a FK seja populada no momento da persistência.
  *  - **Sem categoria extraída** → inferência via keywords da descrição,
  *    ou fallback "Outros" como default canônico.
  *

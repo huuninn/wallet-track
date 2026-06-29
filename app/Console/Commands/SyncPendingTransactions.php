@@ -310,7 +310,7 @@ final class SyncPendingTransactions extends Command
                 'description' => $tx->description,
                 'amount' => $tx->amount,
                 'type' => $tx->type,
-                'category' => $tx->category,
+                'category' => $tx->category?->display_name,
                 'date' => is_object($tx->date) ? $tx->date->format('Y-m-d') : $tx->date,
                 'observations' => $tx->observations,
                 'labels' => $tx->labels->pluck('name')->toArray(),

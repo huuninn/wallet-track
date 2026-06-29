@@ -88,14 +88,16 @@ final class WalletStoreTest extends TestCase
         $this->assertIsInt($id);
         $this->assertGreaterThan(0, $id);
 
-        $tx = Transaction::with(['items', 'labels'])->find($id);
+        $tx = Transaction::with(['items', 'labels', 'category'])->find($id);
         $this->assertNotNull($tx);
         $this->assertSame('123456', $tx->chat_id);
         $this->assertSame('2026-06-15', $tx->date->toDateString());
         $this->assertSame('Compra no mercado', $tx->description);
         $this->assertSame(150.75, (float) $tx->amount);
         $this->assertSame('expense', $tx->type);
-        $this->assertSame('Alimentação', $tx->category);
+        $this->assertNotNull($tx->category_id, 'category_id deve ser setado (FK)');
+        $this->assertNotNull($tx->category, 'relação category deve ser carregada');
+        $this->assertSame('Alimentação', $tx->category->display_name);
         $this->assertSame(WalletStore::SYNC_PENDING, $tx->sync_status);
         $this->assertSame(0, $tx->sync_attempts);
         $this->assertFalse($tx->processing);
@@ -195,6 +197,47 @@ final class WalletStoreTest extends TestCase
         $tx2 = Transaction::with('labels')->find($id2);
         $this->assertCount(1, $tx2->labels);
         $this->assertSame($folded, $tx2->labels[0]->folded_name);
+    }
+
+    public function test_save_transaction_creates_category_when_it_does_not_exist(): void
+    {
+        $initialCount = Category::count();
+
+        $dto = $this->makeDto(['category' => 'NovaCategoria']);
+        $id = $this->store->saveTransaction('123456', $dto);
+
+        // Categoria foi criada.
+        $this->assertSame($initialCount + 1, Category::count());
+
+        $tx = Transaction::with('category')->find($id);
+        $this->assertNotNull($tx);
+        $this->assertNotNull($tx->category_id);
+        $this->assertNotNull($tx->category);
+        $this->assertSame('NovaCategoria', $tx->category->display_name);
+        $this->assertSame('novacategoria', $tx->category->slug);
+        $this->assertSame('expense', $tx->category->default_type);
+    }
+
+    public function test_save_transaction_with_null_category_saves_null_category_id(): void
+    {
+        $dto = $this->makeDto(['category' => null]);
+        $id = $this->store->saveTransaction('123456', $dto);
+
+        $tx = Transaction::with('category')->find($id);
+        $this->assertNotNull($tx);
+        $this->assertNull($tx->category_id);
+        $this->assertNull($tx->category);
+    }
+
+    public function test_save_transaction_with_empty_category_saves_null_category_id(): void
+    {
+        $dto = $this->makeDto(['category' => '']);
+        $id = $this->store->saveTransaction('123456', $dto);
+
+        $tx = Transaction::with('category')->find($id);
+        $this->assertNotNull($tx);
+        $this->assertNull($tx->category_id);
+        $this->assertNull($tx->category);
     }
 
     public function test_get_transaction_returns_model_with_relations(): void

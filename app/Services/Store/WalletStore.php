@@ -55,6 +55,15 @@ final class WalletStore
         }
 
         return DB::transaction(function () use ($chatId, $dto): int {
+            // Resolve o nome da categoria para ID (cria se não existir).
+            // Idempotente: firstOrCreate pelo slug garante que chamadas
+            // concorrentes não duplicam a categoria. O lookup é
+            // case-insensitive via buildSlug().
+            $categoryId = $this->resolveCategoryId(
+                $dto->category,
+                $dto->type ?? 'expense',
+            );
+
             // 1. INSERT transactions
             $transaction = Transaction::create([
                 'chat_id' => $chatId,
@@ -62,7 +71,7 @@ final class WalletStore
                 'description' => $dto->description,
                 'amount' => $dto->amount,
                 'type' => $dto->type,
-                'category' => $dto->category,
+                'category_id' => $categoryId,
                 'observations' => $dto->observations,
                 'sync_status' => self::SYNC_PENDING,
                 'sync_attempts' => 0,
@@ -430,7 +439,38 @@ final class WalletStore
      */
     public function createCategory(string $displayName, string $defaultType, bool $isDefault = false): void
     {
-        Category::firstOrCreate(
+        $this->findOrCreateCategory($displayName, $defaultType, $isDefault);
+    }
+
+    /**
+     * Resolve um nome de categoria para o ID (PK).
+     *
+     * Se o nome for null/vazio, retorna null (transação sem categoria).
+     * Caso contrário, faz lookup case-insensitive via slug e cria a
+     * categoria se não existir (idempotente via firstOrCreate).
+     *
+     * O `default_type` é derivado do `type` da transação corrente.
+     */
+    private function resolveCategoryId(?string $name, string $defaultType): ?int
+    {
+        if ($name === null || trim($name) === '') {
+            return null;
+        }
+
+        return $this->findOrCreateCategory($name, $defaultType, false)->id;
+    }
+
+    /**
+     * Core idempotente de criação de categoria (firstOrCreate pelo slug).
+     *
+     * Centraliza a lógica duplicada entre {@see createCategory()} e
+     * {@see resolveCategoryId()}. O slug é case-insensitive
+     * (mb_strtolower + trim), garantindo que "Alimentação" e "alimentação"
+     * resolvam para a mesma linha.
+     */
+    private function findOrCreateCategory(string $displayName, string $defaultType, bool $isDefault): Category
+    {
+        return Category::firstOrCreate(
             ['slug' => $this->buildSlug($displayName)],
             [
                 'display_name' => $displayName,

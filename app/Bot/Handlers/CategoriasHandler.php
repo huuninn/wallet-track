@@ -106,7 +106,7 @@ final class CategoriasHandler
             foreach ($sorted as $row) {
                 $name = $row->display_name;
                 $count = (int) $row->use_count;
-                $emoji = CategoryEmojiMap::EMOJIS[$name] ?? self::CATEGORY_EMOJI_FALLBACK;
+                $emoji = CategoryEmojiMap::getEmoji($name, self::CATEGORY_EMOJI_FALLBACK);
                 $noun = $count === 1 ? 'transação' : 'transações';
                 $lines[] = "{$emoji} {$name} — {$count} {$noun}";
             }

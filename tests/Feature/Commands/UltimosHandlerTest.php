@@ -104,7 +104,6 @@ class UltimosHandlerTest extends TestCase
                 'description' => "Tx {$i}",
                 'amount' => 10.0,
                 'type' => 'expense',
-                'category' => 'Outros',
                 'date' => $date,
                 'sync_status' => 'synced',
             ], $data));

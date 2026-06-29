@@ -66,15 +66,42 @@ final readonly class CategoryEmojiMap
      * mantém {@see self::get()} consistente com a spec §6.3: a tabela
      * cobre 9 categorias e "fora da tabela" cai no "Outros" genérico.
      *
-     * Renderizações que precisam de um fallback DIFERENTE (ex.: `🏷` para
-     * sinalizar "categoria personalizada") devem usar {@see self::EMOJIS}
-     * diretamente com `?? '🏷'`.
+     * A busca é case-sensitive — preserva compatibilidade com callers
+     * existentes que dependem do `display_name` exato do banco de dados.
+     * Para busca case-insensitive, use {@see self::getEmoji()}.
      *
      * @param  string  $category  Nome canônico da categoria (case-sensitive).
      */
     public static function get(string $category): string
     {
         return self::EMOJIS[$category] ?? '📦';
+    }
+
+    /**
+     * Case-insensitive emoji lookup with configurable fallback.
+     *
+     * Normaliza a chave de busca com `mb_strtolower`, eliminando
+     * sensibilidade a maiúsculas/minúsculas que poderia causar
+     * fallback indevido quando o `display_name` do banco de dados
+     * diverge em capitalização da chave no mapa.
+     *
+     * O(n) sobre o mapa (9 entradas) — custo desprezível.
+     *
+     * @param  string  $category  Nome da categoria (case-insensitive).
+     * @param  string  $fallback  Emoji de fallback quando a categoria
+     *                            não está mapeada.
+     */
+    public static function getEmoji(string $category, string $fallback = '📦'): string
+    {
+        $key = mb_strtolower($category);
+
+        foreach (self::EMOJIS as $k => $v) {
+            if (mb_strtolower($k) === $key) {
+                return $v;
+            }
+        }
+
+        return $fallback;
     }
 
     /**

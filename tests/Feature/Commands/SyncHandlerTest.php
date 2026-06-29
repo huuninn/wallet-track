@@ -102,7 +102,6 @@ class SyncHandlerTest extends TestCase
             'description' => 'Tx pendente',
             'amount' => 50.0,
             'type' => 'expense',
-            'category' => 'Outros',
             'date' => '2026-06-15',
             'sync_status' => WalletStore::SYNC_PENDING,
             'sync_attempts' => $attempts,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Database\Factories;
 
+use App\Models\Category;
 use App\Models\Transaction;
 use App\Models\TransactionItem;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -21,7 +22,7 @@ class TransactionFactory extends Factory
             "description" => fake()->sentence(4),
             "amount" => fake()->randomFloat(2, 1, 1000),
             "type" => fake()->randomElement(["expense", "income"]),
-            "category" => fake()->optional()->word(),
+            "category_id" => Category::factory(),
             "observations" => fake()->optional()->sentence(),
             "sync_status" => "pending",
             "sync_attempts" => 0,

@@ -266,7 +266,7 @@ final class TransactionSummaryFormatter
     private function listRow(Transaction $tx, int $index): string
     {
         $description = $this->escape($tx->description ?? '—');
-        $category = $tx->category ?? '';
+        $category = $tx->category?->display_name ?? '';
         $catEmoji = $category !== '' ? $this->categoryEmoji($category) : self::CATEGORY_EMOJI_FALLBACK;
 
         $type = $tx->type ?? '';
@@ -295,10 +295,14 @@ final class TransactionSummaryFormatter
 
     /**
      * Devolve o emoji de uma categoria, com fallback `🏷` para desconhecidas.
+     *
+     * Usa {@see CategoryEmojiMap::getEmoji()} com busca case-insensitive,
+     * eliminando divergências de capitalização entre o `display_name` do
+     * banco de dados e as chaves do mapa canônico.
      */
     private function categoryEmoji(string $category): string
     {
-        return CategoryEmojiMap::EMOJIS[$category] ?? self::CATEGORY_EMOJI_FALLBACK;
+        return CategoryEmojiMap::getEmoji($category, self::CATEGORY_EMOJI_FALLBACK);
     }
 
     /**

@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -20,7 +21,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $description
  * @property float $amount
  * @property string $type // 'expense' | 'income'
- * @property string|null $category
+ * @property int|null $category_id
  * @property string|null $observations
  * @property string $sync_status // 'pending' | 'synced' | 'failed'
  * @property int $sync_attempts
@@ -33,7 +34,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property CarbonImmutable|null $created_at
  * @property CarbonImmutable|null $updated_at
  */
-#[Fillable(['chat_id', 'date', 'description', 'amount', 'type', 'category', 'observations', 'sync_status', 'sync_attempts', 'sync_last_attempt_at', 'sync_error_message', 'spreadsheet_row_id', 'processing', 'processing_since', 'notified_at'])]
+#[Fillable(['chat_id', 'date', 'description', 'amount', 'type', 'category_id', 'observations', 'sync_status', 'sync_attempts', 'sync_last_attempt_at', 'sync_error_message', 'spreadsheet_row_id', 'processing', 'processing_since', 'notified_at'])]
 class Transaction extends Model
 {
     /** @use HasFactory<TransactionFactory> */
@@ -43,6 +44,7 @@ class Transaction extends Model
     {
         return [
             'amount' => 'float',
+            'category_id' => 'integer',
             'date' => 'immutable_date',
             'processing' => 'boolean',
             'sync_attempts' => 'integer',
@@ -60,7 +62,7 @@ class Transaction extends Model
     public function scopeWithItemsAndLabels(Builder $query): Builder
     {
         // Ordenação dos items por position é delegada ao relacionamento items().
-        return $query->with(['items', 'labels']);
+        return $query->with(['items', 'labels', 'category']);
     }
 
     /**
@@ -81,5 +83,17 @@ class Transaction extends Model
     public function labels(): BelongsToMany
     {
         return $this->belongsToMany(Label::class, 'transaction_labels');
+    }
+
+    /**
+     * Categoria da transação (FK → categories.id).
+     *
+     * nullable — transações podem não ter categoria associada.
+     *
+     * @return BelongsTo<Category>
+     */
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(Category::class);
     }
 }

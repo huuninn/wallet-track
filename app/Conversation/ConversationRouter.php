@@ -1103,18 +1103,17 @@ final class ConversationRouter
      * e o cron M9 (`/cron/sync-pending`) recupera. Logamos warning para
      * diagnóstico.
      *
-     * **M8 — Tracking pós-confirm** (CT-012, CT-022): após `saveTransaction`
+     * **M8 — Tracking pós-confirm** (CT-022): após `saveTransaction`
      * (mas antes do `clearSession`), incrementamos o `use_count` de cada
-     * label e criamos a categoria se ainda não existir. Essas operações
-     * são **best-effort** (try/catch) — se a rede/banco falhar, o
-     * usuário já recebeu o toast "Salvo!" e a transação está persistida.
-     * A próxima sugestão vai simplesmente "começar do zero" nesse label
-     * (até o próximo confirm).
+     * label. Essas operações são **best-effort** (try/catch) — se a
+     * rede/banco falhar, o usuário já recebeu o toast "Salvo!" e a
+     * transação está persistida. A próxima sugestão vai simplesmente
+     * "começar do zero" nesse label (até o próximo confirm).
      *
      * **Race condition** (dois confirms simultâneos na MESMA categoria):
-     * o `createCategory` é idempotente via `firstOrCreate`;
-     * o `incrementLabelUse` é atômico. Nenhuma proteção
-     * adicional é necessária.
+     * a criação da categoria é idempotente via `firstOrCreate` dentro de
+     * {@see WalletStore::saveTransaction()}; o `incrementLabelUse` é
+     * atômico. Nenhuma proteção adicional é necessária.
      *
      * @param  array<string, mixed>  $session
      */
@@ -1170,11 +1169,12 @@ final class ConversationRouter
             return;
         }
 
-        // 2. M8 — Tracking de uso de labels (CT-022) e persistência de
-        // categoria nova (CT-012). Best-effort: falhas NÃO bloqueiam o
-        // confirm — o toast "Salvo!" já foi computado e a transação está
-        // persistida. Logging de warning para diagnóstico.
-        $this->trackUsageAfterConfirm($dto);
+        // 2. M8 — Tracking de uso de labels (CT-022). Best-effort: falhas
+        // NÃO bloqueiam o confirm — o toast "Salvo!" já foi computado e a
+        // transação está persistida. Logging de warning para diagnóstico.
+        // A criação da categoria foi movida para dentro de
+        // WalletStore::saveTransaction() via resolveCategoryId().
+        $this->trackLabelUsage($dto);
 
         // 3. Tenta espelhar na planilha (best-effort).
         try {
@@ -1206,17 +1206,14 @@ final class ConversationRouter
     }
 
     /**
-     * Tracking de uso de labels e persistência de categoria nova (M8).
+     * Tracking de uso de labels pós-confirmação (M8 / CT-022).
      *
      * - Para cada label do DTO: `store.incrementLabelUse($label)`
      *   (cria com use_count=1 se não existia; idempotente).
-     * - Se a categoria não existe: `store.createCategory(...)` com
-     *   `defaultType` derivado do `type` da transação.
      *
-     * Ambos isolados em try/catch — uma falha não bloqueia a outra, e
-     * nenhuma das duas impede o confirm do usuário.
+     * Isolado em try/catch — uma falha não bloqueia o confirm do usuário.
      */
-    private function trackUsageAfterConfirm(TransactionData $dto): void
+    private function trackLabelUsage(TransactionData $dto): void
     {
         // Labels — incrementa o contador de cada uma.
         foreach ($dto->labels as $label) {
@@ -1234,28 +1231,6 @@ final class ConversationRouter
                     'message' => $e->getMessage(),
                 ]);
             }
-        }
-
-        // Categoria — cria se ainda não existe. Usa o `defaultType` alinhado
-        // com o `type` da transação atual (income → income; outros → expense).
-        $category = $dto->category;
-        if ($category === null || trim($category) === '') {
-            return;
-        }
-
-        $categoryTrim = trim($category);
-
-        try {
-            if (! $this->store->categoryExists($categoryTrim)) {
-                $defaultType = $dto->type === 'income' ? 'income' : 'expense';
-                $this->store->createCategory($categoryTrim, $defaultType);
-            }
-        } catch (Throwable $e) {
-            Log::warning('ConversationRouter: createCategory falhou (não bloqueia confirm)', [
-                'category' => $categoryTrim,
-                'exception' => $e::class,
-                'message' => $e->getMessage(),
-            ]);
         }
     }
 
