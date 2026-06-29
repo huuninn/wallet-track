@@ -206,7 +206,7 @@ final readonly class TransactionData
 
     /**
      * Serializa o DTO como array snake_case para persistência no campo
-     * `draft` da sessão no banco de dados (`sessions` com chave `chat_id`).
+     * `draft` da sessão no Redis (Hash `session:{chatId}`).
      *
      * Round-trip com {@see fromDraftArray()}: o que entra sai idêntico.
      * Campos null são omitidos para economizar espaço e deixar o draft

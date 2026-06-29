@@ -2,7 +2,7 @@
 
 > **Projeto:** Wallet Track — bot Telegram de controle financeiro pessoal
 > **Stack:** Laravel 13 + Nutgram 4 + DeepSeek + Gemini + Firestore + Google Sheets + Cloud Run
-> **Milestone:** M9 — Comandos Auxiliares (`/start`, `/help`, `/nova`, `/cancelar`, `/ultimos`, `/categorias`, `/sync`, `transactions:sync-pending`, `GET /cron/sync-pending`)
+> **Milestone:** M9 — Comandos Auxiliares (`/start`, `/help`, `/nova`, `/cancelar`, `/ultimos`, `/categorias`, `/sync`, `transactions:sync-pending`, `GET /cron/sync-pending`) ⚠️ **DEPRECATED:** `GET /cron/sync-pending` foi substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`; middleware `VerifyCronToken` removido; `CRON_SECRET_TOKEN` depreciado.
 > **Data:** 19/06/2026
 > **Base documental:** `docs/06-plano-implementacao.md §12`, `docs/specs/m9-spec-fase-2.md` (1.318 linhas, 11 decisões técnicas), `docs/testes/m9-plano-testes.md` (74 CTs), `docs/04-clarificacoes.md` (#5, #6, #7)
 > **Decisões do Portão 2:** JÁ APLICADAS — este plano NÃO revisita, apenas EXECUTA
@@ -48,7 +48,7 @@ Fase C — Sync (cron + comando) (1 dev-dia)
   ├── T-010 FirestoreService: resetPendingSyncAttempts + listPendingSync
   ├── T-011 SyncPendingTransactions command + teste
   ├── T-012 SyncHandler (síncrono via /sync) + teste
-  ├── T-013 Rota /cron/sync-pending + CSRF exclusion
+  ├── T-013 Rota /cron/sync-pending + CSRF exclusion ⚠️ **DEPRECATED — já executado e substituído**
   └── T-014 Testes: Fase C completa
 
 Fase D — Wizard /nova (1 dev-dia, fase mais delicada)
@@ -772,7 +772,7 @@ bin/dev test --filter "Commands/SyncHandlerTest"
 
 ---
 
-#### T-013 — Rota `GET /cron/sync-pending` + exclusão CSRF
+#### T-013 — Rota `GET /cron/sync-pending` + exclusão CSRF ⚠️ **DEPRECATED — substituído por Schedule::command()**
 
 | Atributo | Valor |
 |----------|-------|
@@ -785,13 +785,15 @@ bin/dev test --filter "Commands/SyncHandlerTest"
 
 **Descrição técnica:**
 
-**Em `routes/web.php`** — adicionar ANTES da rota do webhook: *(M11: migrado para `routes/api.php`; a exclusion de CSRF foi removida porque o api group é stateless)*
+**Em `routes/web.php`** — adicionar ANTES da rota do webhook: *(M11: migrado para `routes/api.php`; a exclusion de CSRF foi removida porque o api group é stateless)* ⚠️ **DEPRECATED:** A rota HTTP foi completamente removida. O scheduling agora é feito via `Schedule::command('transactions:sync-pending')` em `routes/console.php`, sem rota HTTP.
 
 ```php
+// ⚠️ DEPRECATED — Esta rota foi removida. Substituída por Schedule::command() em routes/console.php.
+// O middleware VerifyCronToken e CRON_SECRET_TOKEN também foram removidos.
 Route::get('/cron/sync-pending', function (Request $request): JsonResponse {
-    $expected = env('CRON_SECRET_TOKEN');
+    $expected = env('CRON_SECRET_TOKEN'); // DEPRECATED — env var não mais utilizada
     
-    if (empty($expected) || $request->header('X-Cron-Token') !== $expected) {
+    if (empty($expected) || $request->header('X-Cron-Token') !== $expected) { // DEPRECATED — X-Cron-Token não mais verificado
         return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 401);
     }
     
@@ -812,12 +814,12 @@ Route::get('/cron/sync-pending', function (Request $request): JsonResponse {
 })->name('cron.sync-pending');
 ```
 
-**Em `bootstrap/app.php`** — adicionar 'cron/sync-pending' à lista CSRF exclusion:
+**Em `bootstrap/app.php`** — adicionar 'cron/sync-pending' à lista CSRF exclusion: ⚠️ **(removido — não há mais rota HTTP, CSRF exclusion desnecessária)**
 
 ```php
 $middleware->validateCsrfTokens(except: [
     'webhook/telegram',
-    'cron/sync-pending',  // NOVO
+    'cron/sync-pending',  // NOVO — ⚠️ REMOVIDO (rota HTTP não existe mais)
 ]);
 ```
 
@@ -830,7 +832,7 @@ $middleware->validateCsrfTokens(except: [
 - test_cron_response_json_structure                  // CT-057
 ```
 
-**Setup dos testes:** o `CRON_SECRET_TOKEN` no `phpunit.xml` precisa estar setado; adicionar `<env name="CRON_SECRET_TOKEN" value="test-cron-token-12345"/>` ao `phpunit.xml`. **NÃO commitar valor real** — usar valor de teste.
+**Setup dos testes:** ⚠️ **DEPRECATED — CRON_SECRET_TOKEN não é mais necessário.** Originalmente: o `CRON_SECRET_TOKEN` no `phpunit.xml` precisava estar setado; adicionar `<env name="CRON_SECRET_TOKEN" value="test-cron-token-12345"/>` ao `phpunit.xml`. **NÃO commitar valor real** — usar valor de teste.
 
 **Critério de verificação:**
 
@@ -1571,7 +1573,7 @@ vendor/bin/phpunit --coverage-text
 
 ---
 
-### Risco 4 — Rota `/cron/sync-pending` como vetor de abuso (rate limit)
+### Risco 4 — Rota `/cron/sync-pending` como vetor de abuso (rate limit) ⚠️ **MITIGADO — rota substituída por Schedule::command(); não há mais endpoint HTTP exposto**
 
 **Probabilidade:** Baixa (token de 32 bytes hex é ~10^77 de espaço de busca)
 **Impacto:** **Crítico** se ocorrer — execução não-autorizada de sync + exfiltração de dados via JSON de resposta
@@ -1580,7 +1582,7 @@ vendor/bin/phpunit --coverage-text
 
 **Mitigações já implementadas (e que devem ser testadas em T-013):**
 
-1. Header `X-Cron-Token` obrigatório (env `CRON_SECRET_TOKEN`, 32 bytes hex = 256 bits).
+1. Header `X-Cron-Token` obrigatório (env `CRON_SECRET_TOKEN`, 32 bytes hex = 256 bits). ⚠️ **DEPRECATED — Verificação removida; X-Cron-Token e CRON_SECRET_TOKEN não são mais utilizados.**
 2. Verificação `===` exata (não `hash_equals` ainda — TODO opcional: trocar por `hash_equals` para timing-safe).
 3. CSRF exclusion (não bloqueia GET, mas exclui de qualquer verificação).
 
@@ -1639,12 +1641,12 @@ vendor/bin/phpunit --coverage-text
 **Probabilidade:** Baixa
 **Impacto:** **Alto** se cron para de funcionar
 
-**Causa:** se `cron/sync-pending` ficar de fora da exclusion indevidamente, Laravel retorna 419 (CSRF token mismatch) e o cron não roda.
+**Causa:** se `cron/sync-pending` ficar de fora da exclusion indevidamente, Laravel retorna 419 (CSRF token mismatch) e o cron não roda. ⚠️ **OBSOLETO — rota HTTP removida; o agendamento agora é interno via Laravel Scheduler (`routes/console.php`), sem CSRF.**
 
 **Mitigação concreta:**
 
 1. Em T-013, adicionar teste explícito: `test_cron_route_does_not_require_csrf_token` — fazer GET sem token CSRF e verificar 200 (com token de auth correto).
-2. Verificar que a string `'cron/sync-pending'` está em `validateCsrfTokens(except: [...])` no `bootstrap/app.php`.
+2. Verificar que a string `'cron/sync-pending'` está em `validateCsrfTokens(except: [...])` no `bootstrap/app.php`. ⚠️ **DEPRECATED — CSRF exclusion removida; rota HTTP não existe mais.**
 3. Após deploy, fazer curl manual em staging.
 
 ---
@@ -1765,7 +1767,7 @@ O M9 está pronto para `reviewer` quando **TODOS** os itens abaixo estão ✅:
 - [ ] CT-029 (a-f): `/categorias` com contador de uso e ordem
 - [ ] CT-033 (a-g): `transactions:sync-pending` com 0/1/N pendentes, 3 falhas, batch
 - [ ] CT-048 a CT-053: `/sync` com reset, lock implícito, em todos os estados
-- [ ] CT-054 a CT-057: `GET /cron/sync-pending` com 200/401/JSON estruturado
+- [ ] CT-054 a CT-057: `GET /cron/sync-pending` com 200/401/JSON estruturado ⚠️ **DEPRECATED — testes de rota HTTP removidos; substituídos por testes do comando artisan `transactions:sync-pending`**
 - [ ] CT-058 a CT-061: Integração (sobrescreve, aparece no topo, contador++, recovery)
 
 ### 6.2 Código
@@ -1782,8 +1784,8 @@ O M9 está pronto para `reviewer` quando **TODOS** os itens abaixo estão ✅:
 ### 6.3 Operacional
 
 - [ ] Smoke test 14/15 PASS em staging (T-021)
-- [ ] `CRON_SECRET_TOKEN` configurado no Secret Manager (não commitar valor)
-- [ ] Rota `/cron/sync-pending` adicionada à exclusão CSRF
+- [ ] ~~`CRON_SECRET_TOKEN` configurado no Secret Manager (não commitar valor)~~ ⚠️ **DEPRECATED — env var removida; não mais necessária**
+- [ ] ~~Rota `/cron/sync-pending` adicionada à exclusão CSRF~~ ⚠️ **DEPRECATED — rota HTTP removida; agendamento via Schedule::command()**
 - [ ] Cloud Scheduler configurado para `*/5 * * * *` (M10, mas verificar que o endpoint responde)
 - [ ] `docs/06-plano-implementacao.md §12` marcado como ✅
 - [ ] CHANGELOG atualizado (se aplicável)
@@ -1845,7 +1847,7 @@ Durante a execução do M9, pausar e reportar ao usuário nos seguintes pontos:
 - `/sync` reseta contador e sincroniza.
 - `transactions:sync-pending` command funciona (testado com 0, 1, 3, 20 pendentes).
 - Notificação de 3 falhas funciona.
-- Rota `/cron/sync-pending` retorna 200 com token válido, 401 sem.
+- ~~Rota `/cron/sync-pending` retorna 200 com token válido, 401 sem.~~ ⚠️ **DEPRECATED — rota removida; o comando `transactions:sync-pending` agora é executado via Laravel Scheduler.**
 
 **Decisão do usuário:**
 - Validar tom da mensagem de notificação ("⚠️ Sincronização falhou..." conforme spec §1.5).
@@ -1916,7 +1918,7 @@ DIA 2 (Fase C)
 18. [60min] T-011b: SyncPendingTransactionsCommandTest (7 testes)
 19. [60min] T-012: SyncHandler
 20. [30min] T-012b: SyncHandlerTest (4 testes)
-21. [30min] T-013: rota /cron/sync-pending + CSRF exclusion
+21. [30min] T-013: rota /cron/sync-pending + CSRF exclusion ⚠️ **DEPRECATED — tarefa executada e posteriormente substituída**
 22. [30min] T-013b: CronSyncPendingRouteTest (4 testes)
 23. [15min] T-014: regressão completa
 24. [20min] git commit + PR #3: "feat(bot): implement /sync and cron command"

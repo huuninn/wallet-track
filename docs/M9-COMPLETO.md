@@ -43,6 +43,7 @@ foram fechados neste milestone:
 
 Mais o endpoint HTTP `GET /cron/sync-pending` para execução via Cloud Scheduler
 (a cada 5 min), autenticado por `X-Cron-Token` (CT-054 a CT-057).
+**(Posteriormente substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php:28` — Cloud Scheduler agora apenas acorda a instância.)**
 
 ---
 
@@ -106,7 +107,7 @@ a624a33 feat(M9-A): fix gaps in start/help/cancelar handlers
 | #5 | Notificação de falha única via `notified_at` | `SyncPendingTransactions::handleFailure` checa antes de notificar | `app/Console/Commands/SyncPendingTransactions.php` |
 | #7 | `/sync` reseta `sync_attempts` (dá "mais 3 chances") | `SyncHandler` chama `resetPendingSyncAttempts` | `app/Bot/Handlers/SyncHandler.php` |
 | #8 | Lock atômico `processing=true` para `/sync` × cron | `FirestoreService::markSyncStarted` via `gateway->transaction` | `app/Services/Google/FirestoreService.php` |
-| #9 | Rota `/cron/sync-pending` retorna 200 mesmo com falhas parciais | `routes/web.php` retorna `response()->json` com status=ok | `routes/web.php` |
+| #9 | Rota `/cron/sync-pending` retorna 200 mesmo com falhas parciais *(substituída por `Schedule::command` — o comando Artisan agora lida com falhas parciais retornando JSON estruturado)* | `routes/web.php` retorna `response()->json` com status=ok | `routes/web.php` → `routes/console.php` |
 | #10 | Notificação por transação (não em batch) | `BotMessenger::notifyError` chamado dentro do loop | `app/Console/Commands/SyncPendingTransactions.php` |
 | #13 | Etapa 4 do wizard (categoria) = texto livre com sugestão (Opção A) | `WizardHandler::buildPrompt` mostra "💡 Sugestão: Alimentação" | `app/Conversation/WizardHandler.php` |
 
@@ -123,7 +124,7 @@ a624a33 feat(M9-A): fix gaps in start/help/cancelar handlers
 - `app/Console/Commands/SyncPendingTransactions.php`
 - `app/Conversation/WizardHandler.php`
 - `app/Enums/WizardStep.php`
-- `app/Http/Middleware/VerifyCronToken.php`
+- `app/Http/Middleware/VerifyCronToken.php` (removido — substituído por Schedule interno)
 - `app/Services/Google/FirestoreService.php` (modificado — +5 métodos)
 - `app/Bot/Messaging/TransactionSummaryFormatter.php` (modificado — +2 métodos)
 
@@ -177,12 +178,13 @@ bin/dev test --filter "Commands|Conversation/Wizard|Http/SyncPendingRoute|Consol
 ### 6.4 Cron local (simulação)
 
 ```bash
-CRON_SECRET_TOKEN=test-cron-token-12345 \
-  php artisan serve --port=8000 &
-# Em outro terminal:
-curl -H "X-Cron-Token: test-cron-token-12345" http://localhost:8000/cron/sync-pending
-# → {"status":"ok","processed":0,"synced":0,"failed":0,"errors":[],"duration_ms":N,"timestamp":"..."}
+# A sincronização agora usa o scheduler interno do Laravel:
+php artisan schedule:run
+# Ou diretamente (qualquer ambiente):
+php artisan transactions:sync-pending
+# → {"status":"ok","processed":N,"synced":N,"failed":N,"errors":[],"duration_ms":N,"timestamp":"..."}
 ```
+*(O endpoint HTTP `GET /cron/sync-pending` com `X-Cron-Token` foi substituído pelo Schedule do Laravel.)*
 
 ---
 

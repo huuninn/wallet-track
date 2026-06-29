@@ -129,7 +129,7 @@ $n = min($n, $totalTransactions);
 | Parâmetro | Valor |
 |-----------|-------|
 | Frequência | A cada **5 minutos** |
-| Comando | `php artisan transactions:sync-pending` (via endpoint `/cron/sync-pending` protegido por token) |
+| Comando | `php artisan transactions:sync-pending` (via Schedule do Laravel em `routes/console.php`, acionado pelo Cloud Scheduler que acorda a instância) |
 | Máximo de tentativas | **3** (contador `sync_attempts` no Firestore) |
 | Após 3 falhas | `sync_status = 'failed'` + notifica usuário no Telegram |
 | Comando `/sync` manual | Reseta contador e enfileira |

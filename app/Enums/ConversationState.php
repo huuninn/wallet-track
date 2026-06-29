@@ -9,7 +9,7 @@ use App\Conversation\StateMachine;
 /**
  * Estados da máquina de estados conversacional do Wallet Track (M7.1).
  *
- * Cada chat tem uma sessão no banco de dados (tabela `sessions`, chave `chat_id`) cujo campo
+ * Cada chat tem uma sessão no Redis (Hash `session:{chatId}`) cujo campo
  * `state` armazena o valor (string) deste enum. O {@see StateMachine}
  * valida que as transições entre estados seguem o fluxo legal descrito em
  * docs/06-plano-implementacao.md §7 (M7.2).

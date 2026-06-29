@@ -584,7 +584,7 @@ Implementar todos os comandos: `/start`, `/help`, `/nova` (wizard), `/cancelar`,
 | M9.6 | Implementar `/categorias` (CT-029) | Lista categorias padrão + personalizadas com contador de uso |
 | M9.7 | Implementar `/sync` (decisão #7) | Dispara `transactions:sync-pending` imediatamente; reseta contador |
 | M9.8 | Criar `App\Console\Commands\SyncPendingTransactions` | Artisan command; query Firestore `pending` AND `attempts<3`; tenta Sheets; atualiza status |
-| M9.9 | Criar rota `GET /cron/sync-pending` | Protegida por `CRON_SECRET_TOKEN` (variável de ambiente) |
+| M9.9 | Criar rota `GET /cron/sync-pending` (substituída posteriormente por `Schedule::command` em `routes/console.php`) | Protegida por `CRON_SECRET_TOKEN` (DEPRECATED — Schedule interno dispensa rota HTTP) |
 | M9.10 | Testes de todos os comandos | PHPUnit cobrindo CT-023 a CT-029 |
 
 ### 12.4 Riscos
@@ -626,7 +626,7 @@ Deploy em produção no Google Cloud Run, com CI/CD, observabilidade e todas as 
 | M10.5 | Configurar Service Account do Cloud Run | Workload identity com permissões para Secret Manager + Firestore + Sheets |
 | M10.6 | Deploy manual inicial | `gcloud run deploy wallet-track --source . --region=southamerica-east1 --memory=512Mi --cpu=1 --concurrency=1 --min-instances=0 --max-instances=1 --timeout=300 --no-cpu-throttling --cpu-boost` |
 | M10.7 | Registrar webhook Telegram | Após deploy, executar `php artisan telegram:set-webhook` apontando para URL do Cloud Run |
-| M10.8 | Configurar Cloud Scheduler | Cron job `*/5 * * * *` chamando `GET /cron/sync-pending` com header `X-Cron-Token: <secret>` |
+| M10.8 | Configurar Cloud Scheduler | Cron job `*/5 * * * *` para acordar a instância do Cloud Run; a sincronização é feita pelo scheduler interno do Laravel via `Schedule::command('transactions:sync-pending')` |
 | M10.9 | Configurar health check robusto | `GET /health` em prod verifica: Firestore ping, Sheets ping, env vars críticas presentes |
 | M10.10 | Configurar alertas | Cloud Monitoring: error rate > 5%, latency p95 > 5s, memory > 80% |
 | M10.11 | Configurar domínio customizado (opcional) | Mapear `wallet-track.seu-dominio.com` via Cloud Run domain mappings |
@@ -665,7 +665,7 @@ Deploy em produção no Google Cloud Run, com CI/CD, observabilidade e todas as 
 - [ ] Bot responde a `/start` em produção em < 5s (incluindo cold start)
 - [ ] Planilha Google Sheets é atualizada em produção
 - [ ] Firestore grava transações com `sync_status=synced`
-- [ ] Cloud Scheduler executa `/cron/sync-pending` a cada 5min
+- [ ] Cloud Scheduler acorda instância a cada 5min; scheduler interno executa `transactions:sync-pending`
 - [ ] Logs estruturados aparecem em Cloud Logging
 - [ ] Health check retorna 200 com checks internos
 - [ ] `docs/runbook.md` publicado

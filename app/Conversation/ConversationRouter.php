@@ -1100,7 +1100,7 @@ final class ConversationRouter
      * um toast — nenhuma transação duplicada é criada.
      *
      * Falha de sync: NÃO falha o confirm. A transação fica `sync_status=pending`
-     * e o cron M9 (`/cron/sync-pending`) recupera. Logamos warning para
+     * e o Artisan command `transactions:sync-pending` recupera. Logamos warning para
      * diagnóstico.
      *
      * **M8 — Tracking pós-confirm** (CT-022): após `saveTransaction`
@@ -1181,8 +1181,8 @@ final class ConversationRouter
             $synced = $this->syncSheet->handle($dto, $txId);
         } catch (Throwable $e) {
             // Bug de programação (ex.: DTO incompleto) — logamos mas NÃO
-            // falhamos o confirm: a transação está persistida, o cron M9
-            // recuperará o sync.
+            // falhamos o confirm: a transação está persistida, o Artisan command
+            // `transactions:sync-pending` recuperará o sync.
             Log::error('ConversationRouter: SyncSheet lançou exceção inesperada', [
                 'chat_id' => $chatId,
                 'exception' => $e::class,
@@ -1192,7 +1192,7 @@ final class ConversationRouter
         }
 
         if (! $synced) {
-            Log::warning('ConversationRouter: sync com Sheets falhou (cron M9 recuperará)', [
+            Log::warning('ConversationRouter: sync com Sheets falhou (`transactions:sync-pending` recuperará)', [
                 'chat_id' => $chatId,
                 'tx_id' => $txId,
             ]);

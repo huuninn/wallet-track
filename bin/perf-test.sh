@@ -18,7 +18,6 @@
 #   bin/perf-test.sh                              # defaults: /health, 200 reqs, c=10
 #   bin/perf-test.sh --endpoint /health --total 500 --concurrency 20
 #   bin/perf-test.sh --url http://localhost:8000 --endpoint /health
-#   bin/perf-test.sh --token "$CRON_SECRET_TOKEN" --endpoint /cron/sync-pending
 #   TOTAL=1000 CONCURRENCY=50 bin/perf-test.sh    # via variáveis de ambiente
 #
 # Variáveis de ambiente (com defaults):
@@ -43,7 +42,6 @@ CONCURRENCY="${CONCURRENCY:-10}"
 WARMUP="${WARMUP:-5}"
 P95_THRESHOLD="${P95_THRESHOLD:-500}"
 ERROR_THRESHOLD="${ERROR_THRESHOLD:-1}"
-TOKEN=""
 
 # --- Parsing de argumentos ---------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -53,7 +51,6 @@ while [[ $# -gt 0 ]]; do
         --total)      TOTAL="$2"; shift 2 ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
         --warmup)     WARMUP="$2"; shift 2 ;;
-        --token)      TOKEN="$2"; shift 2 ;;
         --p95)        P95_THRESHOLD="$2"; shift 2 ;;
         --max-errors) ERROR_THRESHOLD="$2"; shift 2 ;;
         -h|--help)
@@ -72,10 +69,6 @@ done
 # Constrói URL final (evita // duplo quando ENDPOINT já começa com /)
 URL="${BASE_URL%/}${ENDPOINT}"
 
-# Header de autorização para endpoints protegidos (ex.: /cron/sync-pending).
-AUTH_HEADER=()
-[[ -n "$TOKEN" ]] && AUTH_HEADER=(-H "X-Cron-Token: $TOKEN")
-
 command -v curl >/dev/null 2>&1 || { echo "ERRO: curl é obrigatório." >&2; exit 2; }
 
 echo "============================================================"
@@ -92,7 +85,7 @@ echo "------------------------------------------------------------"
 probe() {
     curl -s -o /dev/null -w '%{http_code}' \
          --connect-timeout 3 --max-time 5 \
-         "${AUTH_HEADER[@]}" "$URL" 2>/dev/null || true
+         "$URL" 2>/dev/null || true
 }
 
 echo "[1/4] Verificando disponibilidade do servidor..."
@@ -110,7 +103,7 @@ echo "  OK: servidor respondeu HTTP $code"
 if [[ "$WARMUP" -gt 0 ]]; then
     echo "[2/4] Aquecendo ($WARMUP requisições sequenciais)..."
     for _ in $(seq 1 "$WARMUP"); do
-        curl -s -o /dev/null --max-time 10 "${AUTH_HEADER[@]}" "$URL" || true
+        curl -s -o /dev/null --max-time 10 "$URL" || true
     done
     echo "  OK: warmup concluído"
 else
@@ -131,7 +124,7 @@ CURL_FMT='%{http_code} %{time_total}\n'
 seq "$TOTAL" | xargs -P "$CONCURRENCY" -I{} \
     curl -s -o /dev/null -w "$CURL_FMT" \
          --connect-timeout 5 --max-time 30 \
-         "${AUTH_HEADER[@]}" "$URL" > "$RESULTS_FILE" 2>/dev/null || true
+         "$URL" > "$RESULTS_FILE" 2>/dev/null || true
 
 # Normaliza falhas de curl (linhas sem formato esperado) para "000 0".
 if [[ ! -s "$RESULTS_FILE" ]]; then

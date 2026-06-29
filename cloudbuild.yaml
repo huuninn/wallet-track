@@ -69,11 +69,12 @@ steps:
   #
   # Flags conforme especificação técnica §13.4:
   #   - 512Mi RAM, 1 vCPU, concurrency=1 (bot single-user, evita race
-  #     conditions em estado compartilhado via Firestore).
+  #     conditions em estado compartilhado via lock atômico no banco).
   #   - min-instances=0, max-instances=1 (uso pessoal, custo mínimo).
   #   - no-cpu-throttling + cpu-boost para reduzir latência de cold start.
-  #   - --allow-unauthenticated: endpoint /health e /cron/sync-pending
-  #     públicos; segurança via tokens (webhook secret + cron token).
+  #   - --allow-unauthenticated: endpoint /health e /webhook/telegram públicos;
+  #     /webhook/telegram é protegido por secret token via
+  #     App\Http\Middleware\ValidateTelegramWebhook (não por auth do Cloud Run)
   #   - Env vars fixas (build-time) + secrets (runtime via Secret Manager).
   #   - Volume mount: /secrets/env.json (JSON único com todos os secrets).
   # ---------------------------------------------------------------------------

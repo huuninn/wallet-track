@@ -59,7 +59,9 @@ Assistente de registro de despesas/receitas operado via Telegram. O usuário env
 Texto/foto → IA extrai JSON → valida campos → sugere labels
          → usuário confirma (inline keyboard) → grava banco de dados + Google Sheets
               ↓ (a cada 5 min, via Cloud Scheduler)
-         /cron/sync-pending → processa pendentes → atualiza Sheets
+         Schedule::command('transactions:sync-pending')
+         → processa pendentes → atualiza Sheets
+         (a cada 5 min via scheduler interno; Cloud Scheduler acorda instância)
 ```
 
 ### Comandos disponíveis (7)
@@ -139,7 +141,7 @@ wallet-track/
 │   ├── Conversation/                  # Router, StateMachine, WizardHandler
 │   ├── Dto/                           # TransactionData
 │   ├── Enums/                         # ConversationState, WizardStep
-│   ├── Http/Middleware/               # ValidateTelegramWebhook, VerifyCronToken
+│   ├── Http/Middleware/               # ValidateTelegramWebhook
 │   └── Services/Google/               # WalletStore (Eloquent/MariaDB)
 ├── tests/                             # 521 testes PHPUnit
 │   ├── Feature/

@@ -4,7 +4,7 @@
 
 > **Projeto:** Wallet Track — bot Telegram de controle financeiro pessoal
 > **Versão:** 1.0 — 2026-06-19
-> **Escopo:** `/start`, `/help`, `/nova`, `/cancelar`, `/ultimos [n]`, `/categorias`, `/sync`, `transactions:sync-pending`, `GET /cron/sync-pending`
+> **Escopo:** `/start`, `/help`, `/nova`, `/cancelar`, `/ultimos [n]`, `/categorias`, `/sync`, `transactions:sync-pending`; `GET /cron/sync-pending` *(substituído por `Schedule::command('transactions:sync-pending')` — esta é a abordagem atual)*
 > **Referências:** `docs/02-especificacao-tecnica.md` §7, `docs/03-plano-testes-manuais.md` (CT-023 a CT-029, CT-033), `docs/04-clarificacoes.md` (decisões #5, #6, #7), `docs/06-plano-implementacao.md` §12
 
 ---
@@ -17,7 +17,7 @@
 | **Bot Telegram** | Bot de staging com token de desenvolvimento |
 | **Planilha Sheets** | Planilha de staging (`GOOGLE_SHEETS_SPREADSHEET_ID` de dev) compartilhada com a Service Account |
 | **Firestore** | Projeto GCP de staging; collections `transactions`, `sessions`, `categories`, `labels` populadas |
-| **Cloud Scheduler** | Configurado no projeto de staging para `*/5 * * * *` → `GET /cron/sync-pending` |
+| **Cloud Scheduler** | Configurado no projeto de staging para `*/5 * * * *`; **ATUALIZADO:** agora chama `php artisan schedule:run` que dispara `transactions:sync-pending` via `Schedule::command` (substitui o endpoint HTTP `GET /cron/sync-pending`) |
 | **chat_id do testador** | Whitelistado em `TELEGRAM_ALLOWED_CHAT_IDS` |
 | **.env de staging** | `APP_ENV=staging`, `APP_DEBUG=true`, `SESSION_TIMEOUT_MINUTES=15`, `SYNC_MAX_RETRIES=3` |
 
@@ -28,7 +28,7 @@
 3. Firestore com as 9 categorias padrão (`firestore:seed-categories` executado)
 4. Nenhuma sessão ativa para o chat_id do testador (Firestore: `sessions/{chat_id}` deletado se existir)
 5. Testador logado no Telegram com o chat_id whitelistado
-6. `CRON_SECRET_TOKEN` definido no `.env` para testes do endpoint `/cron/sync-pending`
+6. **DEPRECATED:** `CRON_SECRET_TOKEN` definido no `.env` para testes do endpoint `/cron/sync-pending` — o endpoint HTTP foi substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`; o middleware `VerifyCronToken` foi removido
 
 ### Como resetar o ambiente entre testes
 
@@ -116,10 +116,10 @@ php artisan firestore:seed-categories
 | CT-033e | Cron — `sync_attempts >= 3` → skip | Decisão #7 | — | ✅ |
 | CT-033f | Cron — Sheets indisponível → incrementa | Resiliência | — | ✅ |
 | CT-033g | Cron — batch de 20 pendentes | Edge case | — | ✅ |
-| CT-054 | `GET /cron/sync-pending` — token válido → 200 | Happy path | — | ✅ |
-| CT-055 | `GET /cron/sync-pending` — sem token → 401 | Segurança | — | ✅ |
-| CT-056 | `GET /cron/sync-pending` — token inválido → 401 | Segurança | — | ✅ |
-| CT-057 | `GET /cron/sync-pending` — resposta JSON válida | Verificação | — | ✅ |
+| CT-054 | `GET /cron/sync-pending` — token válido → 200 *(substituído por Schedule::command — testes de endpoint HTTP mantidos como registro histórico)* | Happy path | — | ✅ |
+| CT-055 | `GET /cron/sync-pending` — sem token → 401 *(substituído por Schedule::command — testes de endpoint HTTP mantidos como registro histórico)* | Segurança | — | ✅ |
+| CT-056 | `GET /cron/sync-pending` — token inválido → 401 *(substituído por Schedule::command — testes de endpoint HTTP mantidos como registro histórico)* | Segurança | — | ✅ |
+| CT-057 | `GET /cron/sync-pending` — resposta JSON válida *(substituído por Schedule::command — testes de endpoint HTTP mantidos como registro histórico)* | Verificação | — | ✅ |
 | CT-058 | `/nova` durante AWAITING_CONFIRMATION — sessão anterior | Integração | — | ✅ |
 | CT-059 | `/ultimos` após confirmar transação — aparece no topo | Integração | — | ✅ |
 | CT-060 | `/categorias` após transação com nova categoria — uso incrementado | Integração | — | ✅ |
@@ -1518,7 +1518,9 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
 
 **Passos:**
 1. Digitar `/sync` manualmente
-2. Imediatamente (ou simultaneamente) disparar o cron endpoint: `curl -H "X-Cron-Token: <secret>" https://<staging>/cron/sync-pending`
+2. Imediatamente (ou simultaneamente) disparar o cron endpoint:
+   `# DEPRECATED: o endpoint HTTP foi substituído por Schedule::command. Use: php artisan transactions:sync-pending`
+   `curl -H "X-Cron-Token: <secret>" https://<staging>/cron/sync-pending`
 
 **Resultado esperado:**
 - Apenas UMA das execuções processa cada transação (lock atômico)
@@ -1724,25 +1726,26 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
 
 ---
 
-### 3.9 Funcionalidade: `GET /cron/sync-pending` (M9.9)
+### 3.9 Funcionalidade: `GET /cron/sync-pending` (M9.9) — **DEPRECATED** *(substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`)*
 
 > **Referência:** M9.9 do plano de implementação
-> **⚠️ NÃO IMPLEMENTADO:** rota e controller não existem. Protegido por `CRON_SECRET_TOKEN`.
+> **⚠️ SUBSTITUÍDO:** O endpoint HTTP `GET /cron/sync-pending` e o middleware `VerifyCronToken` foram removidos. O cron agora é disparado via `Schedule::command('transactions:sync-pending')` no Laravel Scheduler (`routes/console.php`). Os testes CT-054 a CT-057 abaixo são mantidos como **registro histórico** da implementação original.
 >
-> **Header esperado:** `X-Cron-Token: <CRON_SECRET_TOKEN>`
+> **Header esperado (histórico):** `X-Cron-Token: <CRON_SECRET_TOKEN>`
 
-#### CT-054: `GET /cron/sync-pending` — token válido → 200
+#### CT-054: `GET /cron/sync-pending` — token válido → 200 *(substituído por Schedule::command — teste mantido como registro histórico)*
 
 **Funcionalidade:** endpoint cron
 **Tipo:** happy path
 **Prioridade:** alta
 
 **Pré-condições:**
-- `CRON_SECRET_TOKEN` definido no `.env`
+- `CRON_SECRET_TOKEN` definido no `.env` (DEPRECATED)
 - Endpoint mapeado em `routes/web.php` (M11: migrado para `routes/api.php`)
 
 **Passos:**
-1. Executar: `curl -H "X-Cron-Token: ${CRON_SECRET_TOKEN}" https://<staging>/cron/sync-pending`
+1. `# DEPRECATED: o endpoint HTTP foi substituído por Schedule::command. Use: php artisan transactions:sync-pending`
+   Executar: `curl -H "X-Cron-Token: ${CRON_SECRET_TOKEN}" https://<staging>/cron/sync-pending`
 
 **Resultado esperado:**
 - HTTP 200 OK
@@ -1760,14 +1763,15 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
 
 ---
 
-#### CT-055: `GET /cron/sync-pending` — sem token → 401
+#### CT-055: `GET /cron/sync-pending` — sem token → 401 *(substituído por Schedule::command — teste mantido como registro histórico)*
 
 **Funcionalidade:** endpoint cron
 **Tipo:** segurança
 **Prioridade:** alta
 
 **Passos:**
-1. Executar: `curl -v https://<staging>/cron/sync-pending`
+1. `# DEPRECATED: o endpoint HTTP foi substituído por Schedule::command. Use: php artisan transactions:sync-pending`
+   Executar: `curl -v https://<staging>/cron/sync-pending`
 
 **Resultado esperado:**
 - HTTP 401 Unauthorized
@@ -1779,14 +1783,15 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
 
 ---
 
-#### CT-056: `GET /cron/sync-pending` — token inválido → 401
+#### CT-056: `GET /cron/sync-pending` — token inválido → 401 *(substituído por Schedule::command — teste mantido como registro histórico)*
 
 **Funcionalidade:** endpoint cron
 **Tipo:** segurança
 **Prioridade:** alta
 
 **Passos:**
-1. Executar: `curl -H "X-Cron-Token: token-errado-123" https://<staging>/cron/sync-pending`
+1. `# DEPRECATED: o endpoint HTTP foi substituído por Schedule::command. Use: php artisan transactions:sync-pending`
+   Executar: `curl -H "X-Cron-Token: token-errado-123" https://<staging>/cron/sync-pending`
 
 **Resultado esperado:**
 - HTTP 401 Unauthorized
@@ -1796,7 +1801,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
 
 ---
 
-#### CT-057: `GET /cron/sync-pending` — resposta JSON estruturada
+#### CT-057: `GET /cron/sync-pending` — resposta JSON estruturada *(substituído por Schedule::command — teste mantido como registro histórico)*
 
 **Funcionalidade:** endpoint cron
 **Tipo:** verificação
@@ -1807,7 +1812,8 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
 - 2 transações pendentes, ambas syncáveis
 
 **Passos:**
-1. Executar: `curl -s -H "X-Cron-Token: ${CRON_SECRET_TOKEN}" https://<staging>/cron/sync-pending | python3 -m json.tool`
+1. `# DEPRECATED: o endpoint HTTP foi substituído por Schedule::command. Use: php artisan transactions:sync-pending`
+   Executar: `curl -s -H "X-Cron-Token: ${CRON_SECRET_TOKEN}" https://<staging>/cron/sync-pending | python3 -m json.tool`
 
 **Resultado esperado:**
 - JSON válido e parseável
@@ -2051,7 +2057,7 @@ Antes de marcar o M9 como concluído, execute estes testes para garantir que os 
 | **`/ultimos 999999` comportamento ambíguo** | Média | Baixa — edge case raro | `/ultimos` | Clarificar se > 50 é cap (50) ou fallback (5). Ver CT-028d. |
 | **`/sync` sem lock — dupla execução** | Baixa | **Alta** — duplicação | `/sync` | Implementar lock com `processing` flag no Firestore. |
 | **3 falhas → notificação não enviada** | Baixa | Média — usuário não sabe | `transactions:sync-pending` | Testar notificação explicitamente no CT-033d. |
-| **Cron endpoint sem token acessível** | Baixa | **Crítica** — exposição | `GET /cron/sync-pending` | Middleware de token obrigatório. Testar CT-055, CT-056. |
+| **Cron endpoint sem token acessível** | Baixa | **Crítica** — exposição | `GET /cron/sync-pending` (DEPRECATED — substituído por `Schedule::command`) | Middleware de token obrigatório. Testar CT-055, CT-056. |
 | **Whitelist bypass em comandos** | Muito Baixa | **Crítica** — vazamento | Todos os comandos | Middleware validado no M2. Testar CT-062, CT-063. |
 | **Wizard `/nova` — timeout entre etapas** | Média | Média — UX frustrante | `/nova` | Timeout de 15 min se aplica ao wizard. Testar CT-025n. |
 | **Categorias personalizadas com `use_count` errado** | Baixa | Baixa — métrica incorreta | `/categorias` | Testar CT-060 para validação ponta a ponta. |
@@ -2072,7 +2078,7 @@ Antes de marcar o M9 como concluído, execute estes testes para garantir que os 
 | M9.6 | `/categorias` lista padrão + personalizadas com uso | CT-029, CT-029a–CT-029f |
 | M9.7 | `/sync` processa pendentes, reseta contador, não conflita com cron | CT-048–CT-053 |
 | M9.8 | `transactions:sync-pending` query correta, 3 falhas → failed + notificação | CT-033a–CT-033g |
-| M9.9 | `GET /cron/sync-pending` com auth token, resposta JSON | CT-054–CT-057 |
+| M9.9 | `GET /cron/sync-pending` com auth token, resposta JSON *(substituído por `Schedule::command('transactions:sync-pending')` — CTs mantidos como registro histórico)* | CT-054–CT-057 |
 | Seg. | Comandos respeitam whitelist; isolamento por chat_id | CT-062–CT-064 |
 | Integ. | Comandos não quebram fluxos existentes (M3–M8) | CT-058–CT-061 |
 
@@ -2082,7 +2088,7 @@ Antes de marcar o M9 como concluído, execute estes testes para garantir que os 
 - [ ] Nenhum CT bloqueado sem plano de ação
 - [ ] Handlers `/nova`, `/ultimos`, `/categorias`, `/sync` implementados e registrados no `BotLoader`
 - [ ] Comando `transactions:sync-pending` implementado
-- [ ] Rota `GET /cron/sync-pending` implementada com middleware de token
+- [ ] ~~Rota `GET /cron/sync-pending` implementada com middleware de token~~ *(SUBSTITUÍDO: o cron agora usa `Schedule::command('transactions:sync-pending')` em `routes/console.php`; o middleware `VerifyCronToken` foi removido)*
 - [ ] `HelpHandler::commands()` atualizado: todos ✅
 - [ ] `StartHandler` reseta sessão para IDLE
 - [ ] `CancelarHandler` distingue IDLE vs. sessão ativa
@@ -2136,7 +2142,7 @@ Executar **após o deploy do M9 em staging** (ou produção), antes de marcar co
 | **GAP-03** | `HelpHandler::commands()` lista `/nova`, `/cancelar`, `/ultimos`, `/categorias`, `/sync` como `false` (CT-024b) | Baixa | Atualizar array para `true` em todos |
 | **GAP-04** | Handlers `/nova`, `/ultimos`, `/categorias`, `/sync` não existem | **Crítica** | Implementar (escopo do M9) |
 | **GAP-05** | Comando `transactions:sync-pending` não existe | **Crítica** | Implementar (M9.8) |
-| **GAP-06** | Rota `GET /cron/sync-pending` não existe | **Crítica** | Implementar (M9.9) |
+| **GAP-06** | Rota `GET /cron/sync-pending` não existe | **Crítica** → **RESOLVIDO:** substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php` | Implementar (M9.9) |
 | **GAP-07** | `BotLoader` não registra handlers para os novos comandos | **Crítica** | Registrar após implementar GAP-04 |
 
 ### 8.2 Preocupações operacionais
@@ -2252,7 +2258,7 @@ Executar **após o deploy do M9 em staging** (ou produção), antes de marcar co
 - [ ] CT-033f: Sheets indisponível — ⬜ PASS / ⬜ FAIL / ⬜ BLOCKED
 - [ ] CT-033g: Batch de 20 — ⬜ PASS / ⬜ FAIL / ⬜ BLOCKED
 
-### Funcionalidade: `GET /cron/sync-pending`
+### Funcionalidade: `GET /cron/sync-pending` *(DEPRECATED — substituído por `Schedule::command('transactions:sync-pending')`)*
 - [ ] CT-054: Token válido → 200 — ⬜ PASS / ⬜ FAIL / ⬜ BLOCKED
 - [ ] CT-055: Sem token → 401 — ⬜ PASS / ⬜ FAIL / ⬜ BLOCKED
 - [ ] CT-056: Token inválido → 401 — ⬜ PASS / ⬜ FAIL / ⬜ BLOCKED

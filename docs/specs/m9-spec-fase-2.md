@@ -38,7 +38,7 @@ Este documento é a **Fase 2 (Especificação Técnica)** do agente `spec-design
 | M9.6 | `/categorias` | `app/Bot/Handlers/CategoriasHandler.php` + `FirestoreService` (sem alteração) |
 | M9.7 | `/sync` | `app/Bot/Handlers/SyncHandler.php` + `FirestoreService` (novo método) |
 | M9.8 | `transactions:sync-pending` | `app/Console/Commands/SyncPendingTransactions.php` |
-| M9.9 | `GET /cron/sync-pending` | Controller ou closure em `routes/web.php` (M11: web.php → api.php) |
+| M9.9 | `GET /cron/sync-pending` | Controller ou closure em `routes/web.php` (substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`; M11: web.php → api.php) |
 | M9.10 | Testes | `tests/Feature/Commands/` (vários arquivos) |
 
 ---
@@ -114,7 +114,7 @@ public function resetPendingSyncAttempts(string $chatId): int
 
 **Implementação:** Query `sync_status='pending'` + `chat_id=$chatId` (precisa de índice composto — mas o índice `chat_id ASC, date DESC` já existe e cobre `chat_id`; Firestore permite filtrar por `chat_id` e depois por `sync_status` sem índice extra desde que o campo de igualdade (`sync_status`) venha depois do range/order — verificar). Alternativa: iterar documentos e chamar `updateFields` em cada um dentro de `transaction()`.
 
-### 1.4 Qual o formato do payload de resposta da rota `/cron/sync-pending`?
+### 1.4 Qual o formato do payload de resposta da rota `/cron/sync-pending`? (substituído por `Schedule::command('transactions:sync-pending')`)
 
 **Recomendação:** JSON estruturado com status code 200 (sempre — mesmo que nada processado, é uma execução bem-sucedida da rota). 401 apenas para token inválido.
 
@@ -560,16 +560,17 @@ final class SyncPendingTransactions extends Command
 
 **Índice adicional necessário:** Nenhum — a query filtra apenas por `sync_status='pending'` (igualdade simples, sem order composto que exija índice). O filtro `sync_attempts < 3` é aplicado em memória (máximo 20 documentos). Se quisermos query composta com order, precisaríamos de índice `sync_status ASC, created_at ASC` — mas para 20 documentos, order by client-side é aceitável.
 
-### 2.10 NOVO: Controller ou Closure para `GET /cron/sync-pending`
+### 2.10 NOVO: Controller ou Closure para `GET /cron/sync-pending` (substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`)
 
 **Opção escolhida:** Closure em `routes/web.php` (como o `/health` existente). Não justifica um Controller dedicado para 1 rota de cron. *(M11: migrado para `routes/api.php` — web.php não existe mais.)*
 
 ```php
 // Em routes/web.php (M11: web.php → api.php):
+// SUBSTITUÍDO por Schedule::command('transactions:sync-pending') em routes/console.php
 Route::get('/cron/sync-pending', function (Request $request): JsonResponse {
-    $expectedToken = env('CRON_SECRET_TOKEN');
+    $expectedToken = env('CRON_SECRET_TOKEN'); // DEPRECATED — substituído por Schedule interno
     
-    if (empty($expectedToken) || $request->header('X-Cron-Token') !== $expectedToken) {
+    if (empty($expectedToken) || $request->header('X-Cron-Token') !== $expectedToken) { // DEPRECATED — substituído por Schedule::command
         return response()->json([
             'status' => 'error',
             'message' => 'Unauthorized',
@@ -853,13 +854,13 @@ Use /sync para tentar novamente quando resolver o problema.
 
 ---
 
-## 5. Especificação da Rota `/cron/sync-pending`
+## 5. Especificação da Rota `/cron/sync-pending` (substituído por `Schedule::command('transactions:sync-pending')`)
 
 | Atributo | Valor |
 |----------|-------|
-| **URL completa** | `GET /cron/sync-pending` |
+| **URL completa** | `GET /cron/sync-pending` (substituído por `Schedule::command('transactions:sync-pending')`) |
 | **Método HTTP** | `GET` |
-| **Headers esperados** | `X-Cron-Token: <CRON_SECRET_TOKEN>` |
+| **Headers esperados** | `X-Cron-Token: <CRON_SECRET_TOKEN>` (DEPRECATED — substituído por `Schedule::command`) |
 | **Status code sucesso** | `200 OK` |
 | **Status code token inválido** | `401 Unauthorized` |
 | **Body sucesso** | `{"status":"ok","processed":3,"synced":2,"failed":1,"errors":[...], "duration_ms":1234,"timestamp":"..."}` |
@@ -871,10 +872,11 @@ Use /sync para tentar novamente quando resolver o problema.
 **Registro em `routes/web.php` (M11: web.php → api.php):**
 
 ```php
+// SUBSTITUÍDO por Schedule::command('transactions:sync-pending') em routes/console.php
 Route::get('/cron/sync-pending', function (Request $request): JsonResponse {
     // Validar token
-    $expected = env('CRON_SECRET_TOKEN');
-    if (empty($expected) || $request->header('X-Cron-Token') !== $expected) {
+    $expected = env('CRON_SECRET_TOKEN'); // DEPRECATED — substituído por Schedule interno
+    if (empty($expected) || $request->header('X-Cron-Token') !== $expected) { // DEPRECATED — substituído por Schedule::command
         return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 401);
     }
     
@@ -898,9 +900,9 @@ Route::get('/cron/sync-pending', function (Request $request): JsonResponse {
 })->name('cron.sync-pending');
 ```
 
-**Alteração em `bootstrap/app.php`:** Adicionar `/cron/sync-pending` à lista de exclusão CSRF (ao lado de `webhook/telegram`).
+**Alteração em `bootstrap/app.php`:** Adicionar `/cron/sync-pending` à lista de exclusão CSRF (ao lado de `webhook/telegram`). (removido — não há mais rota HTTP de cron; substituído por `Schedule::command`)
 
-**Nota sobre Cloud Scheduler:** O Cloud Scheduler NÃO consegue injetar headers customizados via console UI em algumas versões. O header `X-Cron-Token` é suportado via `gcloud` CLI ou via campo `headers` no console. Alternativa: passar token como query parameter `?token=...` — mas header é mais seguro (não aparece em logs de acesso).
+**Nota sobre Cloud Scheduler:** O Cloud Scheduler NÃO consegue injetar headers customizados via console UI em algumas versões. O header `X-Cron-Token` é suportado via `gcloud` CLI ou via campo `headers` no console. Alternativa: passar token como query parameter `?token=...` — mas header é mais seguro (não aparece em logs de acesso). **(DEPRECATED — substituído por `Schedule::command`; não há mais rota HTTP de cron.)**
 
 ---
 
@@ -1095,11 +1097,11 @@ Arquivo: `app/Bot/Handlers/HelpHandler.php`
 
 ### 8.1 `.env.example`
 
-O arquivo `.env.example` JÁ contém `CRON_SECRET_TOKEN=` (linha 151). Nenhuma alteração necessária.
+O arquivo `.env.example` JÁ contém `CRON_SECRET_TOKEN=` (linha 151). (DEPRECATED — substituído por `Schedule::command`; nenhuma alteração necessária.)
 
 ### 8.2 `config/cron.php`
 
-**NÃO criar.** Não há configuração suficiente para justificar um arquivo de config dedicado. O `CRON_SECRET_TOKEN` é lido diretamente via `env()` na closure da rota. O intervalo de 5 minutos é configurado no Cloud Scheduler (GCP), não no código.
+**NÃO criar.** Não há configuração suficiente para justificar um arquivo de config dedicado. O `CRON_SECRET_TOKEN` é lido diretamente via `env()` na closure da rota. O intervalo de 5 minutos é configurado no Cloud Scheduler (GCP), não no código. **(DEPRECATED — substituído por `Schedule::command`; a env var `CRON_SECRET_TOKEN` não é mais necessária.)**
 
 ### 8.3 `config/conversation.php`
 
@@ -1107,13 +1109,13 @@ O arquivo `.env.example` JÁ contém `CRON_SECRET_TOKEN=` (linha 151). Nenhuma a
 
 ### 8.4 `bootstrap/app.php`
 
-Adicionar exclusão CSRF para a rota `/cron/sync-pending`:
+Adicionar exclusão CSRF para a rota `/cron/sync-pending` (removido — não há mais rota HTTP de cron; substituído por `Schedule::command`):
 
 ```php
 ->withMiddleware(function (Middleware $middleware) {
     $middleware->validateCsrfTokens(except: [
         'webhook/telegram',
-        'cron/sync-pending',  // NOVO
+        'cron/sync-pending',  // REMOVIDO — não há mais rota HTTP de cron (substituído por Schedule::command)
     ]);
     $middleware->alias([
         'telegram.webhook' => \App\Http\Middleware\ValidateTelegramWebhook::class,
@@ -1260,7 +1262,7 @@ Reformulados do §12.5 do plano de implementação no formato **"Eu verifico que
 
 ### CA-M9-13 — Cron recupera pendentes
 **Eu verifico que** transações com `sync_status=pending` e `sync_attempts < 3` são sincronizadas
-**quando** o cron (ou chamada a `GET /cron/sync-pending`) é acionado
+**quando** o cron (ou chamada a `GET /cron/sync-pending`, hoje substituído por `Schedule::command('transactions:sync-pending')`) é acionado
 **e** a planilha está acessível.
 
 ### CA-M9-14 — Falha após 3 tentativas
@@ -1270,7 +1272,7 @@ Reformulados do §12.5 do plano de implementação no formato **"Eu verifico que
 
 ### CA-M9-15 — Cron token inválido
 **Eu verifico que** a rota retorna HTTP 401 com JSON `{"status":"error","message":"Unauthorized"}`
-**quando** uma requisição é feita a `GET /cron/sync-pending` sem o header `X-Cron-Token` ou com token inválido.
+**quando** uma requisição é feita a `GET /cron/sync-pending` sem o header `X-Cron-Token` ou com token inválido (DEPRECATED — substituído por `Schedule::command`).
 
 ---
 
@@ -1303,8 +1305,8 @@ Reformulados do §12.5 do plano de implementação no formato **"Eu verifico que
 | 4 | `app/Conversation/ConversationRouter.php` | Adicionar suporte a wizard (`_wizard_step`, `validateLabels`, `pickNextAwaitingField` estendido) |
 | 5 | `app/Bot/Messaging/TransactionSummaryFormatter.php` | Adicionar `listSummary()` e `listRow()` |
 | 6 | `app/Services/Google/FirestoreService.php` | Adicionar `resetPendingSyncAttempts()` e `listPendingSync()` |
-| 7 | `routes/web.php` | Adicionar rota `GET /cron/sync-pending` (M11: migrado para `routes/api.php`) |
-| 8 | `bootstrap/app.php` | Adicionar `cron/sync-pending` à exclusão CSRF (M11: removido; api group é stateless) |
+| 7 | `routes/web.php` | Adicionar rota `GET /cron/sync-pending` (substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`; M11: migrado para `routes/api.php`) |
+| 8 | `bootstrap/app.php` | Adicionar `cron/sync-pending` à exclusão CSRF (removido — não há mais rota HTTP de cron; M11: removido; api group é stateless) |
 
 ### 12.3 Ordem de implementação sugerida (1 dev, ~3 dias)
 

@@ -38,7 +38,7 @@ Atualizado em 2026-06-24.
 - **MariaDB**: banco relacional (MariaDB 11.8), fonte de verdade principal
 - **Sheets**: planilha Google sincronizada periodicamente (sync pending a cada 5 min)
 - **Secret Manager**: 7 secrets (SA JSON, tokens, API keys, APP_KEY) — montados como volume ou env vars
-- **Cloud Scheduler**: dispara `GET /cron/sync-pending` com header `X-Cron-Token`
+- **Cloud Scheduler**: acorda a instância do Cloud Run via HTTP a cada 5 min; a sincronização é feita pelo scheduler interno do Laravel (`Schedule::command('transactions:sync-pending')` em `routes/console.php`)
 - **Telegram**: webhook registrado em `POST /webhook/telegram` com secret token
 
 ---
@@ -163,7 +163,7 @@ curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 
 ### 5.2 Sync de transacoes falhou
 
-**Sintoma**: `GET /cron/sync-pending` retorna `failed > 0`.
+**Sintoma**: `php artisan transactions:sync-pending` retorna `failed > 0` (via Cloud Logging).
 
 **Verificacao**:
 ```bash
@@ -367,9 +367,9 @@ de ler os arquivos de config a cada cold start e minima (~50ms).
 anonimas) nao serializam corretamente — sao convertidas para `null` no cache,
 quebrando as rotas que as usam.
 
-Embora tenhamos extraido `/health` para um controller, a rota `/cron/sync-pending`
-ainda usa closure (por design — o processamento in-process do Artisan e mais
-simples como closure do que como controller separado).
+A rota `/cron/sync-pending` foi substituída por `Schedule::command('transactions:sync-pending')` em
+`routes/console.php`. O comando Artisan é executado pelo scheduler interno do Laravel,
+sem necessidade de rota HTTP pública. Manter `route:cache` desligado é seguro:
 
 Manter `route:cache` desligado e seguro: o custo de interpretar as rotas e
 negligenciável (~10ms) com opcache ativo.

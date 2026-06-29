@@ -72,7 +72,7 @@ Gemini (AI Studio):
 │  └──────────┘    └──────────┘                                      │
 │                                                                     │
 │  ┌──────────────┐                                                   │
-│  │Cloud Scheduler│ ── cron 5min ──► /cron/sync-pending             │
+│  │Cloud Scheduler│ ── cron 5min ──► acorda instância (scheduler interno cuida da sync)
 │  └──────────────┘                                                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -440,7 +440,7 @@ O DTO imutável `TransactionData` (ver `app/Dto/TransactionData.php`) foi estend
 | **Duplo clique em Confirmar** | Idempotência via lock atômico no Firestore (campo `processing`) |
 
 ### Sincronização pendente
-- **Cloud Scheduler** → `GET /cron/sync-pending` a cada **5 minutos**
+- **Cloud Scheduler** → acorda instância a cada **5 minutos**; scheduler interno do Laravel executa `Schedule::command('transactions:sync-pending')`
 - Comando artisan `transactions:sync-pending`
 - Máximo **3 tentativas** por transação
 - Após 3 falhas: `sync_status=failed` + notificação ao usuário via Telegram

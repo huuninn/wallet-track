@@ -8,7 +8,6 @@
 #   scripts/deploy.sh secrets          Criar/atualizar secrets no Secret Manager
 #   scripts/deploy.sh iam              Criar service account e conceder permissões
 #   scripts/deploy.sh registry         Criar repositório no Artifact Registry
-#   scripts/deploy.sh scheduler        Criar/atualizar job do Cloud Scheduler
 #   scripts/deploy.sh trigger          Provisionar trigger do Cloud Build (push to main)
 #   scripts/deploy.sh all              Executa secrets → iam → registry
 #   scripts/deploy.sh help             Mostra esta ajuda
@@ -264,7 +263,6 @@ cmd_secrets() {
         local webhook_secret="${TELEGRAM_WEBHOOK_SECRET_TOKEN:-$(grep -E '^TELEGRAM_WEBHOOK_SECRET_TOKEN=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
         local deepseek="${DEEPSEEK_API_KEY:-$(grep -E '^DEEPSEEK_API_KEY=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
         local gemini="${GEMINI_API_KEY:-$(grep -E '^GEMINI_API_KEY=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
-        local cron="${CRON_SECRET_TOKEN:-$(grep -E '^CRON_SECRET_TOKEN=' .env 2>/dev/null | cut -d= -f2- || echo '')}"
         local sa_json="${GOOGLE_SERVICE_ACCOUNT_JSON:-$(cat wallet-track-*.json 2>/dev/null || echo '')}"
 
         jq -n --arg app_key "$app_key" \
@@ -272,7 +270,6 @@ cmd_secrets() {
               --arg webhook_secret "$webhook_secret" \
               --arg deepseek "$deepseek" \
               --arg gemini "$gemini" \
-              --arg cron "$cron" \
               --arg sa_json "$sa_json" \
         '{
           APP_KEY: $app_key,
@@ -280,7 +277,6 @@ cmd_secrets() {
           TELEGRAM_WEBHOOK_SECRET_TOKEN: $webhook_secret,
           DEEPSEEK_API_KEY: $deepseek,
           GEMINI_API_KEY: $gemini,
-          CRON_SECRET_TOKEN: $cron,
           GOOGLE_SERVICE_ACCOUNT_JSON: $sa_json,
           GOOGLE_CLOUD_PROJECT_ID: "wallet-track-499719",
           GOOGLE_SHEETS_SPREADSHEET_ID: "1rGNN0XOOYwDvMYDpFwU1a2ozQXPhAk8P2l8Xjnk9a14",
@@ -291,7 +287,7 @@ cmd_secrets() {
           --replication-policy=automatic \
           --data-file=-
 
-        ok "Secret '$secret_name' criado com sucesso (11 chaves)."
+        ok "Secret '$secret_name' criado com sucesso (10 chaves)."
     fi
     log "Secret consolidado provisionado."
 }
@@ -342,9 +338,10 @@ cmd_iam() {
     done
 
 
-    # Cloud Run invoker (necessário para Cloud Scheduler chamar o serviço)
-    # Com --allow-unauthenticated, esta permissão é opcional — mas documentamos.
-    log "Concedendo roles/run.invoker (para Cloud Scheduler)..."
+    # Cloud Run invoker (mantido para idempotência; com --allow-unauthenticated
+    # esta permissão é opcional, mas é outorgada para compatibilidade com
+    # deploys pré-M5.1 que ainda esperam o secret consolidado).
+    log "Concedendo roles/run.invoker..."
     if gcloud projects get-iam-policy "$PROJECT_ID" 2>/dev/null \
         | grep -q "serviceAccount:${RUN_SA}.*roles/run.invoker"; then
         ok "Permissão run.invoker já existe — pulando."
@@ -384,70 +381,7 @@ cmd_registry() {
     log "Repositório: $repo_path"
 }
 
-# ---------------------------------------------------------------------------
-# Subcomando: scheduler
-# ---------------------------------------------------------------------------
-cmd_scheduler() {
-    log "Provisionando Cloud Scheduler..."
 
-    local job_name="wallet-track-sync-pending"
-
-    # Obtém a URL do Cloud Run (precisa que o serviço já exista)
-    local svc_url
-    svc_url=$(gcloud run services describe "$SERVICE_NAME" \
-        --region="$REGION" --project="$PROJECT_ID" \
-        --format='value(status.url)' 2>/dev/null || true)
-
-    if [[ -z "$svc_url" ]]; then
-        warn "Serviço Cloud Run '$SERVICE_NAME' ainda não existe em $REGION."
-        warn "Execute o primeiro deploy (push to main → Cloud Build) antes de configurar o scheduler."
-        warn "Após o deploy, execute: scripts/deploy.sh scheduler"
-        return 0
-    fi
-
-    local cron_url="${svc_url}/cron/sync-pending"
-
-    # Obtém o cron token do secret consolidado
-    local cron_token
-    cron_token=$(gcloud secrets versions access latest \
-        --secret="wallet-track-env" --project="$PROJECT_ID" 2>/dev/null | jq -r '.CRON_SECRET_TOKEN' || true)
-
-    if [[ -z "$cron_token" || "$cron_token" == "null" ]]; then
-        err "Secret 'wallet-track-env' sem CRON_SECRET_TOKEN. Execute 'secrets' primeiro."
-    fi
-
-    if gcloud scheduler jobs describe "$job_name" \
-        --location="$REGION" --project="$PROJECT_ID" &>/dev/null; then
-
-        log "Atualizando job '$job_name'..."
-        gcloud scheduler jobs update http "$job_name" \
-            --location="$REGION" \
-            --project="$PROJECT_ID" \
-            --schedule="*/5 * * * *" \
-            --uri="$cron_url" \
-            --http-method="GET" \
-            --headers="X-Cron-Token=${cron_token}" \
-            --time-zone="America/Sao_Paulo" \
-            --attempt-deadline="180s" \
-            --quiet
-        ok "Job '$job_name' atualizado."
-    else
-        log "Criando job '$job_name'..."
-        gcloud scheduler jobs create http "$job_name" \
-            --location="$REGION" \
-            --project="$PROJECT_ID" \
-            --schedule="*/5 * * * *" \
-            --uri="$cron_url" \
-            --http-method="GET" \
-            --headers="X-Cron-Token=${cron_token}" \
-            --time-zone="America/Sao_Paulo" \
-            --attempt-deadline="180s" \
-            --quiet
-        ok "Job '$job_name' criado."
-    fi
-
-    log "Cloud Scheduler configurado: $cron_url a cada 5 minutos."
-}
 
 # ---------------------------------------------------------------------------
 # Subcomando: trigger
@@ -486,7 +420,7 @@ cmd_help() {
 }
 
 # ---------------------------------------------------------------------------
-# Subcomando: all (secrets → iam → registry; scheduler precisa de deploy)
+# Subcomando: all (secrets → iam → registry)
 # ---------------------------------------------------------------------------
 cmd_all() {
     cmd_secrets
@@ -503,7 +437,6 @@ cmd_all() {
     log "Próximos passos:"
     log "  1. ./scripts/deploy.sh trigger   (provisionar deploy automático)"
     log "  2. Push para main → build → deploy automático"
-    log "  3. Após o primeiro deploy, execute: scripts/deploy.sh scheduler"
     echo ""
 }
 
@@ -519,7 +452,6 @@ main() {
         secrets)   cmd_secrets ;;
         iam)       cmd_iam ;;
         registry)  cmd_registry ;;
-        scheduler) cmd_scheduler ;;
         trigger)   cmd_trigger ;;
         all)       cmd_all ;;
         help|--help|-h) cmd_help ;;

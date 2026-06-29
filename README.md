@@ -200,30 +200,18 @@ do resto.
 
 ### Sincronização automática
 
-O endpoint `GET /cron/sync-pending` permite que o **Cloud Scheduler** execute a
-sincronização periodicamente (a cada 5 min) sem intervenção do usuário. A
-autenticação é feita via header `X-Cron-Token`, validado por
-[`hash_equals()`](https://www.php.net/manual/en/function.hash-equals.php) em
-[`App\Http\Middleware\VerifyCronToken`](./app/Http/Middleware/VerifyCronToken.php).
+A sincronização é executada periodicamente pelo scheduler interno do Laravel
+(a cada 5 min) via `Schedule::command('transactions:sync-pending')` em
+[`routes/console.php`](./routes/console.php). Não há variáveis de ambiente
+obrigatórias para isso. Em produção (Cloud Run), o **Cloud Scheduler** acorda
+a instância via HTTP a cada 5 min (configurado externamente, fora do app)
+para que o scheduler interno possa rodar.
 
 ```bash
-# Exemplo de uso (servidor de produção)
-curl -H "X-Cron-Token: $CRON_SECRET_TOKEN" \
-     https://wallet-track-<hash>-uc.a.run.app/cron/sync-pending
+# Disparar sincronização manualmente (qualquer ambiente)
+php artisan transactions:sync-pending
 # → {"status":"ok","processed":N,"synced":N,"failed":N,"errors":[],"duration_ms":N,"timestamp":"..."}
 ```
-
-**Variáveis de ambiente obrigatórias** (configuradas via Secret Manager):
-
-| Variável | Descrição |
-|----------|-----------|
-| `CRON_SECRET_TOKEN` | Token de 32 bytes hex (`openssl rand -hex 32`) |
-
-**Resposta**: JSON estruturado com `processed`, `synced`, `failed`, `errors[]`,
-`duration_ms` e `timestamp` ISO 8601 UTC. Falhas parciais retornam HTTP 200
-(recuperáveis) — apenas erros de infraestrutura retornam 5xx. O
-[Agendador Cloud](https://cloud.google.com/scheduler/docs) deve ser configurado
-com a expressão cron `*/5 * * * *` apontando para esse endpoint.
 
 Documentação completa: [`docs/M9-COMPLETO.md`](./docs/M9-COMPLETO.md).
 
