@@ -11,7 +11,7 @@ class HealthTest extends TestCase
      *
      * Garante que o health check mínimo exigido pelo plano de implementação
      * (§M0.8) está acessível e retorna a estrutura esperada para uptime
-     * checks do Cloud Run (M10).
+     * checks do orquestrador (VPS/Octane worker).
      */
     public function test_health_endpoint_returns_ok_status(): void
     {

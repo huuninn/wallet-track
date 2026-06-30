@@ -14,7 +14,7 @@
 #   - Porta host 8001 (em vez de 8000)
 #   - MariaDB e Redis expostos no host (13306, 16379) para debug
 #   - Volumes *_dev (não toca em mariadb_data/storage de prod)
-#   - env_file = .env.dev (bot, planilha e Firestore dev separados)
+#   - env_file = .env.dev (bot, planilha e database dev separados)
 #   - DB database = wallet_track_dev (separado de wallet_track de prod)
 # ============================================================================
 
@@ -41,8 +41,6 @@ services:
       DB_PASSWORD: walletpass
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      # Path da Service Account dentro do container (mesmo padrão do prod).
-      GOOGLE_SERVICE_ACCOUNT_JSON_PATH: /app/wallet-track-499719-54b725c0bb5d.json
     ports: !override
       - "8001:8080"
     volumes:

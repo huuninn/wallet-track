@@ -2,6 +2,8 @@
 
 > **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore como tecnologia de armazenamento atual são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB) e as coleções Firestore `transactions`, `categories`, `labels` e `sessions` correspondem agora às tabelas homônimas no MariaDB. A seção 5 (Modelo de Dados Firestore) é mantida como referência histórica do schema da época.
 >
+> **⚠️ NOTA DE REMOÇÃO GCP (jun/2026):** A infraestrutura GCP (Cloud Run, Cloud Build, Cloud Scheduler, Artifact Registry, Secret Manager) foi removida do repositório. O deploy passou a ser via Docker container (VPS planejada). As referências a Cloud Run e Cloud Scheduler neste documento são **históricas**.
+>
 > **Fase 2 do pipeline.** Versão consolidada integrando a Revisão v2 (Laravel 13 + Gemini OCR). Aprovada pelo usuário.
 
 ---

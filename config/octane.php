@@ -229,6 +229,6 @@ return [
     |
     */
 
-    'max_execution_time' => 300, // Cloud Run timeout (spec §13)
+    'max_execution_time' => 300, // VPS/Octane worker — limite de request HTTP (spec §13)
 
 ];

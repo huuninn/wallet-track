@@ -15,7 +15,7 @@
 # O ARG BASE_IMAGE é REQUIRED (sem default) — toda extensão PHP vem da imagem
 # base, garantindo single source of truth. Veja docker/Dockerfile.base para a
 # lista de extensões (gmp, bcmath, intl, opcache, pcntl, pdo_mysql, pdo_sqlite,
-# redis, zip). Build local (docker compose) e Cloud Build devem construir a
+# redis, zip). Build local (docker compose) e CI devem construir a
 # base primeiro e injetá-la via --build-arg BASE_IMAGE=wallet-track-base:latest.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS base
@@ -61,16 +61,16 @@ COPY . .
 #
 # ⚠️ NÃO rodamos `view:cache` / `event:cache` no build stage: ambos
 # bootaam o Laravel e o cold start penalty sem eles é mínimo (~100ms)
-# e pode ser compensado por Cloud Run CPU boost.
+# e pode ser compensado por CPU boost do worker Octane em produção.
 RUN composer dump-autoload --no-dev --optimize --no-scripts
 
 # Pré-compila templates Blade e descobre eventos/listeners em build-time.
-# Isso acelera o cold start no Cloud Run (templates já compilados; listeners
+# Isso acelera o cold start do worker Octane (templates já compilados; listeners
 # já mapeados em cache sem precisar escanear o filesystem a cada request).
 #
 # ⚠️ NÃO usamos `config:cache` — ele congela env() no momento do build, mas
-#    os secrets (APP_KEY, tokens, SA JSON) são injetados pelo Cloud Run via
-#    Secret Manager em RUNTIME. Rodar config:cache aqui quebraria a app em
+#    os secrets (APP_KEY, tokens, SA JSON) são injetados pelo orquestrador (VPS/CI)
+#    em RUNTIME. Rodar config:cache aqui quebraria a app em
 #    produção (APP_KEY null, tokens vazios, credenciais ausentes).
 #
 # ⚠️ NÃO usamos `route:cache` — mantemos a proibição por hardening
@@ -95,7 +95,7 @@ COPY --from=build --chown=www-data:www-data ${APP_DIR} ${APP_DIR}
 # gerados no build com --no-dev, que podem referenciar providers ausentes em
 # produção. Laravel os regenera em runtime sob demanda.
 # NÃO fazemos config:cache no build — ele congela env() e quebra secrets
-# injetados em runtime pelo Cloud Run (ver docs/decisions.md).
+# injetados em runtime pelo orquestrador (VPS/CI).
 RUN rm -f bootstrap/cache/*.php
 
 # Garante estrutura de diretórios gravável pelo worker (roda como www-data).
@@ -115,7 +115,7 @@ RUN mkdir -p /data/caddy /config/caddy \
     && chown -R www-data:www-data /data /config
 
 # ---------------------------------------------------------------------------
-# Configuração PHP (opcache) otimizada para long-running workers no Cloud Run.
+# Configuração PHP (opcache) otimizada para long-running workers Octane.
 # ---------------------------------------------------------------------------
 ENV PHP_OPCACHE_ENABLE=1 \
     PHP_OPCACHE_MEMORY_CONSUMPTION=128 \
@@ -126,7 +126,7 @@ ENV PHP_OPCACHE_ENABLE=1 \
 # configurando o worker sobre public/frankenphp-worker.php.
 # docker/Caddyfile permanece no repo apenas como referência/dev-only.
 
-# Variáveis de runtime (sobrescritas pelo Cloud Run / .env em produção).
+# Variáveis de runtime (sobrescritas pelo orquestrador / .env em produção).
 ENV APP_ENV=production \
     APP_DEBUG=false \
     SESSION_DRIVER=file \
@@ -140,7 +140,7 @@ ENV APP_ENV=production \
 EXPOSE 8080
 
 # ---------------------------------------------------------------------------
-# Startup: entrypoint lê /secrets/env.json (Secret Manager via volume mount),
+# Startup: entrypoint lê /secrets/env.json (secrets via volume mount),
 # exporta env vars e executa `php artisan octane:start --server=frankenphp`.
 # O Octane gera o Caddyfile internamente, sobe os workers sobre
 # public/frankenphp-worker.php e escuta na porta definida por $PORT (8080).

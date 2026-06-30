@@ -51,6 +51,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - `database/migrations/0001_01_01_000002_create_jobs_table.php` (criava `jobs`, `job_batches`, `failed_jobs` — todas dead, queue nunca foi despachada)
 - `config/queue.php` (sem queue, sem config)
 - `php artisan queue:listen` do script `dev` em `composer.json` (com ajuste dos `--names` para 3 serviços: `server,logs,vite`)
+- Remoção completa de GCP-infra (Cloud Run, Artifact Registry, Cloud Build, Cloud Scheduler, Firestore). Mantido Google Sheets e suas dependências.
 
 ## [0.8.0] - 2026-XX-XX
 

@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Redis;
 use Throwable;
 
 /**
- * Health check para Cloud Run (M10).
+ * Health check para a app (VPS/Octane worker — não há probe externo nesta task).
  *
  * Endpoint leve usado como probe de liveness e para diagnóstico de
  * infraestrutura em runtime. Não acessa serviços externos no modo padrão
@@ -31,7 +31,8 @@ use Throwable;
  *     Retorna objeto `checks` detalhado com latência.
  *     **Restrito a APP_DEBUG=true**: em produção (debug=false), o verbose
  *     é ignorado e comporta-se como o modo padrão — o endpoint é público
- *     (--allow-unauthenticated) e o verbose revelaria estrutura interna.
+ *     por design (não há autenticação HTTP — o projeto é bot-only e este
+ *     probe é exposto pelo servidor HTTP local).
  *
  * Segurança (W1 da revisão M0): `version` e `app` só são expostos quando
  * APP_DEBUG=true. Em produção retornam null.
@@ -50,7 +51,6 @@ final class HealthController extends Controller
     private const array CRITICAL_ENV_CHECKS = [
         'APP_KEY' => 'checkAppKey',
         'TELEGRAM_BOT_TOKEN' => 'checkTelegramBotToken',
-        'GOOGLE_CLOUD_PROJECT_ID' => 'checkGoogleCloudProjectId',
         'GOOGLE_SERVICE_ACCOUNT_JSON' => 'checkGoogleServiceAccount',
         'DEEPSEEK_API_KEY' => 'checkDeepseekApiKey',
         'GEMINI_API_KEY' => 'checkGeminiApiKey',
@@ -79,8 +79,8 @@ final class HealthController extends Controller
 
         // 2. Modo verbose: inclui checks detalhados + ping ao banco de dados/Redis.
         //    Restrito a APP_DEBUG=true — em produção, o endpoint é público
-        //    (--allow-unauthenticated) e o verbose revela estrutura de
-        //    infraestrutura (nomes de env vars, path de secrets, latência).
+        //    e o verbose revela estrutura de infraestrutura (nomes de env vars,
+        //    path de secrets, latência).
         if ($verbose && $debug) {
             $response['checks'] = [
                 'env' => $envCheck,
@@ -236,15 +236,8 @@ final class HealthController extends Controller
         return is_string($val) && trim($val) !== '';
     }
 
-    private function checkGoogleCloudProjectId(): bool
-    {
-        $val = config('google.cloud.project_id');
-
-        return is_string($val) && trim($val) !== '';
-    }
-
     /**
-     * Verifica se ao menos uma das duas fontes de credencial Google está presente.
+     * Verifica se ao menos uma das duas fontes de credencial Google para a Sheets API está presente.
      */
     private function checkGoogleServiceAccount(): bool
     {

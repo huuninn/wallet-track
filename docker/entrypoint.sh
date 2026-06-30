@@ -2,9 +2,9 @@
 set -e
 
 # ---------------------------------------------------------------------------
-# Wallet Track — Entrypoint (Cloud Run / docker compose)
+# Wallet Track — Entrypoint (orquestrador / docker compose)
 # ---------------------------------------------------------------------------
-# 1. Parses /secrets/env.json (Secret Manager volume mount) com PHP e exporta
+# 1. Parses /secrets/env.json (secrets volume mount) com PHP e exporta
 #    cada key=value como variável de ambiente. Se o arquivo não existir
 #    (ex.: dev local), assume que as env vars já foram injetadas.
 #    PHP é usado em vez de jq porque valores podem conter newlines (SA JSON).

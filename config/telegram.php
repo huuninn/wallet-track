@@ -54,8 +54,8 @@ return [
     // Não usar em código de aplicação — prefira sempre 'allowed_chat_ids'.
     'allowed_chat_ids_raw' => env('TELEGRAM_ALLOWED_CHAT_IDS'),
 
-    // URL pública do webhook. Definida apenas após deploy (Cloud Run, M10)
-    // ou ngrok (dev). Vazio = webhook ainda não registrado no Telegram.
+    // URL pública do webhook. Definida após deploy (VPS + túnel reverso) ou
+    // ngrok (dev). Vazio = webhook ainda não registrado no Telegram.
     'webhook_url' => env('TELEGRAM_WEBHOOK_URL'),
 
     // Base URL da API do Telegram (raramente alterada; permite

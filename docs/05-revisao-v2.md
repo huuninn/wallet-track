@@ -1,6 +1,6 @@
 # 05 — Revisão v2 (Laravel 13 + Gemini OCR)
 
-> Adendo de revisão à especificação técnica. Aprovado pelo usuário.
+> **⚠️ NOTA DE REMOÇÃO GCP (jun/2026):** A infraestrutura GCP (Cloud Run, Cloud Build, Cloud Scheduler, Artifact Registry, Secret Manager) foi removida. O deploy passou a ser via Docker container (VPS planejada). Referências a Cloud Run neste documento são históricas.
 
 **Data:** 15 Jun 2026
 **Versão original:** v1 (Laravel 12 + Google Cloud Vision)

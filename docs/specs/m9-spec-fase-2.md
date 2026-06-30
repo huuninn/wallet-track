@@ -1,6 +1,8 @@
 # Especificação Técnica: M9 — Comandos Auxiliares (Fase 2)
 
 > **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+>
+> **⚠️ NOTA DE REMOÇÃO GCP (jun/2026):** GCP-infra (Cloud Run, Cloud Build, Cloud Scheduler, Secret Manager, Artifact Registry, Firestore) foi removida do repositório e dos recursos remotos. Mantido Google Sheets.
 
 > **Status:** Fase 2 — Especificação Técnica executável.
 > **Data:** 19/06/2026

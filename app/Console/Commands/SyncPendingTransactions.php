@@ -16,7 +16,7 @@ use Throwable;
 /**
  * Processa transações com `sync_status='pending'` (M9.8 / T-011).
  *
- * Disparado pelo Cloud Scheduler (cron a cada 5 min) e pelo handler
+ * Disparado pelo Laravel Scheduler (a cada 5 min) e pelo handler
  * `/sync` (execução manual do usuário). Itera sobre as pendentes, espelha
  * cada uma no Google Sheets e atualiza o estado de sync no banco.
  *
@@ -66,7 +66,7 @@ final class SyncPendingTransactions extends Command
     /**
      * Tamanho máximo de batch por execução (CT-033g). 20 transações cabem
      * em ~10s de latência Sheets API (500ms/call) — folga dentro do timeout
-     * de 300s do Cloud Run.
+     * de 300s do worker Octane.
      */
     public const int DEFAULT_LIMIT = 20;
 
@@ -276,7 +276,7 @@ final class SyncPendingTransactions extends Command
      *    `handle()` continua com a próxima transação.
      *  - **Erros de infraestrutura** (banco de dados completamente indisponível,
      *    timeout, etc.) NÃO são capturados — propagam para `handle()` e
-     *    MATAM o loop. O orquestrador (Cloud Scheduler) vê exit≠0 e
+     *    MATAM o loop. O orquestrador (systemd timer) vê exit≠0 e
      *    re-tenta a execução completa na próxima rodada.
      *
      * Esta granularidade é intencional: o loop em `handle()` chama

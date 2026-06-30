@@ -5,18 +5,19 @@ declare(strict_types=1);
 /*
 
 |--------------------------------------------------------------------------
-| Google Cloud (projeto, credenciais service account)
+| Google Sheets (Service Account + Spreadsheet)
 |--------------------------------------------------------------------------
 |
-| Configuração central de tudo que toca o Google Cloud no Wallet Track:
+| Configuração central da integração com Google Sheets no Wallet Track:
 |
-|  - Identidade do projeto GCP (GOOGLE_CLOUD_PROJECT_ID).
-|  - Credenciais da service account (M5 lê de arquivo local; M10 injeta
-|    via Secret Manager).
+|  - Credenciais da service account (lê de arquivo local em dev; em
+|    produção, injeta-se via GOOGLE_SERVICE_ACCOUNT_JSON inline).
+|  - Identificação da planilha (spreadsheet_id, sheet_name).
 |
-| Consumidores atuais:
-|  - App\Services\Google\GoogleSheetsGateway → projectId + keyFile
+| Consumidores:
+|  - App\Services\Google\GoogleSheetsGateway → keyFile
 |    (resolvido por App\Services\Google\GoogleCredentials).
+|  - App\Services\Google\SheetsService → spreadsheet_id, sheet_name.
 |
 | Veja docs/02-especificacao-tecnica.md §12 (envvars).
 
@@ -24,15 +25,9 @@ declare(strict_types=1);
 
 return [
 
-    // Identificador do projeto GCP.
-    'cloud' => [
-        'project_id' => env('GOOGLE_CLOUD_PROJECT_ID'),
-    ],
-
     /*
-
-    |----------------------------------------------------------------------
-    | Google Sheets (planilha de transações — spec §4)
+|----------------------------------------------------------------------
+| Google Sheets (planilha de transações — spec §4)
     |----------------------------------------------------------------------
     |
     |  - spreadsheet_id: ID da planilha compartilhada com a service account.
@@ -63,8 +58,7 @@ return [
     |    service account. Padrão em dev (ler do disco).
     |
     |  - service_account_json: conteúdo JSON cru (ou base64 do JSON) da
-    |    service account. Em produção (M10) será injetado via Secret Manager
-    |    e lido em runtime sem tocar disco.
+    |    service account. Em produção será injetado inline.
     |
     | A resolução de qual usar é feita por {@see \App\Services\Google\GoogleCredentials},
     | com prioridade para o conteúdo inline (prod) sobre o path (dev).
@@ -74,7 +68,7 @@ return [
     // Caminho absoluto para o JSON da service account (dev).
     'service_account_json_path' => env('GOOGLE_SERVICE_ACCOUNT_JSON_PATH'),
 
-    // Conteúdo JSON cru ou base64 (prod/M10 via Secret Manager).
+    // Conteúdo JSON cru ou base64 (prod).
     'service_account_json' => env('GOOGLE_SERVICE_ACCOUNT_JSON'),
 
 ];

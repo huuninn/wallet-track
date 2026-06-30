@@ -11,8 +11,7 @@ use RuntimeException;
  * suportadas por `config('google.*')`.
  *
  *  1. Conteúdo inline via `service_account_json` (prioridade — caminho de
- *     produção, M10). Pode ser JSON cru ou base64 do JSON (Secret Manager
- *     às vezes entrega base64 para evitar problemas de aspas).
+ *     produção). Pode ser JSON cru ou base64 do JSON.
  *
  *  2. Caminho de arquivo via `service_account_json_path` (caminho de dev).
  *     Lê e decodifica o `.json` da service account do disco.
@@ -20,10 +19,10 @@ use RuntimeException;
  * Se ambos estiverem vazios, lança {@see RuntimeException} — quem instanciar
  * o cliente Google sem keyFile deve falhar cedo e com mensagem clara.
  *
- * Esta é a abstração que o M10 (Secret Manager) completa: em produção,
- * injetaremos o conteúdo JSON via variável de ambiente ou via fetch do
- * Secret Manager em runtime. Aqui em M5 apenas normalizamos o conteúdo
- * recebido em array PHP pronto para clientes Google (Sheets API).
+ * Esta é a abstração que a injeção de credenciais (env vars seguras)
+ * completa: em produção, injetaremos o conteúdo JSON via variável de
+ * ambiente inline. Aqui apenas normalizamos o conteúdo recebido em array
+ * PHP pronto para clientes Google (Sheets API).
  */
 final class GoogleCredentials
 {

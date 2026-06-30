@@ -2,9 +2,9 @@
 
 > Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extração por IA, validação, confirmação inline e gravação em Google Sheets + MariaDB.
 
-![Status](https://img.shields.io/badge/status-em%20planejamento-yellow)
+![Status](https://img.shields.io/badge/status-em%20desenvolvimento-yellow)
 ![Stack](https://img.shields.io/badge/stack-PHP%208.5%20%2B%20Laravel%2013-blue)
-![Deploy](https://img.shields.io/badge/deploy-Google%20Cloud%20Run-4285F4)
+![Deploy](https://img.shields.io/badge/deploy-Docker_VPS_planejada-blue)
 
 ---
 
@@ -25,7 +25,7 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 - ✅ Confirmação inline (Confirmar / Editar / Cancelar)
 - ✅ Wizard manual `/nova` (fallback determinístico, 6 etapas)
 - ✅ Comandos: `/start`, `/help`, `/nova`, `/cancelar`, `/ultimos [n]`, `/categorias`, `/sync`
-- ✅ Sincronização pendente via Cloud Scheduler (cron a cada 5 min)
+- ✅ Sincronização pendente via Laravel Scheduler interno (a cada 5 min)
 - ✅ Notificação de falha definitiva única (campo `notified_at` no banco de dados)
 - ✅ Timeout de sessão (15 min)
 - ✅ Idempotência de confirmação
@@ -44,9 +44,9 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 | IA Imagem | Gemini `gemini-2.5-flash` (via `google-gemini-php/client`) |
 | Sheets | Google Sheets API + Service Account |
 | Persistência | MariaDB 11.8 |
-| Deploy | Google Cloud Run (512MB, 1 vCPU, timeout 300s) |
-| Agendamento | Cloud Scheduler (cron 5min) |
-| Logs | Cloud Logging (stderr estruturado) |
+| Deploy | Docker container (worker Octane/FrankenPHP, timeout 300s) — VPS planejada |
+| Agendamento | Laravel Scheduler (systemd timer no host, a cada 1 min) |
+| Logs | stderr JSON (consumível pelo host/coletor de logs) |
 
 ---
 
@@ -106,16 +106,15 @@ Antes de iniciar a implementação (M0), o usuário precisa providenciar os segu
 | Telegram Chat ID do dono | @userinfobot ou similar |
 | DeepSeek API Key | https://platform.deepseek.com |
 | Gemini API Key | https://aistudio.google.com/app/apikey |
-| Google Cloud Project ID | https://console.cloud.google.com |
-| Google Service Account JSON | IAM → Service Accounts → Create Key |
+| Google Sheets Service Account | IAM → Service Accounts → Create Key |
 | Google Sheet ID | URL da planilha (`/d/<ID>/edit`) |
 | MariaDB Database | Serviço de banco de dados relacional |
 
-### Configurações GCP
+### Configuração Google Sheets
 
-- Projeto com billing habilitado
-- APIs habilitadas: Cloud Run, Cloud Build, Cloud Scheduler, Secret Manager, Sheets
-- Service Account com permissões de Sheets Editor (nível da planilha) + Acesso ao banco de dados MariaDB configurado
+- Projeto GCP com billing habilitado (apenas como provedor de IAM para a Service Account)
+- API Sheets habilitada (única API GCP em uso)
+- Service Account com permissões de Sheets Editor (nível da planilha)
 - Planilha Google Sheets criada e **compartilhada** com o email da Service Account
 
 ### Ambiente local
@@ -162,7 +161,7 @@ php artisan test
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Telegram → Cloud Run (Laravel 13 + FrankenPHP + Octane)   │
+│  Telegram → App (Laravel 13 + FrankenPHP + Octane)          │
 │                    ↓                                        │
 │     Webhook → valida (secret + chat_id whitelist)          │
 │                    ↓                                        │
@@ -203,9 +202,8 @@ do resto.
 A sincronização é executada periodicamente pelo scheduler interno do Laravel
 (a cada 5 min) via `Schedule::command('transactions:sync-pending')` em
 [`routes/console.php`](./routes/console.php). Não há variáveis de ambiente
-obrigatórias para isso. Em produção (Cloud Run), o **Cloud Scheduler** acorda
-a instância via HTTP a cada 5 min (configurado externamente, fora do app)
-para que o scheduler interno possa rodar.
+obrigatórias para isso. Em produção (VPS), o Laravel Scheduler é executado
+por um systemd timer a cada minuto. Não há dependência de GCP para o scheduling.
 
 ```bash
 # Disparar sincronização manualmente (qualquer ambiente)
@@ -221,9 +219,9 @@ Documentação completa: [`docs/M9-COMPLETO.md`](./docs/M9-COMPLETO.md).
 
 - **Uso pessoal** — 1 usuário, 1 chat_id whitelist
 - Webhook protegido por **secret token** (Telegram) + validação de origem
-- **API keys e Service Account JSON** armazenados em GCP Secret Manager (nunca no repositório ou imagem Docker)
+- **API keys e Service Account JSON** armazenados no `.env` seguro do host (nunca no repositório ou imagem Docker)
 - Sem analytics, sem tracking, sem dependências externas de telemetria
-- Logs em stderr (visíveis só ao dono do projeto no Cloud Logging)
+- Logs em stderr (visíveis só ao dono do host/coletor de logs)
 
 ---
 
@@ -283,7 +281,7 @@ Principais: `up-dev`, `down-dev`, `fresh-dev`, `restart-dev`, `logs-dev`, `ps-de
 | Volumes de prod afetados | Volumes dev usam sufixo `_dev` — nunca tocam `mariadb_data`, `storage` etc. |
 | `vendor/autoload.php` não encontrado na primeira execução | `make composer-dev cmd="install"` (já automatizado em `make setup-dev`) |
 
-> **Nota:** O arquivo `docker-compose.override.yml` foi removido. O `GOOGLE_SERVICE_ACCOUNT_JSON_PATH` agora é injetado diretamente no `docker-compose.yml` e `docker-compose.dev.yml`.
+> **Nota:** O arquivo `docker-compose.override.yml` foi removido. O `GOOGLE_SERVICE_ACCOUNT_JSON_PATH` deve ser configurado no `.env` do host (passado via `env_file` no Docker Compose).
 
 ## Licença
 

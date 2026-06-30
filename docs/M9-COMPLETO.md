@@ -1,6 +1,8 @@
 # M9 — Comandos Auxiliares: COMPLETO
 
 > **⚠️ NOTA DE MIGRAÇÃO:** Este documento descreve a arquitetura original com Google Firestore como camada de persistência. A persistência foi **migrada para MariaDB**. As referências ao Firestore neste documento são **históricas** e refletem o estado na época da escrita. O componente `FirestoreService` foi substituído por `WalletStore` (Eloquent/MariaDB). As coleções `transactions`, `categories`, `labels` e `sessions` do Firestore correspondem agora às tabelas homônimas no MariaDB.
+>
+> **⚠️ NOTA DE REMOÇÃO GCP (jun/2026):** A infraestrutura GCP foi removida do repositório. Cloud Run, Cloud Scheduler, Cloud Build e Secret Manager não estão mais ativos. O deploy atual é Docker (VPS planejada).
 
 > **Milestone:** M9 (Comandos Auxiliares)
 > **Status:** ✅ **Entregue em 19/06/2026**

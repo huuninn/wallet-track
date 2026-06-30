@@ -1,8 +1,8 @@
 # Plano Técnico de Implementação — Milestone M9 (Comandos Auxiliares)
 
 > **Projeto:** Wallet Track — bot Telegram de controle financeiro pessoal
-> **Stack:** Laravel 13 + Nutgram 4 + DeepSeek + Gemini + Firestore + Google Sheets + Cloud Run
-> **Milestone:** M9 — Comandos Auxiliares (`/start`, `/help`, `/nova`, `/cancelar`, `/ultimos`, `/categorias`, `/sync`, `transactions:sync-pending`, `GET /cron/sync-pending`) ⚠️ **DEPRECATED:** `GET /cron/sync-pending` foi substituído por `Schedule::command('transactions:sync-pending')` em `routes/console.php`; middleware `VerifyCronToken` removido; `CRON_SECRET_TOKEN` depreciado.
+> **Stack:** Laravel 13 + Nutgram 4 + DeepSeek + Gemini + Google Sheets + Docker
+> **Milestone:** M9 — Comandos Auxiliares (`/start`, `/help`, `/nova`, `/cancelar`, `/ultimos`, `/categorias`, `/sync`, `transactions:sync-pending`) ⚠️ **NOTA (jun/2026):** GCP-infra removida. O deploy é Docker (VPS planejada). Referências a Cloud Run neste documento são históricas.
 > **Data:** 19/06/2026
 > **Base documental:** `docs/06-plano-implementacao.md §12`, `docs/specs/m9-spec-fase-2.md` (1.318 linhas, 11 decisões técnicas), `docs/testes/m9-plano-testes.md` (74 CTs), `docs/04-clarificacoes.md` (#5, #6, #7)
 > **Decisões do Portão 2:** JÁ APLICADAS — este plano NÃO revisita, apenas EXECUTA

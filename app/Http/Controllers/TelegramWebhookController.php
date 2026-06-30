@@ -40,7 +40,7 @@ class TelegramWebhookController extends Controller
             $bot->run();
         } catch (\Error $e) {
             // B1: Erro fatal (bug de programação) — log em critical para
-            // destacar nos logs do Cloud Run. Mesmo assim responde 200
+            // destacar nos logs de produção (stderr JSON, futuro). Mesmo assim responde 200
             // (regra de ouro do webhook: nunca propagar como 5xx).
             Log::critical('Telegram webhook: erro fatal no processamento', [
                 'exception' => $e::class,

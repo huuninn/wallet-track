@@ -12,7 +12,7 @@ Artisan::command('inspire', function () {
 |--------------------------------------------------------------------------
 | Schedule: Sync de transações pendentes (M5.1)
 |--------------------------------------------------------------------------
-| Substitui o Cloud Scheduler + endpoint HTTP /cron/sync-pending.
+| Substitui o endpoint HTTP /cron/sync-pending (Cloud Scheduler legacy).
 | Roda a cada 5 min no Octane worker (via `php artisan schedule:work`
 | ou systemd timer na VPS).
 

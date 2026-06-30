@@ -29,7 +29,7 @@ use SergiX44\Nutgram\Nutgram;
  * **Execução síncrona**: ao contrário do cron, o `/sync` é executado
  * em-processo na thread do webhook. A duração máxima típica é ~10s para
  * 20 transações (500ms/call Sheets API) — bem dentro do timeout de 300s
- * do Cloud Run. Vantagem: feedback IMEDIATO ao usuário com contadores
+ * do worker Octane. Vantagem: feedback IMEDIATO ao usuário com contadores
  * reais de synced/failed. Desvantagem: webhook fica bloqueado durante
  * a execução. Como `/sync` é raramente usado, o trade-off é favorável.
  *

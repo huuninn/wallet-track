@@ -31,7 +31,7 @@ return [
     'temperature' => (float) env('GEMINI_TEMPERATURE', '0.1'),
 
     // Timeout HTTP em segundos. OCR de imagem pode levar alguns segundos;
-    // o Cloud Run permite até 300s. O cliente usa PSR-18 discovery.
+    // O ambiente de produção (VPS) permite até 300s no worker Octane. O cliente usa PSR-18 discovery.
     'timeout' => (int) env('GEMINI_TIMEOUT', '60'),
 
 ];

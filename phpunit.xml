@@ -41,10 +41,9 @@
         <env name="GEMINI_MODEL" value="gemini-2.5-flash"/>
         <env name="GEMINI_TEMPERATURE" value="0.1"/>
         <env name="GEMINI_TIMEOUT" value="60"/>
-        <!-- Credenciais Google (Sheets + Health Check). Os valores existem apenas
+        <!-- Credenciais Google (Sheets). Os valores existem apenas
              para satisfazer config('google.*') sem Undefined index. O GoogleSheetsGateway
              real nunca é instanciado em testes — usamos InMemorySheetsGateway. -->
-        <env name="GOOGLE_CLOUD_PROJECT_ID" value="test-project"/>
         <env name="GOOGLE_SERVICE_ACCOUNT_JSON_PATH" value="/fake/path/sa.json"/>
         <env name="GOOGLE_SERVICE_ACCOUNT_JSON" value=""/>
         <!-- M10 (Health Check): TELEGRAM_BOT_TOKEN definido para que o health check

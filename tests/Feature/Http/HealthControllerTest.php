@@ -118,7 +118,7 @@ class HealthControllerTest extends TestCase
             ],
         ]);
         $response->assertJsonPath('checks.env.ok', true);
-        $response->assertJsonPath('checks.env.total', 6);
+        $response->assertJsonPath('checks.env.total', 5);
         $response->assertJsonPath('checks.env.missing_count', 0);
     }
 

@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Http;
  * header X-Telegram-Bot-Api-Secret-Token a cada update.
  *
  * Executar após apontar TELEGRAM_WEBHOOK_URL para a URL pública definitiva
- * (Cloud Run em M10, ou ngrok em dev). Rode `php artisan config:clear`
+ * (VPS + túnel reverso, ou ngrok em dev). Rode `php artisan config:clear`
  * antes se alterou variáveis de ambiente.
  */
 class SetTelegramWebhook extends Command
@@ -45,7 +45,7 @@ class SetTelegramWebhook extends Command
 
         if (blank($webhookUrl)) {
             $this->error('TELEGRAM_WEBHOOK_URL não está definido.');
-            $this->info('Defina a URL pública (ex.: ngrok em dev, Cloud Run em prod) no .env e rode `php artisan config:clear`.');
+            $this->info('Defina a URL pública (ex.: ngrok em dev, VPS + túnel em prod) no .env e rode `php artisan config:clear`.');
 
             return self::FAILURE;
         }

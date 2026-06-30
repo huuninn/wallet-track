@@ -12,7 +12,7 @@
 #   docker compose down -v              # ⚠️  Limpa vendor/storage/node_modules/mariadb_data/redis_data (perde dados de dev!)
 #
 # Aplicação disponível em http://localhost:8000
-# (Container escuta em :8080 para paridade com Cloud Run PORT=8080.)
+# (Container escuta em :8080 para paridade com a porta padrão de containers.)
 #
 # Para subir também o Vite dev server (HMR de assets frontend):
 #   docker compose --profile frontend up
@@ -47,7 +47,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8000:8080"   # host 8000 → container 8080 (paridade Cloud Run PORT=8080)
+      - "8000:8080"   # host 8000 → container 8080
     volumes:
       # Código-fonte (host → container). Alterações refletem via revalidação
       # de opcache (configurado no estágio `dev` do Dockerfile).
@@ -64,7 +64,7 @@ services:
       APP_DEBUG: "true"
       LOG_CHANNEL: stderr
       LOG_LEVEL: debug
-      PORT: "8080"    # paridade com Cloud Run (Caddyfile usa {$PORT:8080})
+      PORT: "8080"    # porta padrão do container (Caddyfile usa {$PORT:8080})
       # Override de DB/Redis para o contexto Docker: .env aponta 127.0.0.1
       # (para dev nativo), mas dentro do container os serviços são hostnames.
       DB_HOST: mariadb
@@ -74,9 +74,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-walletpass}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      # Mesmo padrão dos overrides de DB/Redis: força o path do container,
-      # independente do .env do host.
-      GOOGLE_SERVICE_ACCOUNT_JSON_PATH: /app/wallet-track-499719-54b725c0bb5d.json
     healthcheck:
       test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 8080) ? 0 : 1);'"]
       interval: 15s
