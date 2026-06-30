@@ -3,7 +3,7 @@
 # Wallet Track — GATE de Viabilidade (M0.3)
 # ----------------------------------------------------------------------------
 # Verifica que TODAS as dependências planejadas resolvem e instalam sem
-# conflito de versão contra PHP 8.4 + Laravel 13.x. Este script é o "go/no-go"
+# conflito de versão contra PHP 8.5 + Laravel 13.x. Este script é o "go/no-go"
 # técnico do projeto: se algum pacote planejado não for compatível, o projeto
 # precisa voltar ao spec-designer para buscar alternativas.
 #
@@ -29,12 +29,12 @@ declare -a PLANNED_PACKAGES=(
   "nutgram/nutgram|^4.0"
   "openai-php/client|^0.20"
   "google-gemini-php/client|^2.7"
-  "google/apiclient|^2.15"
+  "google/apiclient|^2.19"
 )
 
 # --- Extensões PHP que DEVEM estar declaradas em composer.json -------------
 # (extensões de runtime como opcache não são "dependências" e ficam de fora).
-declare -a REQUIRED_EXTS=("gmp" "bcmath" "intl" "grpc" "protobuf" "zip" "pdo_sqlite")
+declare -a REQUIRED_EXTS=("gmp" "bcmath" "intl" "zip" "pdo_sqlite")
 
 # --- Detecta como rodar composer -------------------------------------------
 run_composer() {
@@ -135,5 +135,5 @@ if [[ $EXT_MISSING -gt 0 ]]; then
   exit 0
 fi
 echo " RESULTADO: VIABEL — todas as dependencias sao compativeis"
-echo "           com PHP 8.4 + Laravel 13. Projeto pode prosseguir (M1+)."
+echo "           com PHP 8.5 + Laravel 13. Projeto pode prosseguir (M1+)."
 echo "============================================================"

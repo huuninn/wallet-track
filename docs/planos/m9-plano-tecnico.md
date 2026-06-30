@@ -15,7 +15,7 @@
 - **24 tarefas** distribuídas em **6 milestones** (M9.1–M9.6 de execução).
 - **Esforço total estimado:** ~22–28 horas de trabalho (3–4 dev-dias corridos, 1 dev).
 - **Ordem sugerida:** GAP-01 (`/start`) → GAP-03 (`/help` flags) → M9.5 (`/ultimos`) → M9.6 (`/categorias`) → GAP-02 (`/cancelar`) → M9.8 (`SyncPendingTransactions` command) → M9.7 (`/sync`) → M9.3 (`/nova` wizard + Router) → M9.9 (rota cron) → GAP-07 (registro no BotLoader) → bateria de testes.
-- **Framework de teste:** PHPUnit 12 com `InMemoryFirestoreGateway` + `InMemoryBotMessenger` + `InMemorySheetsGateway` (todos já existentes). Rodar via `bin/dev test` (Docker wrapper) ou `vendor/bin/phpunit` direto se PHP 8.4 estiver disponível.
+- **Framework de teste:** PHPUnit 12 com `InMemoryFirestoreGateway` + `InMemoryBotMessenger` + `InMemorySheetsGateway` (todos já existentes). Rodar via `bin/dev test` (Docker wrapper) ou `vendor/bin/phpunit` direto se PHP 8.5 estiver disponível.
 - **Cobertura alvo:** ≥ 90 % das statements nos arquivos novos/alterados; **todos os 74 CTs** mapeados para pelo menos 1 teste PHPUnit (CTs manuais ficam para QA pós-deploy).
 
 ---
@@ -1480,7 +1480,7 @@ bin/dev test --filter "WizardFlowTest"
 bin/dev test --coverage-text --filter "Commands|Conversation/Wizard"
 ```
 
-**Ambiente com PHP 8.4 local:**
+**Ambiente com PHP 8.5 local:**
 
 ```bash
 vendor/bin/phpunit
@@ -1528,12 +1528,12 @@ vendor/bin/phpunit --coverage-text
 
 ---
 
-### Risco 2 — Ambiente local sem PHP 8.4 / extensões grpc,protobuf
+### Risco 2 — Ambiente local sem PHP 8.5 / extensões grpc,protobuf
 
 **Probabilidade:** **Alta** (já confirmada — `php: comando não encontrado`)
 **Impacto:** Médio — coder não pode rodar testes localmente sem Docker
 
-**Causa confirmada:** `php --version` retorna "comando não encontrado". PHP 8.4 + extensões grpc/protobuf não estão disponíveis nativamente no Ubuntu 26.04 (vide `bin/check-viability.sh` linhas 27-30).
+**Causa confirmada:** `php --version` retorna "comando não encontrado". PHP 8.5 + extensões grpc/protobuf não estão disponíveis nativamente no Ubuntu 26.04 (vide `bin/check-viability.sh` linhas 27-30).
 
 **Mitigação concreta:**
 
@@ -1990,7 +1990,7 @@ Ver **Seção 8** — 44 micro-passos ao longo de 4 dias. **Ordenação crítica
 2. **Lock atômico `/sync` × cron tem race condition residual** (probabilidade baixa em staging, impacto ALTO se ocorrer).
    - **Mitigação:** coordenação implícita por `sync_status` (atômico no Firestore); aceito como risco operacional conhecido, corrigir em iteração futura com campo `processing=true`. Documentar em runbook.
 
-3. **Ambiente local sem PHP 8.4 e extensões grpc/protobuf** (probabilidade ALTA confirmada, impacto médio).
+3. **Ambiente local sem PHP 8.5 e extensões grpc/protobuf** (probabilidade ALTA confirmada, impacto médio).
    - **Mitigação:** usar `bin/dev test` (wrapper Docker) que já existe; buildar imagem `wallet-track:dev` antes de começar.
 
 ### 9.4 Estimativa de esforço total

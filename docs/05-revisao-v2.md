@@ -12,7 +12,7 @@
 
 O usuário solicitou Laravel 14, mas **Laravel 14 ainda não existe**. A versão mais recente estável é **Laravel 13.x**, lançada em 17 de Março de 2026 (conforme [laravel.com/docs/13.x/releases](https://laravel.com/docs/13.x/releases)). O ciclo de releases é anual; o Laravel 14 sairia apenas em ~março/2027.
 
-**Decisão:** Usar **Laravel 13.x** (confirmado pelo usuário). PHP 8.4 está dentro do range suportado (8.3–8.5).
+**Decisão:** Usar **Laravel 13.x** (confirmado pelo usuário). PHP 8.5 está dentro do range suportado (8.3–8.5).
 
 | Versão | PHP | Release | Bug Fixes | Security Fixes |
 |--------|-----|---------|-----------|----------------|
@@ -27,7 +27,7 @@ O upgrade de Laravel 12 → 13 é classificado como *"relatively minor upgrade"*
 
 | Componente | v1 (anterior) | v2 (atual) | Nota |
 |------------|---------------|------------|------|
-| PHP | 8.4 | 8.4 | Mantido |
+| PHP | 8.4 | 8.5 | Atualizado para 8.5 |
 | Laravel | 12.x | **13.x** | Latest stable |
 | FrankenPHP + Octane | — | — | Mantido |
 | Telegram SDK | nutgram ^4.0 | nutgram ^4.0 | Standalone, sem acoplamento ao Laravel |
@@ -157,7 +157,7 @@ GEMINI_MODEL=gemini-2.5-flash
 
 | Mudança | Impacto no wallet-track |
 |---------|------------------------|
-| PHP mínimo 8.3 | Nenhum (usa 8.4) |
+| PHP mínimo 8.3 | Nenhum (usa 8.5) |
 | Novos atributos PHP (`#[Middleware]`, etc.) | Opcional |
 | Queue routing (`Queue::route()`) | Opcional |
 | Estrutura `bootstrap/app.php` | Compatível |
@@ -187,4 +187,4 @@ GEMINI_MODEL=gemini-2.5-flash
 | Nº de chamadas OCR | 2 | **1** |
 | Escopo Service Account | Vision + Sheets + Firestore | **Sheets + Firestore** |
 | Novo secret | — | `GEMINI_API_KEY` |
-| PHP mínimo | 8.2 | **8.3** (Laravel 13; já temos 8.4) |
+| PHP mínimo | 8.2 | **8.3** (Laravel 13; já temos 8.5) |

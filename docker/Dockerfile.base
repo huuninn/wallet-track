@@ -11,7 +11,7 @@
 #   - Adicionar/remover extensões PHP
 # ============================================================================
 
-FROM dunglas/frankenphp:1.12.4-php8.4-bookworm
+FROM dunglas/frankenphp:1.12.4-php8.5-bookworm
 
 RUN apt-get update \
     && install-php-extensions \

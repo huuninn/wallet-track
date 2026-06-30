@@ -1,12 +1,12 @@
 # Relatório de Viabilidade — GATE M0
 
-> **Resultado: ✅ VIÁVEL.** Todas as dependências planejadas são compatíveis com PHP 8.4 + Laravel 13. O projeto pode prosseguir para M1.
+> **Resultado: ✅ VIÁVEL.** Todas as dependências planejadas são compatíveis com PHP 8.5 + Laravel 13. O projeto pode prosseguir para M1.
 
 ---
 
 ## 1. Resumo Executivo
 
-O GATE de Viabilidade do M0 (plano de implementação §3.3, tarefa M0.3) foi concluído com **sucesso**. Todos os 7 pacotes Composer planejados instalaram sem conflito de versão contra a stack-alvo (**PHP 8.4 + Laravel 13 + FrankenPHP 1.4 + Octane 2.x**). A imagem Docker de produção builda e o endpoint `/health` responde `200 OK`.
+O GATE de Viabilidade do M0 (plano de implementação §3.3, tarefa M0.3) foi concluído com **sucesso**. Todos os 7 pacotes Composer planejados instalaram sem conflito de versão contra a stack-alvo (**PHP 8.5 + Laravel 13 + FrankenPHP 1.12.4 + Octane 2.x**). A imagem Docker de produção builda e o endpoint `/health` responde `200 OK`.
 
 **Decisões técnicas relevantes** (desvios do plano original, justificados na §4):
 1. `openai-php/client` resolvido para `^0.20.0` (planejado `^0.10` — inexistente).
@@ -18,20 +18,20 @@ O GATE de Viabilidade do M0 (plano de implementação §3.3, tarefa M0.3) foi co
 
 | Componente | Versão planejada | Versão instalada | Status |
 |------------|------------------|------------------|--------|
-| PHP | 8.4 | 8.4.5 (imagem) / 8.4.1 (platform pin) | ✅ |
-| Laravel Framework | ^13.0 | 13.16.1 | ✅ |
-| FrankenPHP | 1.4+ | 1.4.4 (Caddy v2.9.1 embutido) | ✅ |
+| PHP | 8.5 | 8.5.x (imagem) / 8.5.0 (platform pin) | ✅ |
+| Laravel Framework | ^13.0 | 13.18.0 | ✅ |
+| FrankenPHP | 1.12.4+ | 1.12.4 (Caddy v2.10+ embutido) | ✅ |
 
 ## 3. Pacotes Composer (GATE)
 
 | Pacote | Versão planejada | Versão instalada | Status |
 |--------|------------------|------------------|--------|
-| `laravel/framework` | ^13.0 | 13.16.1 | ✅ |
+| `laravel/framework` | ^13.0 | 13.18.0 | ✅ |
 | `laravel/octane` | ^2.0 | 2.17.5 | ✅ |
 | `nutgram/nutgram` | ^4.0 | 4.47.1 | ✅ |
 | `openai-php/client` | ^0.10 | **0.20.0** | ⚠️ Ver §4.1 |
 | `google-gemini-php/client` | ^2.7 | 2.7.4 | ✅ |
-| `google/apiclient` | ^2.15 | 2.19.3 | ✅ |
+| `google/apiclient` | ^2.15 | 2.19.4 | ✅ |
 | `google/cloud-firestore` | ^1.0 | 1.55.0 | ✅ |
 
 **Conclusão:** todos os pacotes resolvem. `composer validate` ✅. Nenhum conflito de versão detectado.
@@ -56,13 +56,13 @@ O GATE de Viabilidade do M0 (plano de implementação §3.3, tarefa M0.3) foi co
 
 ### 4.1 `openai-php/client` `^0.20.0` em vez de `^0.10`
 
-O plano (§3.4) previa `openai-php/client: ^0.10`. A versão `^0.10` **não existe** no Packagist — a linha de versões do pacote salta de `0.x` antigas para `0.20.0` (atual estável). Instalado `0.20.0`, que é **totalmente compatível** com PHP 8.4 e Laravel 13, e mantém a mesma API (`OpenAI::client($key)->chat()->create([...])`) usada para consumir a API DeepSeek (compatível com OpenAI via `base_url` custom).
+O plano (§3.4) previa `openai-php/client: ^0.10`. A versão `^0.10` **não existe** no Packagist — a linha de versões do pacote salta de `0.x` antigas para `0.20.0` (atual estável). Instalado `0.20.0`, que é **totalmente compatível** com PHP 8.5 e Laravel 13, e mantém a mesma API (`OpenAI::client($key)->chat()->create([...])`) usada para consumir a API DeepSeek (compatível com OpenAI via `base_url` custom).
 
 **Impacto:** nenhum. O cliente é usado apenas em M3 (DeepSeek) com a mesma interface.
 
 ### 4.2 Servidor FrankenPHP nativo em vez de `octane:start --server=frankenphp`
 
-> **Errata (Jun 2026)**: Esta decisão foi subscrita pelo bump para `dunglas/frankenphp:1.12.4-php8.4-bookworm` (imagem inclui `pcntl`). O container de runtime agora usa `php artisan octane:start --server=frankenphp` — ver `docker/entrypoint.sh`. Manter este §4.2 apenas como histórico da decisão original.
+> **Errata (Jun 2026)**: Esta decisão foi subscrita pelo bump para `dunglas/frankenphp:1.12.4-php8.5-bookworm` (imagem inclui `pcntl`). O container de runtime agora usa `php artisan octane:start --server=frankenphp` — ver `docker/entrypoint.sh`. Manter este §4.2 apenas como histórico da decisão original.
 
 **Contexto:** o plano previa o processo principal do container como
 `php artisan octane:start --server=frankenphp`.
@@ -75,9 +75,9 @@ O plano (§3.4) previa `openai-php/client: ^0.10`. A versão `^0.10` **não exis
 
 **Risco residual:** baixo. A especificação (§3) menciona Octane como otimização, não como requisito funcional. O webhook do Telegram (`POST /webhook/telegram`, M1) funciona igualmente bem sob o servidor FrankenPHP nativo.
 
-### 4.3 Plataforma Composer pinada em `8.4.1`
+### 4.3 Plataforma Composer pinada em `8.5.0`
 
-O esqueleto Laravel 13 traz `php: ^8.3`. O plano exige `^8.4`. Após o bump, `symfony/console v8.1.0` (dependência transitiva) exige `php >=8.4.1`. Por isso `config.platform.php` foi pinada em `8.4.1` (não `8.4.0`), garantindo resolução correta mesmo rodando composer sob PHP 8.5. A imagem de produção entrega PHP **8.4.5**, satisfazendo o requisito.
+O esqueleto Laravel 13 traz `php: ^8.3`. O plano foi atualizado para `^8.5`. `symfony/console v8.1.0` (dependência transitiva) exigia `php >=8.4.1`; agora com symfony v8.1.1 mantém compatibilidade com PHP 8.5. O `config.platform.php` foi pinado em `8.5.0`, garantindo resolução correta mesmo rodando composer sob PHP 8.5+. A imagem de produção entrega a versão PHP da tag `dunglas/frankenphp:1.12.4-php8.5-bookworm`.
 
 ### 4.4 `DEEPSEEK_MODEL=deepseek-chat` (não `deepseek-v4-flash`)
 
@@ -90,7 +90,7 @@ A spec (§1.2) e o plano (§2.4) citavam `deepseek-v4-flash`, nome **hipotético
 | Critério de aceitação (plano §3.6) | Resultado |
 |------------------------------------|-----------|
 | `composer install` sem erros | ✅ |
-| Worker FrankenPHP sobe | ✅ (`FrankenPHP started 🐘, php_version 8.4.5, num_threads 32`) |
+| Worker FrankenPHP sobe | ✅ (`FrankenPHP started 🐘, php_version 8.5.x, num_threads 32`) |
 | `curl http://localhost:8000/health` → `200 OK` + JSON | ✅ ver §6 |
 | `docker build -t wallet-track:dev .` sem erro | ✅ (imagem 1.24 GB) |
 | `docker run -p 8000:8000 wallet-track:dev` expõe `/health` | ✅ |
@@ -113,7 +113,7 @@ Resposta:
 {
   "status": "ok",
   "timestamp": "2026-06-16T23:26:28+00:00",
-  "version": "13.16.1",
+  "version": "13.18.0",
   "app": "Laravel"
 }
 ```

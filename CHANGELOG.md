@@ -8,6 +8,15 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Unreleased]
 
 ### Changed
+- Upgrade PHP 8.4 → 8.5 (platform pin 8.5.0)
+- Upgrade PHPUnit 12.5.30 → 13.2.2 (PHP 8.5 compat)
+- Bump symfony/* to v8.1.1 (console), v8.1.0 (process, string)
+- Bump guzzlehttp/guzzle to 7.13.1
+- Bump google/apiclient to v2.19.4
+- Bump laravel/pao to v1.1.2
+- Bump laravel/framework to v13.18.0
+- Bump sebastian/* dependencies (PHPUnit 13 compat)
+- Bump google-gemini-php/client, openai-php/client, nutgram/nutgram (transitive deps)
 - Renomeação do cabeçalho da coluna G da planilha de "ID Firestore" → "ID Transação" (o ID agora é inteiro do MariaDB, não UUID do Firestore)
 - Reativação do target `migrate` do Makefile (app agora usa MariaDB; executa `docker compose exec app php artisan migrate --force`)
 - Remoção da verificação de `google/cloud-firestore` do gate de viabilidade (`bin/check-viability.sh`)

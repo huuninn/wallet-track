@@ -3,7 +3,7 @@
 > Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extração por IA, validação, confirmação inline e gravação em Google Sheets + MariaDB.
 
 ![Status](https://img.shields.io/badge/status-em%20planejamento-yellow)
-![Stack](https://img.shields.io/badge/stack-PHP%208.4%20%2B%20Laravel%2013-blue)
+![Stack](https://img.shields.io/badge/stack-PHP%208.5%20%2B%20Laravel%2013-blue)
 ![Deploy](https://img.shields.io/badge/deploy-Google%20Cloud%20Run-4285F4)
 
 ---
@@ -37,7 +37,7 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Runtime | PHP 8.4 + FrankenPHP 1.12.4 |
+| Runtime | PHP 8.5 + FrankenPHP 1.12.4 |
 | Framework | Laravel 13.x + Octane |
 | Bot SDK | `nutgram/nutgram` ^4.0 |
 | IA Texto | DeepSeek `deepseek-v4-flash` (via `openai-php/client`) |
@@ -120,7 +120,7 @@ Antes de iniciar a implementação (M0), o usuário precisa providenciar os segu
 
 ### Ambiente local
 
-- PHP 8.4
+- PHP 8.5
 - Composer 2.x
 - Docker (para teste de build)
 - Git

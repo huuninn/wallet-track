@@ -2,10 +2,10 @@
 # ============================================================================
 # Wallet Track — Wrapper de desenvolvimento via Docker
 # ----------------------------------------------------------------------------
-# Motivação: o ambiente de dev (Ubuntu 26.04) não dispõe de PHP 8.4 com as
+# Motivação: o ambiente de dev (Ubuntu 26.04) não dispõe de PHP 8.5 com as
 # extensões grpc/protobuf nativamente, e o PPA ondrej/php ainda não publicou
 # build para resolute. Rodamos toda a tooling PHP dentro da imagem
-# `wallet-track:dev`, que já contém PHP 8.4.5 + bcmath/gmp/grpc/intl/protobuf/
+# `wallet-track:dev`, que já contém PHP 8.5.x + bcmath/gmp/grpc/intl/protobuf/
 # zip/pdo_sqlite (idêntica ao runtime de produção, definida em `Dockerfile`).
 #
 # Uso:

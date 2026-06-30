@@ -19,7 +19,7 @@ Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extra�
 | 04 | [Clarificações](./04-clarificacoes.md) | 10 pontos ambíguos resolvidos com decisões definitivas | ✅ |
 | 05 | [Revisão v2](./05-revisao-v2.md) | Atualização de stack: Laravel 13 + Gemini OCR (substituindo Google Vision) | ✅ Aprovada |
 | 06 | [Plano de Implementação](./06-plano-implementacao.md) | 11 milestones (M0–M10) com dependências, riscos e critérios de aceitação | ✅ Aprovado |
-| - | [Viability Report](./viability-report.md) | Relatório de viabilidade técnica (PHP 8.4 + extensões + Docker) | ✅ |
+| - | [Viability Report](./viability-report.md) | Relatório de viabilidade técnica (PHP 8.5 + extensões + Docker) | ✅ |
 | - | [Comparativo de Preço de Infra](./comparativo-preco-infra.md) | Raw pricing GCP × Railway × Heroku × Render (compute + DB) | ✅ |
 | - | [Comparativo de VPS](./comparativo-vps.md) | VPS BR (Locaweb, Magalu, HostDime) × Global (Hetzner, Contabo, DO, Vultr) × Paraguai | ✅ |
 
@@ -46,7 +46,7 @@ Chatbot Telegram de controle financeiro pessoal (despesas + receitas) com extra�
 Assistente de registro de despesas/receitas operado via Telegram. O usuário envia informações de um gasto (texto livre ou foto de nota fiscal) para um bot. O sistema extrai e interpreta os dados, valida, sugere labels, confirma com o usuário e persiste em planilha Google Sheets + MariaDB.
 
 ### Stack Final
-- **PHP 8.4** + **Laravel 13.x** + **FrankenPHP** + **Octane**
+- **PHP 8.5** + **Laravel 13.x** + **FrankenPHP** + **Octane**
 - **Deploy**: Google Cloud Run
 - **Telegram**: `nutgram/nutgram`
 - **IA Texto**: DeepSeek `deepseek-v4-flash` (via `openai-php/client`)
