@@ -26,14 +26,17 @@ final class RemoveOriginColumn extends Command
 
     public function handle(): int
     {
-        /** @var SheetsGateway $gateway */
-        $gateway = app(SheetsGateway::class);
-
         // O sheetId numérico da aba principal (0 = primeira aba criada).
         // Para planilhas padrão, a aba "Transações" tem sheetId=0.
         $sheetId = 0;
         $columnIndex = 6; // Coluna G (0-based: A=0, B=1, ..., G=6)
 
+        // O dry-run resolve apenas metadados estáticos (sheetId, columnIndex)
+        // e imprime o que SERIA feito. Ele NÃO instancia SheetsGateway
+        // (resolver o gateway exige credenciais Google válidas). Esta
+        // separação é deliberada (spec §15 AMB #1) para que --dry-run
+        // funcione em qualquer ambiente, mesmo sem GOOGLE_SERVICE_ACCOUNT_JSON
+        // ou GOOGLE_SERVICE_ACCOUNT_JSON_PATH configurados.
         if ($this->option('dry-run')) {
             $this->info('DRY-RUN: a coluna G (índice 6, "Origem") seria deletada da aba principal.');
             $this->line('  sheetId: '.$sheetId);
@@ -41,6 +44,9 @@ final class RemoveOriginColumn extends Command
 
             return self::SUCCESS;
         }
+
+        /** @var SheetsGateway $gateway */
+        $gateway = app(SheetsGateway::class);
 
         if (! $this->confirm('Deletar coluna G (Origem) da aba Transações? Esta operação é irreversível.')) {
             $this->info('Operação cancelada.');
