@@ -29,6 +29,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - ~80 novos testes PHPUnit (521 totais, 0 falhas) — M9 adiciona cobertura para CT-023 a CT-061
 
 ### Fixed
+- Bump `dunglas/frankenphp` de `1.4` → `1.12.4`. Resolve mismatch com `laravel/octane:^2.x` (≥ 1.5.0); evita o download de binário de 165MB que o Octane fazia em runtime como fallback.
 - Race condition `/sync` × cron: lock atômico via `WalletStore::markSyncStarted` (campo `processing`)
 - Reset de `sync_attempts` em `/sync` dá "mais 3 chances" ao usuário (Decisão Portão 2 #7)
 

@@ -62,6 +62,8 @@ O plano (§3.4) previa `openai-php/client: ^0.10`. A versão `^0.10` **não exis
 
 ### 4.2 Servidor FrankenPHP nativo em vez de `octane:start --server=frankenphp`
 
+> **Errata (Jun 2026)**: Esta decisão foi subscrita pelo bump para `dunglas/frankenphp:1.12.4-php8.4-bookworm` (imagem inclui `pcntl`). O container de runtime agora usa `php artisan octane:start --server=frankenphp` — ver `docker/entrypoint.sh`. Manter este §4.2 apenas como histórico da decisão original.
+
 **Contexto:** o plano previa o processo principal do container como
 `php artisan octane:start --server=frankenphp`.
 

@@ -178,7 +178,7 @@ Inicializar o projeto Laravel 13, validar que **toda a stack é compatível** (P
 | M0.3 | **GATE DE VIABILIDADE**: validar compatibilidade | Em um script `bin/check-viability.sh`: instalar todos os pacotes planejados e rodar `composer validate`. Se algum pacote falhar o requisito PHP/Laravel, abortar. | Documento `docs/viability-report.md` |
 | M0.4 | Instalar pacotes core | `composer require laravel/octane nutgram/nutgram:^4.0 openai-php/client google-gemini-php/client:^2.7 google/apiclient:^2.0 google/cloud-firestore:^1.0` | `composer.json` com deps |
 | M0.5 | Instalar Octane com FrankenPHP | `php artisan octane:install --server=frankenphp` | `config/octane.php` |
-| M0.6 | Criar `Dockerfile` | Base: `dunglas/frankenphp:1.4-php8.4-bookworm`. Multi-stage. Caddyfile inline. `install-php-extensions` para `gmp, bcmath, intl, opcache, grpc, protobuf` | `Dockerfile` + `.dockerignore` |
+| M0.6 | Criar `Dockerfile` | Base: `dunglas/frankenphp:1.12.4-php8.4-bookworm`. Multi-stage. Caddyfile inline. `install-php-extensions` para `gmp, bcmath, intl, opcache, grpc, protobuf` | `Dockerfile` + `.dockerignore` |
 | M0.7 | Smoke test local | `php artisan octane:start --port=8000` → `curl http://localhost:8000/health` → `{"status":"ok"}` | Endpoint `/health` funcional |
 | M0.8 | Configurar health check mínimo | Rota `GET /health` retorna JSON `{status:"ok", timestamp, version}` | Controller ou closure |
 | M0.9 | Configurar logs estruturados | `LOG_CHANNEL=stderr` em prod; logs JSON via `config/logging.php` para Cloud Run | Logs consumíveis pelo Cloud Logging |

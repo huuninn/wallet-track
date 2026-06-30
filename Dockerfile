@@ -3,7 +3,7 @@
 # ============================================================================
 # Wallet Track — Dockerfile (M0)
 # ----------------------------------------------------------------------------
-# Runtime: FrankenPHP 1.4 (Caddy embutido) + PHP 8.4 + Laravel Octane
+# Runtime: FrankenPHP 1.12.4 (Caddy embutido) + PHP 8.4 + Laravel Octane
 # Estratégia: multi-stage build. Imagem final enxuta, sem dev deps.
 # O servidor HTTP sobe via `php artisan octane:start --server=frankenphp`,
 # conforme arquitetura do projeto (Especificação Técnica §3).

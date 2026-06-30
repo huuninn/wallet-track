@@ -100,7 +100,7 @@ Para 1 único usuário, volume baixo:
 |------------|--------|---------------|
 | **PHP** | 8.4 | Performance, enums, readonly, match |
 | **Laravel** | 13.x | Latest stable (Mar/2026); PHP 8.3–8.5 |
-| **FrankenPHP** | 1.4+ | Runtime moderno, worker mode (Octane), Caddy embutido |
+| **FrankenPHP** | 1.12.4+ | Runtime moderno, worker mode (Octane), Caddy embutido |
 | **Octane** | (first-party) | Worker mode, reaproveita bootstrap |
 
 ### Pacotes Composer
@@ -115,7 +115,7 @@ Para 1 único usuário, volume baixo:
 | `laravel/octane` | ^2.x | Worker mode com FrankenPHP |
 
 ### Imagem Docker base
-`dunglas/frankenphp:1.4-php8.4-bookworm` (oficial). Extensões adicionais (gRPC, protobuf) via `install-php-extensions`.
+`dunglas/frankenphp:1.12.4-php8.4-bookworm` (oficial). Extensões adicionais (gRPC, protobuf) via `install-php-extensions`.
 
 ---
 

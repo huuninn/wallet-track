@@ -37,7 +37,7 @@ O bot sempre mostra um **resumo para confirmação** antes de gravar. Os dados s
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Runtime | PHP 8.4 + FrankenPHP 1.4 |
+| Runtime | PHP 8.4 + FrankenPHP 1.12.4 |
 | Framework | Laravel 13.x + Octane |
 | Bot SDK | `nutgram/nutgram` ^4.0 |
 | IA Texto | DeepSeek `deepseek-v4-flash` (via `openai-php/client`) |
