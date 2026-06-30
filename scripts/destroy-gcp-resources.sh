@@ -477,9 +477,14 @@ mode_execute() {
       done
     done
 
+    # Cache local das APIs atualmente habilitadas (1 chamada gcloud, reusada
+    # no loop inteiro — evita 33 chamadas redundantes a `gcloud services list`).
+    local ENABLED_APIS
+    ENABLED_APIS=$(gcloud services list --enabled --project="${PROJECT}" --format="value(config.name)" 2>/dev/null)
+
     for api in "${APIS_TO_DISABLE[@]}"; do
       STEP=$((STEP + 1))
-      if gcloud services list --enabled --project="${PROJECT}" --format="value(config.name)" 2>/dev/null | grep -q "^${api}$"; then
+      if echo "${ENABLED_APIS}" | grep -q "^${api}$"; then
         log_msg "Desabilitando ${api}..."
         gcloud services disable "${api}" --project="${PROJECT}" --force 2>/dev/null && \
           ok_msg "${api} desabilitada" || warn_msg "${api} — falha (pode já estar desabilitada)"
